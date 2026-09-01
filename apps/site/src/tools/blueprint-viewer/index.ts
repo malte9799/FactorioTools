@@ -13,6 +13,7 @@ import {
   getRenderCatalog,
   loadData,
   ROTATION_TEST_BLUEPRINT,
+  DEBUG_BLUEPRINT,
   TIMESCALE_FACTOR,
 } from "@factoriotools/engine";
 import type { CalculationResult, Timescale, Blueprint, PlacedEntity, QualityName, MachineGroup, ModuleStack, ThroughputContext, BottleneckSubgroup } from "@factoriotools/engine";
@@ -43,6 +44,7 @@ const TEMPLATE = `
       <div class="intake-actions">
         <button id="demo" class="ghost" type="button">Load an example</button>
         <button id="rotation-test" class="ghost" type="button">Load rotation test</button>
+        <button id="debug-lab" class="ghost" type="button">Load debug lab</button>
         <select id="bp-picker" hidden aria-label="Blueprint in book"></select>
       </div>
       <textarea id="bp-input" hidden></textarea>
@@ -739,6 +741,10 @@ export function mountBlueprintViewer(root: HTMLElement): () => void {
     input.value = ROTATION_TEST_BLUEPRINT;
     load(ROTATION_TEST_BLUEPRINT);
   }, { signal });
+  $("#debug-lab").addEventListener("click", () => {
+    input.value = DEBUG_BLUEPRINT;
+    load(DEBUG_BLUEPRINT);
+  }, { signal });
   picker.addEventListener("change", () => selectBlueprint(Number(picker.value)), { signal });
 
   // Cmd/Ctrl+Z undo, +Shift redo — guarded against firing while focus is in
@@ -1026,6 +1032,14 @@ export function mountBlueprintViewer(root: HTMLElement): () => void {
     loadRotationTest() {
       input.value = ROTATION_TEST_BLUEPRINT;
       load(ROTATION_TEST_BLUEPRINT);
+    },
+    /** Load the built-in renderer debug lab — every entity kind, every
+     *  facing, grown over time as render bugs get fixed (see
+     *  DEBUG_BLUEPRINT's own doc comment in packages/engine/src/data/
+     *  debug-lab.ts). */
+    loadDebugLab() {
+      input.value = DEBUG_BLUEPRINT;
+      load(DEBUG_BLUEPRINT);
     },
     /** Hide every floating GUI window for an unobstructed screenshot. */
     hideWindows() {
