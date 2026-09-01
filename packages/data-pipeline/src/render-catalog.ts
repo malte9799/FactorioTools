@@ -10,7 +10,7 @@
  * confirmed against the real dump before being written, not inferred from
  * Lua source.
  */
-import type { EntityGraphics, MenuGroup, MenuPosition, RenderCatalog, RenderEntityProto } from "@factoriotools/engine";
+import type { EntityGraphics, MenuGroup, MenuPosition, RenderCatalog, RenderEntityProto, SpriteLayer } from "@factoriotools/engine";
 import type { LocaleTables } from "./locale.js";
 
 type Raw = Record<string, Record<string, any>>;
@@ -198,6 +198,86 @@ function splitterGraphics(proto: any): EntityGraphics | undefined {
   };
 }
 
+/** Gates have no plain static picture field (confirmed by spike) — their
+ *  real art is vertical_animation/horizontal_animation, each a
+ *  {main sprite, shadow} pair via the standard {layers:[...]} shape
+ *  extractPicture already knows how to unwrap. Only 2 real orientations
+ *  exist (a gate sits on a straight wall run), so north/south alias the
+ *  vertical pair and east/west alias the horizontal one — see
+ *  GateGraphics' own doc comment in types.ts for why this reuses
+ *  DirectionalSpriteSet's 4-slot shape anyway. */
+function gateGraphics(proto: any): EntityGraphics | undefined {
+  const vertical = extractSpriteWithShadow(proto.vertical_animation);
+  const horizontal = extractSpriteWithShadow(proto.horizontal_animation);
+  if (!vertical || !horizontal) return undefined;
+  return {
+    kind: "gate",
+    sprites: { north: vertical.sprite, south: vertical.sprite, east: horizontal.sprite, west: horizontal.sprite },
+    shadows: { north: vertical.shadow, south: vertical.shadow, east: horizontal.shadow, west: horizontal.shadow },
+  };
+}
+
+/** cargo-landing-pad and space-platform-hub have no single representative
+ *  sprite the way the other graphics_set-keyed entities in PICTURE_FIELD
+ *  do (confirmed by spike): their real base structure is
+ *  graphics_set.picture, an array of RANDOM-APPEARANCE VARIANTS (5-6 of
+ *  them), each itself a multi-layer composite of 4 equally-weighted edge/
+ *  corner tile pieces (no single "main" layer, no shadow layer — confirmed
+ *  by spike none of a variant's own layers carry draw_as_shadow) rather
+ *  than one sprite plus decoration. graphics_set.animation (what
+ *  extractPicture would otherwise reach for) is a separate decal/greebling
+ *  overlay (a turbine detail), not the base structure.
+ *
+ *  KNOWN LIMITATION, not fully solved here: the real game also composites
+ *  graphics_set.connections — a wall/corner connector system keyed by
+ *  which sides have an adjacent platform (the same neighbor-classification
+ *  shape ConnectionArtRenderer/pipeGraph.ts already handle for pipes, but
+ *  with more variants) — which is what actually joins the 4 edge pieces
+ *  into one continuous-looking platform boundary. This mapper only draws
+ *  the 4 edge/corner pieces themselves, so an isolated pad renders as 4
+ *  separate fragments with visible gaps rather than one closed border —
+ *  confirmed by spike this is genuinely how it looks without `connections`,
+ *  not a bug in the shift math. Real, but a smaller gap than the previous
+ *  total absence of any sprite. Takes picture variant [0] as the static
+ *  representative (matching this pipeline's existing "one representative
+ *  pose/variant" simplification, e.g. walls' `single`) and composes its 4
+ *  layers as LayeredStaticGraphics — the first becomes `base` (arbitrary
+ *  among 4 equally-weighted pieces, but LayeredStatic needs exactly one
+ *  `base`), the rest go in `layers`. */
+function multiLayerPlatformGraphics(proto: any): EntityGraphics | undefined {
+  const variant = proto.graphics_set?.picture?.[0];
+  const layers: any[] | undefined = variant?.layers;
+  if (!Array.isArray(layers) || layers.length === 0) return undefined;
+  const toLayer = (l: any): SpriteLayer | undefined =>
+    l?.filename ? { sheet: l.filename, frameWidth: l.width, frameHeight: l.height, shift: l.shift, scale: l.scale ?? 1 } : undefined;
+  const [first, ...rest] = layers;
+  const base = toLayer(first);
+  if (!base) return undefined;
+  const extraLayers = rest.map(toLayer).filter((l): l is SpriteLayer => l !== undefined);
+  return { kind: "layered-static", base, layers: extraLayers };
+}
+
+/** Unwraps a Factorio {layers:[main, shadow]} animation into its two
+ *  SpriteLayer pieces directly, for the handful of callers (gateGraphics)
+ *  that need both independently rather than folded into one
+ *  Sprite4WayGraphics the way extractPicture's own return shape assumes. */
+function extractSpriteWithShadow(anim: any): { sprite: SpriteLayer; shadow: SpriteLayer } | undefined {
+  const layers = anim?.layers;
+  if (!Array.isArray(layers)) return undefined;
+  const main = layers.find((l: any) => !l.draw_as_shadow);
+  const shadow = layers.find((l: any) => l.draw_as_shadow);
+  if (!main?.filename || !shadow?.filename) return undefined;
+  const toLayer = (l: any): SpriteLayer => ({
+    sheet: l.filename,
+    frameWidth: l.width,
+    frameHeight: l.height,
+    lineLength: l.line_length ?? l.frame_count ?? 1,
+    shift: l.shift,
+    scale: l.scale ?? 1,
+  });
+  return { sprite: toLayer(main), shadow: toLayer(shadow) };
+}
+
 function extractPipeConnectors(pictures: any): EntityGraphics | undefined {
   const connectors: Record<string, { sheet: string; frameWidth: number; frameHeight: number; scale?: number }> = {};
   for (const key of PIPE_VARIANT_KEYS) {
@@ -229,7 +309,6 @@ const PICTURE_FIELD: Record<string, string> = {
   container: "picture",
   "logistic-container": "picture",
   wall: "pictures",
-  gate: undefined as any, // has no simple static picture (animated open/close) — falls back to outline
   roboport: "base",
   "storage-tank": "pictures",
   pump: "animations",
@@ -259,19 +338,6 @@ const PICTURE_FIELD: Record<string, string> = {
   "train-stop": "rail_overlay_animations",
   "asteroid-collector": "graphics_set",
   "agricultural-tower": "graphics_set",
-  // Neither has a single representative static sprite the way the other
-  // graphics_set-keyed entities here do — confirmed by spike: their real
-  // base structure lives in graphics_set.picture as an array of per-variant
-  // multi-layer composites (no one "main" layer to pick), and the field
-  // extractPicture actually reaches first, graphics_set.animation, is a
-  // decal/greebling overlay (turbine detail bits / cockpit panel bits), not
-  // the base structure — picking it up produced a tiny, wrong-looking
-  // fragment instead of the real platform. Left undefined (falls back to
-  // the outline box) rather than showing a misleadingly wrong sprite, the
-  // same treatment already given to gate/rocket-silo's own multi-piece
-  // complexity.
-  "cargo-landing-pad": undefined as any,
-  "space-platform-hub": undefined as any,
   "mining-drill": "graphics_set",
 };
 
@@ -423,6 +489,14 @@ export function buildRenderCatalog(raw: Raw, locale: LocaleTables, version: stri
   }
   for (const proto of Object.values(raw.splitter ?? {})) {
     add(proto, splitterGraphics(proto));
+  }
+  for (const proto of Object.values(raw.gate ?? {})) {
+    add(proto, gateGraphics(proto));
+  }
+  for (const table of ["cargo-landing-pad", "space-platform-hub"]) {
+    for (const proto of Object.values(raw[table] ?? {})) {
+      add(proto, multiLayerPlatformGraphics(proto));
+    }
   }
   for (const proto of Object.values(raw.inserter ?? {})) {
     // Procedural (rotating hand + platform layers), confirmed no frame sheet

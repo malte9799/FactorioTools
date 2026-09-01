@@ -164,6 +164,40 @@ export class LayeredStaticRenderer implements EntityRenderer {
   }
 }
 
+const GATE_SLOT: Record<Dir4, "north" | "east" | "south" | "west"> = {
+  [Dir4.North]: "north",
+  [Dir4.East]: "east",
+  [Dir4.South]: "south",
+  [Dir4.West]: "west",
+};
+
+/** GateGraphics: picks its sprite+shadow pair by facing (see
+ *  DirectionalSpriteSet's own doc comment in types.ts for why gates need 4
+ *  file-per-direction slots rather than SpriteLayer's directionCount
+ *  columns — north/south alias the same vertical file, east/west alias the
+ *  same horizontal one), then draws shadow-then-sprite like
+ *  Sprite4WayRenderer does, at frame (0,0) — the closed resting pose, no
+ *  live open/close animation. */
+export class GateRenderer implements EntityRenderer {
+  draw(rc: RenderContext, entity: PlacedEntity, visual: ResolvedVisual, x: number, y: number): void {
+    const graphics = visual.graphics;
+    const [w, h] = visual.tileFootprint;
+    if (!graphics || graphics.kind !== "gate") {
+      drawOutline(rc.ctx, x, y, w, h, "rgba(230,221,206,0.45)");
+      return;
+    }
+    const slot = GATE_SLOT[toCardinal(entity.direction)];
+    const sprite = graphics.sprites[slot];
+    const shadow = graphics.shadows[slot];
+    if (!rc.atlas.get(sprite.sheet)) {
+      drawOutline(rc.ctx, x, y, w, h, "rgba(230,221,206,0.45)");
+      return;
+    }
+    drawLayer(rc, shadow, x, y);
+    drawLayer(rc, sprite, x, y);
+  }
+}
+
 /** Something that can classify one tile's connection shape from its 4
  *  immediate neighbors, keyed by an opaque variant id — pipeGraph.ts's
  *  classifyPipe today, and the shape any future ConnectionArtRenderer user

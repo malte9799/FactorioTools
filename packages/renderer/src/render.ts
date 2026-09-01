@@ -496,6 +496,12 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
           atlas.get(graphics.body.south.sheet);
           atlas.get(graphics.body.west.sheet);
           break;
+        case "gate":
+          atlas.get(graphics.sprites.north.sheet);
+          atlas.get(graphics.sprites.east.sheet);
+          atlas.get(graphics.shadows.north.sheet);
+          atlas.get(graphics.shadows.east.sheet);
+          break;
         case "none":
           break;
       }

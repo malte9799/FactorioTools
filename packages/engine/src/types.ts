@@ -117,6 +117,7 @@ export type EntityGraphics =
   | UndergroundGraphics
   | PipeGraphics
   | SplitterGraphics
+  | GateGraphics
   | { kind: "none" };
 
 /** The common case: one main sprite (direction-indexed or animation-cycle,
@@ -211,19 +212,51 @@ export interface SplitterGraphics {
   /** The belt-lane animation underneath the body — same sheet shape/row
    *  layout as BeltEntityGraphics, drawn first so the body sits on top. */
   belt: BeltEntityGraphics;
-  /** One whole-file animation per cardinal facing — north/east/south/west
-   *  index directly by toCardinal()'s own 0/4/8/12 scheme (see
-   *  packages/renderer/src/beltGraph.ts), not a shared column layout. Each
+  /** One whole-file animation per cardinal facing (see
+   *  DirectionalSpriteSetGraphics' own doc comment for why this needs its
+   *  own set shape rather than SpriteLayer's directionCount columns). Each
    *  facing's own `structurePatch` (undefined when data.raw's own patch for
    *  that facing is __core__/graphics/empty.png, i.e. north/south in
-   *  vanilla) is drawn on top of `structure`, filling the gap described
-   *  above. */
-  body: {
-    north: SpriteLayer & { structurePatch?: SpriteLayer };
-    east: SpriteLayer & { structurePatch?: SpriteLayer };
-    south: SpriteLayer & { structurePatch?: SpriteLayer };
-    west: SpriteLayer & { structurePatch?: SpriteLayer };
-  };
+   *  vanilla) is drawn on top of `structure`, filling in the gap described
+   *  in DirectionalSpriteSetGraphics' doc comment's splitter example. */
+  body: DirectionalSpriteSet<SpriteLayer & { structurePatch?: SpriteLayer }>;
+}
+
+/** Four independent whole-file sprites, one per cardinal facing — for
+ *  entities whose per-direction art is genuinely separate source images
+ *  rather than columns of one shared sheet (SpriteLayer's own
+ *  `directionCount` covers that more common case; poles and undergrounds
+ *  are one file with a column per facing). Confirmed by spike on two
+ *  entities this doesn't fit any other way: splitters (structure.north/
+ *  east/south/west are 4 distinct PNGs, each its own animation-cycle grid —
+ *  see SplitterGraphics) and gates (vertical_animation/horizontal_animation
+ *  are 2 distinct PNGs — a gate only ever has 2 real facings since it sits
+ *  on a straight wall run, so north/south alias the same `vertical` sprite
+ *  and east/west alias `horizontal`; GateGraphics still stores all 4 slots
+ *  rather than adding a "2 vs 4 variants" branch to every reader of this
+ *  type). Keys index directly by toCardinal()'s own 0/4/8/12 scheme (see
+ *  packages/renderer/src/beltGraph.ts). */
+export interface DirectionalSpriteSet<TLayer = SpriteLayer> {
+  north: TLayer;
+  east: TLayer;
+  south: TLayer;
+  west: TLayer;
+}
+
+/** Gates have no simple static picture (confirmed by spike: no plain
+ *  `picture`/`graphics_set` field at all) — their real art is
+ *  vertical_animation/horizontal_animation, each a {sprite, shadow} pair
+ *  and an open/close animation-cycle grid (frame_count/line_length), always
+ *  drawn at frame (0,0) — the closed resting pose — matching this
+ *  pipeline's "static preview, no live animation" convention for every
+ *  other multi-frame entity. A gate only has 2 real orientations (it sits
+ *  on a straight wall run, so its own `direction` is either N/S or E/W),
+ *  represented via DirectionalSpriteSet with north===south and east===west
+ *  rather than inventing a 2-slot variant of that type. */
+export interface GateGraphics {
+  kind: "gate";
+  sprites: DirectionalSpriteSet;
+  shadows: DirectionalSpriteSet;
 }
 
 export interface MachineProto {

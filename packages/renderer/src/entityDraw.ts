@@ -19,6 +19,7 @@ import {
   BeltRenderer,
   UndergroundBeltRenderer,
   SplitterRenderer,
+  GateRenderer,
   InserterRenderer,
   pipeRenderer,
 } from "./entityRenderers.js";
@@ -28,6 +29,7 @@ const layeredStaticRenderer = new LayeredStaticRenderer();
 const beltRenderer = new BeltRenderer();
 const undergroundBeltRenderer = new UndergroundBeltRenderer();
 const splitterRenderer = new SplitterRenderer();
+const gateRenderer = new GateRenderer();
 const inserterRenderer = new InserterRenderer();
 
 /** Selects the EntityRenderer instance for a resolved visual — the only
@@ -42,6 +44,7 @@ function rendererFor(visual: ResolvedVisual): EntityRenderer {
   if (visual.isBeltLike && visual.graphics?.kind === "belt") return beltRenderer;
   if (visual.graphics?.kind === "underground") return undergroundBeltRenderer;
   if (visual.graphics?.kind === "splitter") return splitterRenderer;
+  if (visual.graphics?.kind === "gate") return gateRenderer;
   if (visual.isPipeLike && visual.graphics?.kind === "pipe") return pipeRenderer;
   if (visual.isInserter) return inserterRenderer;
   if (visual.graphics?.kind === "layered-static") return layeredStaticRenderer;

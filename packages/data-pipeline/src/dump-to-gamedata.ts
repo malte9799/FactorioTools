@@ -242,6 +242,36 @@ function graphicsForCraftingMachine(proto: any): EntityGraphics | undefined {
   return { kind: "sprite-4way", ...base, shadow: shadowLayer };
 }
 
+/** Rocket silo has no graphics_set at all (confirmed by spike against the
+ *  real dump) — its real art is a much more elaborate multi-piece
+ *  structure (base plate, launch-hole cutout, two independently-animated
+ *  doors, a front plate, plus a rocket/flame/satellite state machine this
+ *  pipeline doesn't model) than any other crafting machine, which is why
+ *  it was previously excluded from `graphics` entirely rather than routed
+ *  through graphicsForCraftingMachine — that function's plain
+ *  graphics_set/animation lookup has nothing to find here. Modelled as
+ *  LayeredStaticGraphics with the base plate, its shadow, and the door/
+ *  front-plate pieces stacked in the same back-to-front order the
+ *  filenames' own numeric prefixes use in the real game files
+ *  (00-shadow, 01-hole, 04-door-back, 05-door-front, 06-base,
+ *  14-front) — always drawn in their closed/idle resting pose, matching
+ *  this pipeline's existing "static preview, no live animation" choice for
+ *  every other multi-layer entity, not an attempt at the open-doors/
+ *  rocket-visible states. */
+function graphicsForRocketSilo(proto: any): EntityGraphics | undefined {
+  const layer = (sprite: any): SpriteLayer | undefined => {
+    if (!sprite?.filename) return undefined;
+    return { sheet: sprite.filename, frameWidth: sprite.width, frameHeight: sprite.height, shift: sprite.shift, scale: sprite.scale ?? 1 };
+  };
+  const base = layer(proto.base_day_sprite);
+  if (!base) return undefined;
+  const shadow = layer(proto.shadow_sprite);
+  const layers = [layer(proto.hole_sprite), layer(proto.door_back_sprite), layer(proto.door_front_sprite), layer(proto.base_front_sprite)].filter(
+    (l): l is SpriteLayer => l !== undefined,
+  );
+  return { kind: "layered-static", base, shadow, layers };
+}
+
 /** Finds the working_visualisations entry that's always drawn in the
  *  "idle" state (draw_in_states includes "idle") and extracts its
  *  animation as a plain SpriteLayer — the always-present main body for
@@ -371,11 +401,10 @@ function mapMachines(raw: Raw, locale: LocaleTables): Record<string, MachineProt
         // (confirmed by spike; a previous version of this function only
         // handled the plain {layers:[...]} shape, which is why mining
         // drills were hard-excluded here entirely rather than rendering as
-        // an outline). Rocket silo has no graphics_set at all (a much more
-        // elaborate door/rocket/flame multi-sprite structure this pipeline
-        // doesn't model) — still excluded, that's a real gap, not a
-        // solved-elsewhere case.
-        graphics: table === "rocket-silo" ? undefined : graphicsForCraftingMachine(proto),
+        // an outline). Rocket silo has no graphics_set at all — its own
+        // graphicsForRocketSilo reads its real multi-piece structure
+        // instead (see that function's own doc comment).
+        graphics: table === "rocket-silo" ? graphicsForRocketSilo(proto) : graphicsForCraftingMachine(proto),
         siloParts: proto.rocket_parts_required,
         localised: locale.entityName.get(proto.name) ?? proto.name,
       };
@@ -549,6 +578,8 @@ function sheetsOf(graphics: EntityGraphics | undefined): string[] {
       const dirs = [graphics.body.north, graphics.body.east, graphics.body.south, graphics.body.west];
       return [graphics.belt.sheet, ...dirs.map((d) => d.sheet), ...dirs.flatMap((d) => (d.structurePatch ? [d.structurePatch.sheet] : []))];
     }
+    case "gate":
+      return [graphics.sprites.north, graphics.sprites.east, graphics.shadows.north, graphics.shadows.east].map((l) => l.sheet);
     case "none":
       return [];
   }
