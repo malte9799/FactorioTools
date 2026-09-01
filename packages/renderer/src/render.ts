@@ -606,6 +606,38 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
 const CHECKER_LIGHT = "#333230";
 const CHECKER_DARK = "#2b2a28";
 
+/** A 2x2-tile checkerboard cell, tiled via CanvasPattern instead of one
+ *  fillRect call per visible tile — at the camera's own minimum zoom
+ *  (6px/tile, see camera.ts's DEFAULT_LIMITS), a large viewport can have
+ *  tens of thousands of tiles on screen at once, which meant drawGrid alone
+ *  was doing tens of thousands of fillRect calls every single frame just
+ *  for the floor. Built lazily (once, cached) at a fixed 64px-per-tile
+ *  resolution — plenty crisp since the pattern is drawn in world-space
+ *  tile units via the same ctx transform everything else uses, so it scales
+ *  with zoom exactly like the per-tile fills it replaces did. */
+let checkerPatternCache: CanvasPattern | null = null;
+function checkerPattern(ctx: CanvasRenderingContext2D): CanvasPattern {
+  if (checkerPatternCache) return checkerPatternCache;
+  const cellPx = 64;
+  const tile = document.createElement("canvas");
+  tile.width = cellPx * 2;
+  tile.height = cellPx * 2;
+  const tileCtx = tile.getContext("2d")!;
+  tileCtx.fillStyle = CHECKER_LIGHT;
+  tileCtx.fillRect(0, 0, cellPx * 2, cellPx * 2);
+  tileCtx.fillStyle = CHECKER_DARK;
+  tileCtx.fillRect(cellPx, 0, cellPx, cellPx);
+  tileCtx.fillRect(0, cellPx, cellPx, cellPx);
+  const pattern = ctx.createPattern(tile, "repeat")!;
+  // The pattern's own pixels are cellPx px/tile; scaling it down to 1
+  // world-space unit per tile here means drawImage-free `fillRect` calls
+  // downstream render it at whatever zoom the current ctx transform is
+  // already applying, matching every other world-space draw in this file.
+  pattern.setTransform(new DOMMatrix().scale(1 / cellPx));
+  checkerPatternCache = pattern;
+  return pattern;
+}
+
 function drawGrid(ctx: CanvasRenderingContext2D, camera: Camera, viewportW: number, viewportH: number): void {
   const topLeft = camera.screenToWorld(0, 0, viewportW, viewportH);
   const bottomRight = camera.screenToWorld(viewportW, viewportH, viewportW, viewportH);
@@ -615,17 +647,8 @@ function drawGrid(ctx: CanvasRenderingContext2D, camera: Camera, viewportW: numb
   const endY = Math.ceil(bottomRight.y);
 
   ctx.save();
-  // One fillRect per tile is fine at any zoom level actually reachable here
-  // (the camera clamps how far you can zoom in, capping the tile count a
-  // single frame ever needs to fill) — simpler than batching same-color
-  // tiles into one path, and per-tile solid fills is exactly what a
-  // checkerboard is.
-  for (let y = startY; y < endY; y++) {
-    for (let x = startX; x < endX; x++) {
-      ctx.fillStyle = (x + y) % 2 === 0 ? CHECKER_LIGHT : CHECKER_DARK;
-      ctx.fillRect(x, y, 1, 1);
-    }
-  }
+  ctx.fillStyle = checkerPattern(ctx);
+  ctx.fillRect(startX, startY, endX - startX, endY - startY);
 
   // A subtle chunk-boundary line every 8 tiles (Factorio's own chunk size)
   // survives from the old line-grid — still useful for gauging scale/
