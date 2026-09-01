@@ -34,7 +34,7 @@ import type { PlacedEntity, SpriteLayer } from "@factoriotools/engine";
 import { effectiveFootprint, type ResolvedVisual } from "./entityLookup.js";
 import type { SpriteAtlas } from "./spriteAtlas.js";
 import { classifyBelt, toCardinal, opposite, STRAIGHT_ROW, Dir4, type BeltLookupEntity, type BeltFrame } from "./beltGraph.js";
-import { classifyPipe, type PipeLookupEntity } from "./pipeGraph.js";
+import { classifyPipe, type PipeLookupEntity, type PipeVariant } from "./pipeGraph.js";
 
 export interface DrawContext {
   ctx: CanvasRenderingContext2D;
@@ -46,17 +46,20 @@ export interface DrawContext {
 
 /** Everything a renderer might need beyond the base DrawContext — the two
  *  neighbor-lookup indices belt/pipe classification reads, plus
- *  beltFrameCache (see buildBeltFrameCache in beltGraph.ts): classifyBelt's
- *  result precomputed once per rebuildIndices call rather than re-run every
- *  frame for every visible belt, since the neighbor structure it depends on
- *  only changes when entities are placed/removed/rotated. Renderers that
- *  don't need any of these (most of them) simply ignore the fields; passing
- *  one bag of context rather than threading optional parameters through
- *  every class's draw() keeps the shared EntityRenderer interface uniform. */
+ *  beltFrameCache/pipeVariantCache (see buildBeltFrameCache in
+ *  beltGraph.ts and buildPipeVariantCache in pipeGraph.ts): each
+ *  classification precomputed once per rebuildIndices call rather than
+ *  re-run every frame for every visible belt/pipe, since the neighbor
+ *  structure they depend on only changes when entities are placed/removed/
+ *  rotated. Renderers that don't need any of these (most of them) simply
+ *  ignore the fields; passing one bag of context rather than threading
+ *  optional parameters through every class's draw() keeps the shared
+ *  EntityRenderer interface uniform. */
 export interface RenderContext extends DrawContext {
   positionIndex: Map<string, BeltLookupEntity>;
   pipePositionIndex: Map<string, PipeLookupEntity>;
   beltFrameCache: Map<number, BeltFrame>;
+  pipeVariantCache: Map<number, PipeVariant>;
 }
 
 /** One rendering strategy for one family of EntityGraphics `kind`s. Every
@@ -250,10 +253,13 @@ export class ConnectionArtRenderer<TVariant extends string> implements EntityRen
 
 /** pipeGraph.ts's classifyPipe wrapped as a NeighborClassifier, so
  *  ConnectionArtRenderer can be constructed with it instead of hand-calling
- *  classifyPipe from a one-off drawPipe function. */
+ *  classifyPipe from a one-off drawPipe function. Reads
+ *  buildPipeVariantCache's precomputed result first (see that function's
+ *  own doc comment for why), falling back to a live classify only for the
+ *  placement ghost (entityNumber -1, never indexed). */
 class PipeClassifier implements NeighborClassifier<string> {
   classify(entity: PlacedEntity, rc: RenderContext): string {
-    return classifyPipe({ x: Math.round(entity.x), y: Math.round(entity.y) }, rc.pipePositionIndex);
+    return rc.pipeVariantCache.get(entity.entityNumber) ?? classifyPipe({ x: Math.round(entity.x), y: Math.round(entity.y) }, rc.pipePositionIndex);
   }
 }
 

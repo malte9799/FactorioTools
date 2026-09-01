@@ -147,3 +147,26 @@ export function buildPipePositionIndex(
   }
   return index;
 }
+
+/** Precomputes classifyPipe's result for every plain pipe in the blueprint,
+ *  once, mirroring buildBeltFrameCache in beltGraph.ts — the neighbor
+ *  bitmask a pipe's variant depends on only changes when entities are
+ *  placed/removed/rotated, not every frame, so re-running the 4-neighbor
+ *  lookup on every visible pipe every frame is wasted work. Only plain
+ *  pipes are cached: pipe-to-ground draws a single representative sprite
+ *  (see render-catalog.ts) and never calls classifyPipe at all. */
+export function buildPipeVariantCache(
+  entities: { entityNumber: number; name: string; x: number; y: number }[],
+  isPipeLike: (name: string) => boolean,
+  positionIndex: Map<string, PipeLookupEntity>,
+): Map<number, PipeVariant> {
+  const cache = new Map<number, PipeVariant>();
+  for (const e of entities) {
+    if (!isPipeLike(e.name)) continue;
+    const self = { x: Math.round(e.x), y: Math.round(e.y) };
+    const entry = positionIndex.get(`${self.x},${self.y}`);
+    if (entry?.openSide !== undefined) continue; // pipe-to-ground: no variant to cache
+    cache.set(e.entityNumber, classifyPipe(self, positionIndex));
+  }
+  return cache;
+}

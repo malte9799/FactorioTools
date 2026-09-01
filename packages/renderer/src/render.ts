@@ -5,7 +5,7 @@ import { IconAtlas } from "./iconAtlas.js";
 import { buildVisualLookup, effectiveFootprint, type ResolvedVisual } from "./entityLookup.js";
 import { drawEntity, drawAltModeOverlay } from "./entityDraw.js";
 import { buildPositionIndex, buildBeltFrameCache, type BeltLookupEntity, type BeltFrame } from "./beltGraph.js";
-import { buildPipePositionIndex, type PipeLookupEntity } from "./pipeGraph.js";
+import { buildPipePositionIndex, buildPipeVariantCache, type PipeLookupEntity, type PipeVariant } from "./pipeGraph.js";
 import { SpatialIndex, type IndexedBox } from "./spatialIndex.js";
 
 export interface HighlightRole {
@@ -109,6 +109,7 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
   let positionIndex = new Map<string, BeltLookupEntity>();
   let beltFrameCache = new Map<number, BeltFrame>();
   let pipePositionIndex = new Map<string, PipeLookupEntity>();
+  let pipeVariantCache = new Map<number, PipeVariant>();
   let spatialIndex = new SpatialIndex([]);
   let highlight: HighlightRole | null = null;
   let altMode = false;
@@ -218,7 +219,7 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
         alpha = isProducer || isConsumer || isBeacon ? 1 : 0.28;
       }
       ctx.globalAlpha = alpha;
-      drawEntity({ ctx, atlas, animationFrame }, entity, visual, positionIndex, pipePositionIndex, beltFrameCache);
+      drawEntity({ ctx, atlas, animationFrame }, entity, visual, positionIndex, pipePositionIndex, beltFrameCache, pipeVariantCache);
 
       if (hasHighlight) {
         const isProducer = highlight!.producers.has(entity.entityNumber);
@@ -449,6 +450,7 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
     positionIndex = buildPositionIndex(entities, isBeltLike);
     beltFrameCache = buildBeltFrameCache(entities, isBeltLike, positionIndex);
     pipePositionIndex = buildPipePositionIndex(entities, isPipeLike, isPipeToGround);
+    pipeVariantCache = buildPipeVariantCache(entities, isPipeLike, pipePositionIndex);
 
     const boxes: IndexedBox[] = [];
     for (const e of entities) {

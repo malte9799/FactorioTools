@@ -9,7 +9,7 @@ import type { PlacedEntity } from "@factoriotools/engine";
 import type { ResolvedVisual } from "./entityLookup.js";
 import type { IconAtlas } from "./iconAtlas.js";
 import type { BeltLookupEntity, BeltFrame } from "./beltGraph.js";
-import type { PipeLookupEntity } from "./pipeGraph.js";
+import type { PipeLookupEntity, PipeVariant } from "./pipeGraph.js";
 import {
   type DrawContext,
   type RenderContext,
@@ -58,8 +58,9 @@ export function drawEntity(
   positionIndex: Map<string, BeltLookupEntity>,
   pipePositionIndex: Map<string, PipeLookupEntity>,
   beltFrameCache: Map<number, BeltFrame> = new Map(),
+  pipeVariantCache: Map<number, PipeVariant> = new Map(),
 ): void {
-  const rc: RenderContext = { ...dc, positionIndex, pipePositionIndex, beltFrameCache };
+  const rc: RenderContext = { ...dc, positionIndex, pipePositionIndex, beltFrameCache, pipeVariantCache };
   rendererFor(visual).draw(rc, entity, visual, entity.x, entity.y);
 }
 
