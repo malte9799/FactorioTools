@@ -33,7 +33,7 @@
 import type { PlacedEntity, SpriteLayer } from "@factoriotools/engine";
 import { effectiveFootprint, type ResolvedVisual } from "./entityLookup.js";
 import type { SpriteAtlas } from "./spriteAtlas.js";
-import { classifyBelt, toCardinal, opposite, STRAIGHT_ROW, Dir4, type BeltLookupEntity } from "./beltGraph.js";
+import { classifyBelt, toCardinal, opposite, STRAIGHT_ROW, Dir4, type BeltLookupEntity, type BeltFrame } from "./beltGraph.js";
 import { classifyPipe, type PipeLookupEntity } from "./pipeGraph.js";
 
 export interface DrawContext {
@@ -45,13 +45,18 @@ export interface DrawContext {
 }
 
 /** Everything a renderer might need beyond the base DrawContext — the two
- *  neighbor-lookup indices belt/pipe classification reads. Renderers that
- *  don't need either (most of them) simply ignore the fields; passing one
- *  bag of context rather than threading two optional map parameters through
+ *  neighbor-lookup indices belt/pipe classification reads, plus
+ *  beltFrameCache (see buildBeltFrameCache in beltGraph.ts): classifyBelt's
+ *  result precomputed once per rebuildIndices call rather than re-run every
+ *  frame for every visible belt, since the neighbor structure it depends on
+ *  only changes when entities are placed/removed/rotated. Renderers that
+ *  don't need any of these (most of them) simply ignore the fields; passing
+ *  one bag of context rather than threading optional parameters through
  *  every class's draw() keeps the shared EntityRenderer interface uniform. */
 export interface RenderContext extends DrawContext {
   positionIndex: Map<string, BeltLookupEntity>;
   pipePositionIndex: Map<string, PipeLookupEntity>;
+  beltFrameCache: Map<number, BeltFrame>;
 }
 
 /** One rendering strategy for one family of EntityGraphics `kind`s. Every
@@ -320,15 +325,15 @@ export class BeltRenderer implements EntityRenderer {
       drawOutline(rc.ctx, x, y, 1, 1, "rgba(230,221,206,0.28)");
       return;
     }
-    const self: BeltLookupEntity = {
-      entityNumber: entity.entityNumber,
-      name: entity.name,
-      x: Math.round(entity.x),
-      y: Math.round(entity.y),
-      direction: entity.direction,
-      isBeltLike: true,
-    };
-    const { row, overlayRow } = classifyBelt(self, rc.positionIndex);
+    // The cache (buildBeltFrameCache) covers every real placed belt; a
+    // cache miss only happens for the placement ghost (entityNumber -1,
+    // never indexed since it isn't part of the loaded blueprint), which
+    // falls back to classifying live against its own would-be position.
+    const cached = rc.beltFrameCache.get(entity.entityNumber);
+    const { row, overlayRow } = cached ?? classifyBelt(
+      { entityNumber: entity.entityNumber, name: entity.name, x: Math.round(entity.x), y: Math.round(entity.y), direction: entity.direction, isBeltLike: true },
+      rc.positionIndex,
+    );
     // graphics.lineLength carries the belt tier's real animation-cycle
     // column count here (16/32/32/64 for yellow/red/blue/turbo, confirmed
     // by spike — faster belts get more frames for smoother motion), not a

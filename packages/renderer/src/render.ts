@@ -4,7 +4,7 @@ import { SpriteAtlas } from "./spriteAtlas.js";
 import { IconAtlas } from "./iconAtlas.js";
 import { buildVisualLookup, effectiveFootprint, type ResolvedVisual } from "./entityLookup.js";
 import { drawEntity, drawAltModeOverlay } from "./entityDraw.js";
-import { buildPositionIndex, type BeltLookupEntity } from "./beltGraph.js";
+import { buildPositionIndex, buildBeltFrameCache, type BeltLookupEntity, type BeltFrame } from "./beltGraph.js";
 import { buildPipePositionIndex, type PipeLookupEntity } from "./pipeGraph.js";
 import { SpatialIndex, type IndexedBox } from "./spatialIndex.js";
 
@@ -107,6 +107,7 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
 
   let entities: PlacedEntity[] = [];
   let positionIndex = new Map<string, BeltLookupEntity>();
+  let beltFrameCache = new Map<number, BeltFrame>();
   let pipePositionIndex = new Map<string, PipeLookupEntity>();
   let spatialIndex = new SpatialIndex([]);
   let highlight: HighlightRole | null = null;
@@ -217,7 +218,7 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
         alpha = isProducer || isConsumer || isBeacon ? 1 : 0.28;
       }
       ctx.globalAlpha = alpha;
-      drawEntity({ ctx, atlas, animationFrame }, entity, visual, positionIndex, pipePositionIndex);
+      drawEntity({ ctx, atlas, animationFrame }, entity, visual, positionIndex, pipePositionIndex, beltFrameCache);
 
       if (hasHighlight) {
         const isProducer = highlight!.producers.has(entity.entityNumber);
@@ -446,6 +447,7 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
   function rebuildIndices(newEntities: PlacedEntity[]): void {
     entities = newEntities;
     positionIndex = buildPositionIndex(entities, isBeltLike);
+    beltFrameCache = buildBeltFrameCache(entities, isBeltLike, positionIndex);
     pipePositionIndex = buildPipePositionIndex(entities, isPipeLike, isPipeToGround);
 
     const boxes: IndexedBox[] = [];

@@ -227,3 +227,29 @@ export function buildPositionIndex(entities: PlacedEntity[], isBeltLike: (name: 
   }
   return index;
 }
+
+/** Precomputes classifyBelt's result for every plain transport belt in the
+ *  blueprint, once, so the draw loop can look it up instead of re-running
+ *  the 4-neighbor classification every frame for every visible belt — the
+ *  neighbor structure only changes when entities are placed/removed/
+ *  rotated (whenever buildPositionIndex itself is rebuilt), not every
+ *  frame. Keyed by entityNumber rather than position, matching how the
+ *  renderer already has the PlacedEntity (and its entityNumber) in hand at
+ *  draw time. Only plain belts are worth caching this way — splitters and
+ *  undergrounds have their own renderers that don't call classifyBelt. */
+export function buildBeltFrameCache(entities: PlacedEntity[], isBeltLike: (name: string) => boolean, positionIndex: Map<string, BeltLookupEntity>): Map<number, BeltFrame> {
+  const cache = new Map<number, BeltFrame>();
+  for (const e of entities) {
+    if (!isBeltLike(e.name) || e.name.includes("splitter") || e.name.includes("underground")) continue;
+    const self: BeltLookupEntity = {
+      entityNumber: e.entityNumber,
+      name: e.name,
+      x: Math.round(e.x),
+      y: Math.round(e.y),
+      direction: e.direction,
+      isBeltLike: true,
+    };
+    cache.set(e.entityNumber, classifyBelt(self, positionIndex));
+  }
+  return cache;
+}
