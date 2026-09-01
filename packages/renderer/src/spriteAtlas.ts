@@ -15,6 +15,11 @@ function sheetUrl(modPath: string): string {
 }
 
 export class SpriteAtlas {
+  // Keyed by the raw modPath (e.g. "__base__/graphics/entity/foo/foo.png"),
+  // not the derived local URL — get() is called for every visible entity
+  // every frame, so resolving sheetUrl()'s string split/concat on every
+  // call (only ever needed once per sheet, at first load) would be wasted
+  // work in the hot path.
   private images = new Map<string, HTMLImageElement>();
   private loading = new Map<string, Promise<HTMLImageElement>>();
 
@@ -24,14 +29,14 @@ export class SpriteAtlas {
    *  entity draws as its outline fallback, mirroring the calc engine's
    *  graceful-degradation philosophy for unrecognised entities. */
   get(modPath: string): HTMLImageElement | undefined {
-    const url = sheetUrl(modPath);
-    const existing = this.images.get(url);
+    const existing = this.images.get(modPath);
     if (existing) return existing;
-    if (!this.loading.has(url)) {
+    if (!this.loading.has(modPath)) {
+      const url = sheetUrl(modPath);
       const promise = new Promise<HTMLImageElement>((resolve, reject) => {
         const img = new Image();
         img.onload = () => {
-          this.images.set(url, img);
+          this.images.set(modPath, img);
           resolve(img);
         };
         img.onerror = () => reject(new Error(`sprite failed to load: ${url}`));
@@ -40,7 +45,7 @@ export class SpriteAtlas {
         console.warn(err.message);
         throw err;
       });
-      this.loading.set(url, promise);
+      this.loading.set(modPath, promise);
     }
     return undefined;
   }
