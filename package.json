@@ -1,0 +1,19 @@
+{
+  "name": "factoriotools",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "workspaces": [
+    "packages/*",
+    "apps/*"
+  ],
+  "scripts": {
+    "dev": "npm run dev --workspace=apps/site",
+    "build": "npm run build --workspace=apps/site",
+    "test": "npm run test --workspace=@factoriotools/engine",
+    "check": "npm run check --workspaces --if-present"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.2"
+  }
+}

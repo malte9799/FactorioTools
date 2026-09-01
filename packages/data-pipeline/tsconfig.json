@@ -1,0 +1,11 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "lib": ["ES2022"],
+    "paths": {
+      "@factoriotools/engine": ["../engine/src/index.ts"],
+      "@factoriotools/engine/*": ["../engine/src/*"]
+    }
+  },
+  "include": ["src"]
+}

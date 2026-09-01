@@ -1,0 +1,21 @@
+{
+  "name": "@factoriotools/data-pipeline",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dump-to-gamedata": "tsx src/dump-to-gamedata.ts",
+    "extract-sprites": "tsx src/extract-sprites.ts",
+    "check": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@factoriotools/engine": "*",
+    "pngjs": "^7.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "@types/pngjs": "^6.0.5",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2"
+  }
+}

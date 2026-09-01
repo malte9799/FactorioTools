@@ -1,0 +1,20 @@
+{
+  "name": "@factoriotools/engine",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "main": "src/index.ts",
+  "scripts": {
+    "test": "tsx test/calc.test.ts && tsx test/throughput.test.ts && tsx test/scale.test.ts && tsx test/blueprint-roundtrip.test.ts",
+    "check": "tsc --noEmit"
+  },
+  "dependencies": {
+    "pako": "^2.1.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "@types/pako": "^2.0.4",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2"
+  }
+}

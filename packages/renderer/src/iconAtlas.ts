@@ -1,0 +1,61 @@
+/** Loads the packed icon sheet (recipe/item/module icons, keyed by plain
+ *  prototype name — the same sheet apps/site's legacy-view/icons.ts uses for
+ *  panel/tooltip icons) so alt-mode overlays (entityDraw.ts's
+ *  drawAltModeOverlay) can `drawImage` icon cells directly onto the canvas,
+ *  mirroring Factorio's own alt-mode: a small recipe icon centered on a
+ *  crafting machine, module icons in a row beneath it. */
+
+const SHEET_URL = "/data/sprites/icons.png";
+const MANIFEST_URL = "/data/sprite-icon-manifest.json";
+
+export interface IconCell {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}
+
+export class IconAtlas {
+  private sheet: HTMLImageElement | undefined;
+  private cells: Map<string, IconCell> | undefined;
+  private ready: Promise<void>;
+
+  constructor() {
+    this.ready = Promise.all([
+      fetch(MANIFEST_URL)
+        .then((res) => (res.ok ? res.json() : Promise.reject(new Error(`icon manifest ${res.status}`))))
+        .then((manifest: { icons: { id: string; x: number; y: number; w: number; h: number }[] }) => {
+          this.cells = new Map(manifest.icons.map((i) => [i.id, i]));
+        }),
+      new Promise<void>((resolve, reject) => {
+        const img = new Image();
+        img.onload = () => {
+          this.sheet = img;
+          resolve();
+        };
+        img.onerror = () => reject(new Error("icon sheet failed to load"));
+        img.src = SHEET_URL;
+      }),
+    ])
+      .then(() => undefined)
+      .catch((err) => {
+        // Icons are decoration for the alt-mode overlay, not required for
+        // the underlying entity render — fail quiet, mirroring SpriteAtlas's
+        // own graceful-degradation philosophy.
+        console.warn(err.message);
+      });
+  }
+
+  /** Synchronous, for the draw loop — returns undefined until both the
+   *  manifest and sheet have resolved, or if `name` has no icon. */
+  get(name: string): { sheet: HTMLImageElement; cell: IconCell } | undefined {
+    if (!this.sheet || !this.cells) return undefined;
+    const cell = this.cells.get(name);
+    if (!cell) return undefined;
+    return { sheet: this.sheet, cell };
+  }
+
+  async whenReady(): Promise<void> {
+    await this.ready;
+  }
+}

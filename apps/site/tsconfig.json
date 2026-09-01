@@ -1,0 +1,13 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "paths": {
+      "@factoriotools/engine": ["../../packages/engine/src/index.ts"],
+      "@factoriotools/engine/*": ["../../packages/engine/src/*"],
+      "@factoriotools/renderer": ["../../packages/renderer/src/index.ts"],
+      "@factoriotools/renderer/*": ["../../packages/renderer/src/*"]
+    }
+  },
+  "include": ["src"]
+}
