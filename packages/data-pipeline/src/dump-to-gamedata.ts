@@ -223,10 +223,9 @@ function graphicsForCraftingMachine(proto: any): EntityGraphics | undefined {
       }
     : undefined;
 
-  // Newer Space Age machines (electromagnetic-plant, confirmed by spike —
-  // no other prototype in the current dump uses this shape) key their
-  // real main-body art through a working_visualisations state machine
-  // instead of a plain animation/idle_animation layer: what
+  // Newer Space Age machines (electromagnetic-plant, confirmed by spike)
+  // key their real main-body art through a working_visualisations state
+  // machine instead of a plain animation/idle_animation layer: what
   // graphics_set.idle_animation/animation resolves to above is genuinely
   // just the base plate, with the actual body art living in whichever
   // working_visualisations entry has draw_in_states including "idle" —
@@ -237,6 +236,24 @@ function graphicsForCraftingMachine(proto: any): EntityGraphics | undefined {
   const idleBodyLayer = extractIdleWorkingVisualisation(proto.graphics_set?.working_visualisations);
   if (idleBodyLayer) {
     return { kind: "layered-static", base, shadow: shadowLayer, layers: [idleBodyLayer] };
+  }
+
+  // Space Age mining drills (big-mining-drill, confirmed by spike — no
+  // other prototype currently uses this exact shape) use a THIRD
+  // working_visualisations convention: no draw_in_states field at all,
+  // `always_draw: true` instead, and per-direction art under
+  // `{north,east,south,west}_animation` rather than a single `animation`
+  // key. What graphics_set.animation.north resolves to above (`base`) is
+  // only the outer frame/legs — the drill head, support struts, wheels and
+  // output chute are separate always_draw pieces (confirmed by spike:
+  // rendering base alone left a large dark hole where the drill head
+  // should be). Every always_draw entry's north_animation is stacked on
+  // top, in their own declared order, EXCLUDING scorch-mark/particle decals
+  // (matched by filename) which are transient effects this pipeline's
+  // "static idle pose" convention has never modelled for any entity.
+  const alwaysDrawLayers = extractAlwaysDrawLayers(proto.graphics_set?.working_visualisations, mainFile);
+  if (alwaysDrawLayers.length > 0) {
+    return { kind: "layered-static", base, shadow: shadowLayer, layers: alwaysDrawLayers };
   }
 
   return { kind: "sprite-4way", ...base, shadow: shadowLayer };
@@ -293,6 +310,51 @@ function extractIdleWorkingVisualisation(workingVisualisations: any[] | undefine
     shift: main.shift,
     scale: main.scale ?? 1,
   };
+}
+
+/** Filename fragments that mark a working_visualisations entry as a
+ *  transient effect (scorch marks, particle bursts) rather than a real
+ *  always-visible structure piece — excluded from
+ *  extractAlwaysDrawLayers' output since this pipeline has never modelled
+ *  live animation/particle state for any entity, matching its existing
+ *  "static idle pose" convention. */
+const TRANSIENT_EFFECT_FILENAME = /scorchmark|scorch-mark|particles?\.png$/i;
+
+/** Finds every working_visualisations entry marked `always_draw: true`
+ *  (Space Age mining drills' own convention — see graphicsForCraftingMachine's
+ *  doc comment above for what confirmed this and how it differs from
+ *  electromagnetic-plant's draw_in_states convention that
+ *  extractIdleWorkingVisualisation handles) and extracts each one's
+ *  north-facing art as a SpriteLayer, in their declared order — these
+ *  entities' body is genuinely built from many always-visible pieces (drill
+ *  head, support struts, wheels, output chute, ...), not one main sprite
+ *  plus a single extra layer. Reads `north_animation` (this convention's
+ *  per-direction key) falling back to `animation` (in case a future
+ *  prototype mixes the two conventions), and — matching this pipeline's
+ *  "static pose, no live rotation" simplification elsewhere — always the
+ *  north-facing variant regardless of the entity's own placed direction.
+ *  `baseSheet` is the filename graphicsForCraftingMachine already picked as
+ *  `base` — confirmed by spike one always_draw entry (big-mining-drill's
+ *  "still" body) is the exact same file, so it's skipped here rather than
+ *  drawn a second time on top of itself. */
+function extractAlwaysDrawLayers(workingVisualisations: any[] | undefined, baseSheet: string | undefined): SpriteLayer[] {
+  const entries = workingVisualisations?.filter((w) => w.always_draw === true) ?? [];
+  const result: SpriteLayer[] = [];
+  for (const entry of entries) {
+    const anim = entry.north_animation ?? entry.animation;
+    const layers = anim?.layers ?? (anim ? [anim] : undefined);
+    const main = layers?.find((l: any) => !l.draw_as_shadow) ?? layers?.[0];
+    const mainFile: string | undefined = main?.filename ?? main?.filenames?.[0];
+    if (!mainFile || mainFile === baseSheet || TRANSIENT_EFFECT_FILENAME.test(mainFile)) continue;
+    result.push({
+      sheet: mainFile,
+      frameWidth: main.width,
+      frameHeight: main.height,
+      shift: main.shift,
+      scale: main.scale ?? 1,
+    });
+  }
+  return result;
 }
 
 function graphicsForBelt(proto: any): BeltGraphicsSet | undefined {
