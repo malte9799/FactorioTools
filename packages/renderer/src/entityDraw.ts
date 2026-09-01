@@ -62,25 +62,41 @@ export function drawEntity(
   rendererFor(visual).draw(rc, entity, visual, entity.x, entity.y);
 }
 
-/** Icon badge size, in tile units — small enough to sit inside even a 1x1
- *  entity's footprint without badly overhanging, matching the real game's
- *  alt-mode badges being a modest fraction of the entity's own size. */
-const RECIPE_ICON_SIZE = 0.5;
-const MODULE_ICON_SIZE = 0.32;
-const MODULE_ICON_GAP = 0.04;
+/** Icon badge size, in tile units. Confirmed by spike against real
+ *  Factorio alt-mode screenshots (forums.factorio.com/viewtopic.php?t=64803
+ *  — a stock assembling-machine-3's own recipe badge measured directly off
+ *  the posted screenshot) that recipe icons read as noticeably larger than
+ *  this renderer previously drew them: the earlier RECIPE_ICON_SIZE (0.5)
+ *  made the badge blend into the machine's own sprite at any zoom level
+ *  short of an extreme close-up, especially for grey/metallic recipes like
+ *  iron-gear-wheel sitting on a grey/metallic machine — not just a size
+ *  problem but a legibility one, which is why the badge is also given a
+ *  darker, more opaque backing disc below (drawIcon) rather than only being
+ *  scaled up. */
+const RECIPE_ICON_SIZE = 0.8;
+const MODULE_ICON_SIZE = 0.42;
+const MODULE_ICON_GAP = 0.05;
 
 function drawIcon(ctx: CanvasRenderingContext2D, iconAtlas: IconAtlas, name: string, cx: number, cy: number, size: number): boolean {
   const found = iconAtlas.get(name);
   if (!found) return false;
   const { sheet, cell } = found;
-  // A translucent dark backing disc, matching the real game's alt-mode icon
-  // badges (a dark circular chip behind the icon) so a bright icon stays
-  // legible against any entity sprite color underneath.
+  // A dark backing disc with a light rim, matching the real game's
+  // alt-mode icon badges (a dark circular chip with a visible edge behind
+  // the icon) so the badge stays legible against any entity sprite color
+  // underneath — confirmed by spike this needed more than just a bigger
+  // icon: a grey/metallic recipe icon (e.g. iron-gear-wheel) on a grey/
+  // metallic machine sprite was still hard to pick out with only a
+  // translucent disc and no rim, even at the larger RECIPE_ICON_SIZE.
   ctx.save();
+  const radius = size / 2 + size * 0.08;
   ctx.beginPath();
-  ctx.arc(cx, cy, size / 2 + size * 0.08, 0, Math.PI * 2);
-  ctx.fillStyle = "rgba(20,18,15,0.72)";
+  ctx.arc(cx, cy, radius, 0, Math.PI * 2);
+  ctx.fillStyle = "rgba(15,14,12,0.82)";
   ctx.fill();
+  ctx.lineWidth = size * 0.045;
+  ctx.strokeStyle = "rgba(235,225,205,0.55)";
+  ctx.stroke();
   ctx.restore();
   ctx.drawImage(sheet, cell.x, cell.y, cell.w, cell.h, cx - size / 2, cy - size / 2, size, size);
   return true;
