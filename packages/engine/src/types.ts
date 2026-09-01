@@ -148,7 +148,12 @@ export interface Sprite4WayGraphics extends SpriteLayer {
  *    where draw_in_states includes "idle" — confirmed by spike this is
  *    the always-present main body, not an active-crafting-only overlay,
  *    even though it's declared inside the working_visualisations state
- *    machine alongside genuinely state-gated art). */
+ *    machine alongside genuinely state-gated art).
+ *  - Space Age mining drills (big-mining-drill): a THIRD
+ *    working_visualisations convention — every `always_draw: true` entry's
+ *    art stacked as its own layer, since these entities' body is genuinely
+ *    built from many always-visible pieces (drill head, struts, wheels,
+ *    output chute, ...), not one main sprite plus a single extra layer. */
 export interface LayeredStaticGraphics {
   kind: "layered-static";
   /** Drawn first, bottom-most. Carries the entity's own shift/shadow. */
@@ -187,26 +192,12 @@ export interface PipeGraphics {
   connectors: Record<string, SpriteLayer>;
 }
 
-/** Splitters are genuinely two composited pieces, confirmed by spike
- *  against the real dump (data.raw.splitter.splitter): `belt_animation_set`
- *  alone (what the renderer used to draw, mistaking a splitter for a plain
- *  1-tile belt) is only the two belt lanes' animation — the visible
- *  splitter body/case (the distinct sprite with the priority/filter-light
- *  slots) is a SEPARATE `structure` field, one whole PNG file PER cardinal
- *  direction (not columns in a shared sheet the way every other
- *  direction-indexed entity in this codebase packs its facings), each
- *  itself an animation-cycle grid (frame_count/line_length, same shape as
- *  Sprite4WayGraphics' animation case). `structure_patch` is NOT the mostly-
- *  empty afterthought its name and north/south's __core__/empty.png first
- *  suggested — confirmed by spike east/west's own patch is a real, non-
- *  empty sprite (splitter-{east,west}-top_patch.png) that fills in exactly
- *  the top slice north/south's own `structure` sprite doesn't need to cover
- *  (north/south's structure sprite is 2.5 tiles wide and already spans the
- *  whole 1.8-tile splitter in one image; east/west's is only ~1.3 tiles
- *  along the direction of travel, short of the splitter's own 1.8-tile
- *  length, and the patch is the missing remainder — omitting it, as this
- *  type originally did, is exactly what left the reported "top half of an
- *  east/west splitter is missing" gap). */
+/** Splitters composite a belt-lane animation (`belt_animation_set`) with a
+ *  separate body/case sprite (`structure`, one whole PNG per cardinal
+ *  direction — not columns in a shared sheet) plus a `structurePatch` that
+ *  fills a real gap for east/west facings specifically (see
+ *  packages/data-pipeline/src/render-catalog.ts's splitterGraphics for the
+ *  full story on why both pieces are needed). */
 export interface SplitterGraphics {
   kind: "splitter";
   /** The belt-lane animation underneath the body — same sheet shape/row
@@ -341,9 +332,9 @@ export interface BeltProto {
 }
 
 /** Inserters are procedurally drawn (platform + a rotating hand), not a
- *  single direction-indexed sheet like most entities — confirmed by spike
- *  (see the project plan's M2/M3 notes) — so this is its own small shape
- *  rather than reusing EntityGraphics. The renderer draws a static "hand
+ *  single direction-indexed sheet like most entities — confirmed by spike —
+ *  so this is its own small shape rather than reusing EntityGraphics. The
+ *  renderer draws a static "hand
  *  extended toward its drop side" pose, matching how the game's own
  *  blueprint/ghost preview shows one fixed frame rather than an animation.
  *
@@ -363,10 +354,9 @@ export interface InserterGraphics {
   platformHeight: number;
   /** Factorio's per-sprite scale factor: on-screen tile size = pixel size *
    *  scale / 32 (32px/tile is the game's base resolution at scale 1.0,
-   *  confirmed against assembling-machine-2's own scale-0.5 sprite sizing
-   *  during the M2 spike). Each of the three sprites below carries its own
-   *  independent scale in the dump, so all three are kept rather than
-   *  assuming one shared value. */
+   *  confirmed against assembling-machine-2's own scale-0.5 sprite sizing).
+   *  Each of the three sprites below carries its own independent scale in
+   *  the dump, so all three are kept rather than assuming one shared value. */
   platformScale: number;
   /** Always 4 in the current dataset (confirmed by spike), kept explicit
    *  rather than hardcoded in the renderer in case a future dump differs. */

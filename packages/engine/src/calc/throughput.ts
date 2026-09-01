@@ -216,10 +216,10 @@ export function computeBottleneck(
 /** A `groupKey`-collapsed row can contain entities with different actual
  *  adjacency (one furnace fed by a regular inserter, another by a stack
  *  inserter, otherwise identical config) — exactly the case the bottleneck
- *  feature exists to surface. Per the project plan: compute bottleneck
- *  per-entity first, then only split a group's display into sub-rows when
- *  the entities within it genuinely differ; most real repeatable builds
- *  feed every instance identically, so this rarely fires in practice. */
+ *  feature exists to surface. Bottleneck is computed per-entity first, then
+ *  a group's display is only split into sub-rows when the entities within
+ *  it genuinely differ; most real repeatable builds feed every instance
+ *  identically, so this rarely fires in practice. */
 export interface BottleneckSubgroup {
   /** Signature distinguishing this subgroup — e.g. "stack-inserter:1" —
    *  entities with the same signature share one BottleneckInfo. Purely a

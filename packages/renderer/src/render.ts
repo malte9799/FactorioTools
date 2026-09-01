@@ -52,9 +52,7 @@ export interface BlueprintRenderer {
   rotateGhost(): void;
   hitTest(clientX: number, clientY: number): number | undefined;
   /** Fires on pointermove while not panning, with the entity under the
-   *  cursor (or undefined) — mirrors the M1 placeholder's
-   *  onEntityHover(entityNumber, event) callback shape so overlay-panels.ts
-   *  ports with minimal change. */
+   *  cursor (or undefined). */
   onHover(callback: (entityNumber: number | undefined, e: PointerEvent) => void): void;
   /** Fires on a left-click in 'place' mode, with the (already
    *  grid-snapped-by-caller — see index.ts) world position and the ghost's

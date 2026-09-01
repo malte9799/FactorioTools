@@ -22,8 +22,7 @@ export interface ViewOptions {
   /** Derived "hit this target" knob from a production-target input — kept
    *  conceptually separate from `multiplier` even though both multiply
    *  together at render time, so the UI doesn't fight itself if a user sets
-   *  both (per the project plan's explicit design note). 1 when no target
-   *  is set. */
+   *  both. 1 when no target is set. */
   scaleFactor: number;
   measure: Measure;
   /** Item name the rocket silo is loaded with — not recorded in the

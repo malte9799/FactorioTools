@@ -5,8 +5,8 @@
  * Factorio install and into the site's public assets, and builds one packed
  * icon atlas for panel/tooltip icons from each item/entity's `icon` field.
  *
- * Only copies what's referenced — not the whole graphics tree — per the
- * project plan's B.5. Run manually, never in CI:
+ * Only copies what's referenced, not the whole graphics tree. Run manually,
+ * never in CI:
  *   npm run extract-sprites --workspace=@factoriotools/data-pipeline
  */
 import { readFileSync, writeFileSync, mkdirSync, copyFileSync, existsSync } from "node:fs";
@@ -72,7 +72,7 @@ function extractEntitySheets(): void {
 /** Icons are one small PNG per prototype (confirmed by spike: `icon` is a
  *  plain file path, not a spritesheet with a frame index) — pack them into a
  *  single local atlas with a uniform grid. A naive grid is enough at this
- *  scale (a few hundred icons), per the project plan's B.5. */
+ *  scale (a few hundred icons). */
 function extractIconAtlas(): void {
   const raw = JSON.parse(readFileSync(DUMP_PATH, "utf-8")) as Record<string, Record<string, any>>;
 

@@ -1,8 +1,8 @@
-/** Uniform grid for pointer-to-entity hit-testing. A quadtree is unneeded
- *  here (per the project plan): blueprints are grid-aligned and roughly
- *  uniformly dense, so bucketing by tile coordinate is simpler to implement
- *  and just as fast for the point-query access pattern this needs. Rebuilt
- *  once per loaded blueprint, not per frame — entities don't move. */
+/** Uniform grid for pointer-to-entity hit-testing. A quadtree is unneeded:
+ *  blueprints are grid-aligned and roughly uniformly dense, so bucketing by
+ *  tile coordinate is simpler to implement and just as fast for the
+ *  point-query access pattern this needs. Rebuilt once per loaded
+ *  blueprint, not per frame — entities don't move. */
 
 export interface IndexedBox {
   entityNumber: number;

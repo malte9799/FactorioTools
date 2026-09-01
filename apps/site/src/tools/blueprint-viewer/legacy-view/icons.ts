@@ -1,13 +1,11 @@
 /** Item/building icons, packed locally from the user's own Factorio install
- *  by packages/data-pipeline/src/extract-sprites.ts (see the project plan's
- *  M2) — no third-party host involved. Icon ids match Factorio's prototype
- *  names, the same names this dataset keys everything by, so lookups are a
- *  direct hit.
+ *  by packages/data-pipeline/src/extract-sprites.ts — no third-party host
+ *  involved. Icon ids match Factorio's prototype names, the same names this
+ *  dataset keys everything by, so lookups are a direct hit.
  *
- *  This whole module is still the M1-era placeholder icon lookup — the real
- *  entity renderer (packages/renderer) draws full sprites, not just icons,
- *  and is what M3 introduces for the actual blueprint layout. This module
- *  stays in use for panel/tooltip icons either way. */
+ *  This module is the icon lookup for panel/tooltip icons specifically —
+ *  the main blueprint canvas draws full entity sprites via
+ *  packages/renderer instead, not just icons. */
 
 const SHEET_URL = "/data/sprites/icons.png";
 const MANIFEST_URL = "/data/sprite-icon-manifest.json";

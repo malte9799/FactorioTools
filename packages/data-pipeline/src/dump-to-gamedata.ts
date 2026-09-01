@@ -153,10 +153,10 @@ function energySourceOf(es: any): MachineProto["energySource"] {
   return "void";
 }
 
-/** Small, explicit per-kind graphics adapter (per the project plan's B.3) —
- *  not a general graphics_set interpreter. Each entity kind's real dump
- *  shape was confirmed by spiking one representative entity before writing
- *  this, rather than guessed from Lua source. */
+/** Small, explicit per-kind graphics adapter, not a general graphics_set
+ *  interpreter. Each entity kind's real dump shape was confirmed by
+ *  spiking one representative entity before writing this, rather than
+ *  guessed from Lua source. */
 /** Confirmed by spike (assembling-machine-2): `frame_count`/`line_length`
  *  describe an animation-cycle grid — 32 frames at line_length 8 is 4 rows x
  *  8 columns, not 32 directions. Crafting machines don't visually rotate
@@ -259,21 +259,14 @@ function graphicsForCraftingMachine(proto: any): EntityGraphics | undefined {
   return { kind: "sprite-4way", ...base, shadow: shadowLayer };
 }
 
-/** Rocket silo has no graphics_set at all (confirmed by spike against the
- *  real dump) — its real art is a much more elaborate multi-piece
+/** Rocket silo has no graphics_set at all — its real art is a multi-piece
  *  structure (base plate, launch-hole cutout, two independently-animated
  *  doors, a front plate, plus a rocket/flame/satellite state machine this
- *  pipeline doesn't model) than any other crafting machine, which is why
- *  it was previously excluded from `graphics` entirely rather than routed
- *  through graphicsForCraftingMachine — that function's plain
- *  graphics_set/animation lookup has nothing to find here. Modelled as
- *  LayeredStaticGraphics with the base plate, its shadow, and the door/
- *  front-plate pieces stacked in the same back-to-front order the
- *  filenames' own numeric prefixes use in the real game files
- *  (00-shadow, 01-hole, 04-door-back, 05-door-front, 06-base,
- *  14-front) — always drawn in their closed/idle resting pose, matching
- *  this pipeline's existing "static preview, no live animation" choice for
- *  every other multi-layer entity, not an attempt at the open-doors/
+ *  pipeline doesn't model), so it's routed through its own mapper instead
+ *  of graphicsForCraftingMachine. Modelled as LayeredStaticGraphics, layers
+ *  stacked in the same back-to-front order the filenames' own numeric
+ *  prefixes use (00-shadow, 01-hole, 04-door-back, 05-door-front, 06-base,
+ *  14-front), always in their closed/idle resting pose — no open-doors/
  *  rocket-visible states. */
 function graphicsForRocketSilo(proto: any): EntityGraphics | undefined {
   const layer = (sprite: any): SpriteLayer | undefined => {
@@ -321,22 +314,14 @@ function extractIdleWorkingVisualisation(workingVisualisations: any[] | undefine
 const TRANSIENT_EFFECT_FILENAME = /scorchmark|scorch-mark|particles?\.png$/i;
 
 /** Finds every working_visualisations entry marked `always_draw: true`
- *  (Space Age mining drills' own convention — see graphicsForCraftingMachine's
- *  doc comment above for what confirmed this and how it differs from
- *  electromagnetic-plant's draw_in_states convention that
- *  extractIdleWorkingVisualisation handles) and extracts each one's
- *  north-facing art as a SpriteLayer, in their declared order — these
- *  entities' body is genuinely built from many always-visible pieces (drill
- *  head, support struts, wheels, output chute, ...), not one main sprite
- *  plus a single extra layer. Reads `north_animation` (this convention's
- *  per-direction key) falling back to `animation` (in case a future
- *  prototype mixes the two conventions), and — matching this pipeline's
- *  "static pose, no live rotation" simplification elsewhere — always the
- *  north-facing variant regardless of the entity's own placed direction.
- *  `baseSheet` is the filename graphicsForCraftingMachine already picked as
- *  `base` — confirmed by spike one always_draw entry (big-mining-drill's
- *  "still" body) is the exact same file, so it's skipped here rather than
- *  drawn a second time on top of itself. */
+ *  (Space Age mining drills' own convention, distinct from
+ *  electromagnetic-plant's draw_in_states that extractIdleWorkingVisualisation
+ *  handles) and extracts each one's north-facing art as a SpriteLayer, in
+ *  declared order — always the north variant, matching this pipeline's
+ *  "static pose, no live rotation" simplification elsewhere. `baseSheet` is
+ *  the file graphicsForCraftingMachine already picked as `base`; skipped
+ *  here if an always_draw entry duplicates it (confirmed by spike
+ *  big-mining-drill's own "still" body does exactly that). */
 function extractAlwaysDrawLayers(workingVisualisations: any[] | undefined, baseSheet: string | undefined): SpriteLayer[] {
   const entries = workingVisualisations?.filter((w) => w.always_draw === true) ?? [];
   const result: SpriteLayer[] = [];

@@ -67,16 +67,14 @@ export interface EntityRenderer {
 }
 
 /** Factorio's base resolution is 32px/tile at scale 1.0; every sprite's
- *  on-screen tile size is its pixel size * its own scale / 32 — confirmed
- *  during the M2 spike against assembling-machine-2's own scale-0.5 sprite
- *  sizing, and again when a flat footprint-based fudge (since removed) was
- *  found to badly mis-size poles and beacons. */
+ *  on-screen tile size is its pixel size * its own scale / 32 (confirmed
+ *  against assembling-machine-2's own scale-0.5 sprite sizing — a flat
+ *  footprint-based fudge badly mis-sized poles and beacons before this). */
 export const BASE_PIXELS_PER_TILE = 32;
 
 /** Fallback when no sprite is available yet (still loading) or the entity
- *  has no graphics data at all — an outline box, mirroring the M1 placeholder
- *  viewer's own graceful-degradation choice for unknown entities. Shared by
- *  every renderer below rather than each reimplementing it. */
+ *  has no graphics data at all — an outline box. Shared by every renderer
+ *  below rather than each reimplementing it. */
 export function drawOutline(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, tint: string): void {
   ctx.save();
   ctx.strokeStyle = tint;
@@ -214,14 +212,14 @@ export interface NeighborClassifier<TVariant extends string> {
  *  draws that one sprite. Used for pipes today — no shadow (confirmed by
  *  spike pipes cast none in the real game) and no direction dispatch (a
  *  pipe's own `direction` is meaningless; its shape is entirely determined
- *  by what it's connected to). Generic over the classifier so a future
- *  entity family with a different neighbor-bitmask sprite set (e.g. walls,
- *  which pipeGraph.ts's own MASK_TO_VARIANT does NOT cover — walls use a
- *  smaller sprite set with runtime rotation instead of one file per
- *  variant, confirmed by spike against data.raw.wall.stone-wall — would
- *  need its own classifier AND its own connectors-resolution shape, not
- *  just a drop-in classifier here) can reuse this renderer's draw
- *  mechanics without copy-pasting them. */
+ *  by what it's connected to).
+ *
+ *  Generic over the classifier, but NOT a drop-in fit for walls: walls use
+ *  a smaller sprite set with runtime rotation instead of one file per
+ *  neighbor combination (confirmed by spike against data.raw.wall.stone-wall),
+ *  so pipeGraph.ts's own bitmask-to-filename lookup doesn't cover them —
+ *  a wall renderer would need its own classifier AND its own
+ *  connectors-resolution shape, not just a classifier plugged in here. */
 export class ConnectionArtRenderer<TVariant extends string> implements EntityRenderer {
   constructor(
     private readonly classifier: NeighborClassifier<TVariant>,

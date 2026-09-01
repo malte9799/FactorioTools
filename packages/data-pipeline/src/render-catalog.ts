@@ -5,10 +5,9 @@
  * machines/beacons/belts/inserters already cover the entities that DO have a
  * rate; this catalog is what the renderer draws for everything else.
  *
- * Per the project plan's B.3, this is a small set of explicit per-kind
- * adapters, not one generic graphics_set interpreter — each shape below was
- * confirmed against the real dump before being written, not inferred from
- * Lua source.
+ * This is a small set of explicit per-kind adapters, not one generic
+ * graphics_set interpreter — each shape below was confirmed against the
+ * real dump before being written, not inferred from Lua source.
  */
 import type { EntityGraphics, MenuGroup, MenuPosition, RenderCatalog, RenderEntityProto, SpriteLayer } from "@factoriotools/engine";
 import type { LocaleTables } from "./locale.js";
@@ -124,27 +123,18 @@ const PIPE_VARIANT_KEYS = [
   "ending_right",
 ] as const;
 
-/** Splitters composite three genuinely separate pieces of art (confirmed by
- *  spike against data.raw.splitter.splitter): `belt_animation_set` is only
- *  the two belt lanes running under/through the splitter, using the exact
- *  same sheet + row layout as a plain transport belt (an earlier version of
- *  this mapper mistook this alone for the splitter's whole appearance,
- *  which is why it rendered as a single straight belt tile); the visible
- *  splitter body/case (with the priority-input/output arrows and
- *  filter-item slot) is a SEPARATE `structure` field — four independent
- *  whole-file animations, one per cardinal direction
- *  (structure.north/east/south/west); AND `structure_patch`, which is NOT
- *  the mostly-empty afterthought its name suggests — confirmed by spike
- *  north/south's own patch really is __core__/graphics/empty.png (skippable),
- *  but east/west's is a real non-empty sprite that fills in exactly the
- *  portion `structure` itself is too short to cover (north/south's
- *  structure sprite is 2.5 tiles wide, already spanning the whole splitter
- *  in one image; east/west's is only ~1.3 tiles along the direction of
- *  travel, short of the splitter's 1.8-tile length) — omitting it left the
- *  reported "top half of an east/west splitter is missing" gap. Returns
- *  undefined (outline fallback) if belt or structure is missing rather than
- *  drawing a half-composited splitter; a missing/empty patch is fine, it's
- *  legitimately absent for north/south. */
+/** Splitters composite three separate pieces of art (confirmed by spike
+ *  against data.raw.splitter.splitter): `belt_animation_set` is only the
+ *  two belt lanes running under/through the splitter (the same sheet/row
+ *  layout as a plain belt); the visible body/case is a SEPARATE `structure`
+ *  field — four whole-file animations, one per cardinal direction; and
+ *  `structure_patch` fills in a real gap for east/west specifically —
+ *  north/south's own structure sprite is 2.5 tiles wide and already spans
+ *  the whole splitter, but east/west's is only ~1.3 tiles along the
+ *  direction of travel, short of the splitter's 1.8-tile length, and the
+ *  patch (empty.png for north/south, a real sprite for east/west) covers
+ *  the remainder. Returns undefined (outline fallback) if belt or
+ *  structure is missing rather than drawing a half-composited splitter. */
 function splitterGraphics(proto: any): EntityGraphics | undefined {
   const belt = proto.belt_animation_set?.animation_set;
   const structure = proto.structure;
@@ -218,32 +208,20 @@ function gateGraphics(proto: any): EntityGraphics | undefined {
 }
 
 /** cargo-landing-pad and space-platform-hub have no single representative
- *  sprite the way the other graphics_set-keyed entities in PICTURE_FIELD
- *  do (confirmed by spike): their real base structure is
- *  graphics_set.picture, an array of RANDOM-APPEARANCE VARIANTS (5-6 of
- *  them), each itself a multi-layer composite of 4 equally-weighted edge/
- *  corner tile pieces (no single "main" layer, no shadow layer — confirmed
- *  by spike none of a variant's own layers carry draw_as_shadow) rather
- *  than one sprite plus decoration. graphics_set.animation (what
- *  extractPicture would otherwise reach for) is a separate decal/greebling
- *  overlay (a turbine detail), not the base structure.
+ *  sprite: their real base structure is graphics_set.picture, an array of
+ *  random-appearance variants, each a composite of 4 equally-weighted
+ *  edge/corner pieces with no single "main" layer (graphics_set.animation
+ *  is a separate decal, not the base structure). Takes variant [0] as the
+ *  static representative and composes its 4 layers as LayeredStaticGraphics
+ *  (first layer becomes `base`, rest go in `layers`).
  *
- *  KNOWN LIMITATION, not fully solved here: the real game also composites
- *  graphics_set.connections — a wall/corner connector system keyed by
- *  which sides have an adjacent platform (the same neighbor-classification
- *  shape ConnectionArtRenderer/pipeGraph.ts already handle for pipes, but
- *  with more variants) — which is what actually joins the 4 edge pieces
- *  into one continuous-looking platform boundary. This mapper only draws
- *  the 4 edge/corner pieces themselves, so an isolated pad renders as 4
- *  separate fragments with visible gaps rather than one closed border —
- *  confirmed by spike this is genuinely how it looks without `connections`,
- *  not a bug in the shift math. Real, but a smaller gap than the previous
- *  total absence of any sprite. Takes picture variant [0] as the static
- *  representative (matching this pipeline's existing "one representative
- *  pose/variant" simplification, e.g. walls' `single`) and composes its 4
- *  layers as LayeredStaticGraphics — the first becomes `base` (arbitrary
- *  among 4 equally-weighted pieces, but LayeredStatic needs exactly one
- *  `base`), the rest go in `layers`. */
+ *  KNOWN LIMITATION: the real game also composites graphics_set.connections
+ *  (a neighbor-aware wall/corner connector system, like pipeGraph.ts's
+ *  classifyPipe but with more variants) to join the 4 pieces into one
+ *  continuous border — not modelled here, so an isolated pad renders as 4
+ *  separate fragments with visible gaps. Confirmed this is genuinely how it
+ *  looks without `connections`, not a shift-math bug — still an
+ *  improvement over the previous total absence of any sprite. */
 function multiLayerPlatformGraphics(proto: any): EntityGraphics | undefined {
   const variant = proto.graphics_set?.picture?.[0];
   const layers: any[] | undefined = variant?.layers;

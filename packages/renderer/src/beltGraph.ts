@@ -12,19 +12,14 @@ export const enum Dir4 {
 }
 
 /** Collapses any blueprint direction value onto the nearest cardinal, since
- *  belts only ever face N/E/S/W. Always assumes the 16-way scheme
- *  (0-15, N/E/S/W at 0/4/8/12) — confirmed by spike against real 2.0
- *  blueprint exports (bp2.txt) that every direction value observed there
- *  (4, 8, 12, ...) is only consistent with 16-way, never 8-way. A previous
- *  version of this function tried to guess 8-way vs. 16-way from whether
- *  direction was <= 7, but that's fundamentally ambiguous: direction 4
- *  means "8-way South" under one scheme and "16-way East" under the other,
- *  and there's no way to tell which from the number alone — that ambiguity
- *  was silently misrotating every entity encoded with direction 4 or 8
- *  (undergrounds, inserters, poles, belts), not just underground belts.
- *  Factorio 2.0 blueprint exports are 16-way-only, so committing to that
- *  scheme unconditionally is correct for every blueprint this app actually
- *  reads, not a guess. */
+ *  belts only ever face N/E/S/W. Always assumes the 16-way scheme (0-15,
+ *  N/E/S/W at 0/4/8/12) — confirmed by spike that real 2.0 blueprint
+ *  exports are 16-way-only. Guessing 8-way vs. 16-way from whether
+ *  direction was <= 7 (a previous version's approach) is fundamentally
+ *  ambiguous — direction 4 means "8-way South" under one scheme and
+ *  "16-way East" under the other — and was silently misrotating every
+ *  entity encoded with direction 4 or 8 (undergrounds, inserters, poles,
+ *  belts), not just underground belts. */
 export function toCardinal(direction: number): Dir4 {
   const cardinalIndex = Math.round(direction / 4) % 4;
   return [Dir4.North, Dir4.East, Dir4.South, Dir4.West][cardinalIndex]!;
@@ -33,10 +28,9 @@ export function toCardinal(direction: number): Dir4 {
 export type BeltConnection = "straight" | "curve-left" | "curve-right" | "side-left" | "side-right";
 
 export interface BeltFrame {
-  /** Row index into the belt_animation_set sheet (0-19, confirmed by
-   *  spiking transport-belt's real sheet — see the project plan's M3 spike
-   *  note). Column is the animation frame, chosen by the renderer's clock,
-   *  independent of connection shape. */
+  /** Row index into the belt_animation_set sheet (0-19). Column is the
+   *  animation frame, chosen by the renderer's clock, independent of
+   *  connection shape. */
   row: number;
   connection: BeltConnection;
   /** Side-load rows (12-19) are NOT a standalone belt sprite — confirmed by

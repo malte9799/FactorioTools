@@ -63,10 +63,9 @@ export interface ScaleWarning {
  *  scale factor says you need" and "what those machines would actually
  *  produce given how they're fed right now" — keeps the bottleneck engine's
  *  diagnostic value visible without conflating it into computeScaleFactor's
- *  own number (per the project plan's explicit design choice: these are two
- *  different questions, not one). Only machine groups whose bottleneck is
- *  NOT "machine" (i.e. genuinely inserter/belt-limited) can ever produce a
- *  warning here. */
+ *  own number, since these are two different questions, not one. Only
+ *  machine groups whose bottleneck is NOT "machine" (i.e. genuinely
+ *  inserter/belt-limited) can ever produce a warning here. */
 export function findScaleWarnings(
   result: CalculationResult,
   scale: ScaleResult,
