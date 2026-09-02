@@ -1,7 +1,11 @@
 import type { PlacedEntity } from "@factoriotools/engine";
 import { SpriteAtlas } from "./spriteAtlas.js";
 import type { ResolvedVisual } from "./entityLookup.js";
-import { drawEntity } from "./entityDraw.js";
+import { collectEntity } from "./draw/collect.js";
+import { paint } from "./draw/paint.js";
+import { drawInserter } from "./sprites/inserter.js";
+import { NeighbourGrid } from "./neighbours/grid.js";
+import type { DrawCommand } from "./draw/commands.js";
 
 /** A small standalone canvas that draws exactly one entity, centered and
  *  scaled to fill the canvas — the real game's own machine-GUI preview pane
@@ -58,7 +62,14 @@ export function mountEntityPreview(container: HTMLElement, entityName: string, d
     ctx.save();
     ctx.translate(rect.width / 2, rect.height / 2);
     ctx.scale(pixelsPerTile, pixelsPerTile);
-    drawEntity({ ctx, atlas, animationFrame: 0 }, entity, visual, new Map(), new Map());
+    if (visual.inserterGraphics) {
+      drawInserter(ctx, atlas, entity, visual.inserterGraphics);
+    } else if (visual.graphics) {
+      const commands: DrawCommand[] = [];
+      const never = () => false;
+      collectEntity(commands, entity, visual, { grid: new NeighbourGrid(), isPipeLike: never, isWallLike: never, isBeltLike: never, animationFrame: 0 }, 1);
+      paint(ctx, atlas, commands);
+    }
     ctx.restore();
   }
 

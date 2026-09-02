@@ -2,11 +2,13 @@ import type { GameData, PlacedEntity, RenderCatalog } from "@factoriotools/engin
 import { Camera, PanMomentum } from "./camera.js";
 import { SpriteAtlas } from "./spriteAtlas.js";
 import { IconAtlas } from "./iconAtlas.js";
-import { buildVisualLookup, effectiveFootprint, type ResolvedVisual } from "./entityLookup.js";
-import { drawEntity, drawAltModeOverlay } from "./entityDraw.js";
-import { buildPositionIndex, buildBeltFrameCache, type BeltLookupEntity, type BeltFrame } from "./beltGraph.js";
-import { buildPipePositionIndex, buildPipeVariantCache, type PipeLookupEntity, type PipeVariant } from "./pipeGraph.js";
-import { buildWallPositionIndex, buildWallVariantCache, type WallLookupEntity, type WallSprite } from "./wallGraph.js";
+import { buildVisualLookup, effectiveFootprint, makeConnectorPredicates, type ResolvedVisual } from "./entityLookup.js";
+import { drawAltModeOverlay } from "./entityDraw.js";
+import { buildGrid, NeighbourGrid } from "./neighbours/grid.js";
+import { collectEntity, type CollectContext } from "./draw/collect.js";
+import { paint, drawOutline } from "./draw/paint.js";
+import type { DrawCommand } from "./draw/commands.js";
+import { drawInserter } from "./sprites/inserter.js";
 import { SpatialIndex, type IndexedBox } from "./spatialIndex.js";
 
 export interface HighlightRole {
@@ -86,12 +88,8 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
   canvas.style.width = "100%";
   canvas.style.height = "100%";
   canvas.style.cursor = "grab";
-  // Without these, the browser's own left-click drag-to-select-text (or, on
-  // some browsers, a native drag-image ghost of the canvas element itself)
-  // can kick in alongside pointer-capture panning — confirmed by spike, the
-  // canvas has no text content to select but is still a draggable element
-  // by default, which was enough to make panning feel like it was
-  // "fighting" the browser on some left-drags.
+  // Stops the browser's own drag-select and drag-image from fighting the
+  // pointer-capture pan.
   canvas.style.userSelect = "none";
   (canvas.style as CSSStyleDeclaration & { webkitUserDrag?: string }).webkitUserDrag = "none";
   canvas.draggable = false;
@@ -106,13 +104,10 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
   const camera = new Camera({ x: 0, y: 0, pixelsPerTile: 32 });
   const momentum = new PanMomentum();
 
+  const connectors = makeConnectorPredicates(visualLookup);
+
   let entities: PlacedEntity[] = [];
-  let positionIndex = new Map<string, BeltLookupEntity>();
-  let beltFrameCache = new Map<number, BeltFrame>();
-  let pipePositionIndex = new Map<string, PipeLookupEntity>();
-  let pipeVariantCache = new Map<number, PipeVariant>();
-  let wallPositionIndex = new Map<string, WallLookupEntity>();
-  let wallVariantCache = new Map<number, WallSprite>();
+  let grid = new NeighbourGrid();
   let spatialIndex = new SpatialIndex([]);
   let highlight: HighlightRole | null = null;
   let altMode = false;
@@ -150,31 +145,6 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
     return visualLookup.get(name);
   }
 
-  function isBeltLike(name: string): boolean {
-    return visualLookup.get(name)?.isBeltLike ?? false;
-  }
-
-  function isPipeLike(name: string): boolean {
-    const v = visualLookup.get(name);
-    return (v?.isPipeLike || v?.isPipeToGround) ?? false;
-  }
-
-  function isPipeToGround(name: string): boolean {
-    return visualLookup.get(name)?.isPipeToGround ?? false;
-  }
-
-  function isWallLike(name: string): boolean {
-    return visualLookup.get(name)?.isWallLike ?? false;
-  }
-
-  // Only real walls (not gates) go through WallRenderer's rotation-per-
-  // bitmask classification — a gate counts as a connecting neighbor (see
-  // WallLookupEntity's own doc comment) but has its own facing-based
-  // GateRenderer with no rotation-per-bitmask concept.
-  function isWall(name: string): boolean {
-    return visualLookup.get(name)?.graphics?.kind === "wall";
-  }
-
   /** Factorio snaps placement so the footprint's edges land on the tile
    *  grid: a footprint dimension's parity determines whether its CENTER
    *  coordinate is an integer or a half-integer. An odd-width footprint
@@ -204,15 +174,11 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
 
     drawGrid(ctx, camera, w, h);
 
-    // Frustum culling: only entities whose box overlaps the current viewport
-    // (padded a bit for sprites that overhang their tile footprint, e.g.
-    // belts/inserters) go through the expensive per-entity draw path below.
-    // `entities` order is preserved (queryRect returns an unordered Set) so
-    // paint order — and with it hit-testing's "topmost = last drawn"
-    // convention — stays exactly as before culling was added.
+    // Only entities overlapping the viewport are drawn; the padding covers
+    // sprites that overhang their own footprint.
     const viewTopLeft = camera.screenToWorld(0, 0, w, h);
     const viewBottomRight = camera.screenToWorld(w, h, w, h);
-    const CULL_PADDING = 2;
+    const CULL_PADDING = 4;
     const visibleIds = spatialIndex.queryRect(
       viewTopLeft.x - CULL_PADDING,
       viewTopLeft.y - CULL_PADDING,
@@ -222,34 +188,54 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
     const visibleEntities = entities.filter((e) => visibleIds.has(e.entityNumber));
 
     const hasHighlight = highlight !== null;
+    const alphaFor = (entity: PlacedEntity): number => {
+      if (!hasHighlight) return 1;
+      const h = highlight!;
+      const lit = h.producers.has(entity.entityNumber) || h.consumers.has(entity.entityNumber) || (h.beacons?.has(entity.entityNumber) ?? false);
+      return lit ? 1 : 0.28;
+    };
+
+    // Collect every sprite first, then paint them in one globally sorted
+    // pass, so no entity's shadow can land on a neighbour drawn before it.
+    const collectCtx: CollectContext = { grid, ...connectors, animationFrame };
+    const commands: DrawCommand[] = [];
+    const procedural: PlacedEntity[] = [];
     for (const entity of visibleEntities) {
       const visual = visualFor(entity.name);
       if (!visual) continue;
-
-      let alpha = 1;
-      if (hasHighlight) {
-        const isProducer = highlight!.producers.has(entity.entityNumber);
-        const isConsumer = highlight!.consumers.has(entity.entityNumber);
-        const isBeacon = highlight!.beacons?.has(entity.entityNumber) ?? false;
-        alpha = isProducer || isConsumer || isBeacon ? 1 : 0.28;
-      }
-      ctx.globalAlpha = alpha;
-      drawEntity({ ctx, atlas, animationFrame }, entity, visual, positionIndex, pipePositionIndex, beltFrameCache, pipeVariantCache, wallPositionIndex, wallVariantCache);
-
-      if (hasHighlight) {
-        const isProducer = highlight!.producers.has(entity.entityNumber);
-        const isConsumer = highlight!.consumers.has(entity.entityNumber);
-        if (isProducer || isConsumer) {
-          const [fw, fh] = effectiveFootprint(visual, entity.direction);
-          ctx.save();
-          ctx.globalAlpha = 0.35;
-          ctx.fillStyle = isProducer ? "#93d977" : "#ffcc80";
-          ctx.fillRect(entity.x - fw / 2, entity.y - fh / 2, fw, fh);
-          ctx.restore();
-        }
+      if (visual.inserterGraphics) {
+        procedural.push(entity);
+      } else if (visual.graphics) {
+        collectEntity(commands, entity, visual, collectCtx, alphaFor(entity));
+      } else {
+        const [fw, fh] = effectiveFootprint(visual, entity.direction);
+        drawOutline(ctx, entity.x, entity.y, fw, fh);
       }
     }
+    paint(ctx, atlas, commands);
+
+    for (const entity of procedural) {
+      const visual = visualFor(entity.name)!;
+      ctx.globalAlpha = alphaFor(entity);
+      drawInserter(ctx, atlas, entity, visual.inserterGraphics);
+    }
     ctx.globalAlpha = 1;
+
+    if (hasHighlight) {
+      for (const entity of visibleEntities) {
+        const visual = visualFor(entity.name);
+        if (!visual) continue;
+        const isProducer = highlight!.producers.has(entity.entityNumber);
+        const isConsumer = highlight!.consumers.has(entity.entityNumber);
+        if (!isProducer && !isConsumer) continue;
+        const [fw, fh] = effectiveFootprint(visual, entity.direction);
+        ctx.save();
+        ctx.globalAlpha = 0.35;
+        ctx.fillStyle = isProducer ? "#93d977" : "#ffcc80";
+        ctx.fillRect(entity.x - fw / 2, entity.y - fh / 2, fw, fh);
+        ctx.restore();
+      }
+    }
 
     // Alt-mode badges: a separate pass over every entity, after all sprites
     // are drawn, so a badge never gets painted over by a neighboring
@@ -280,9 +266,15 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
           modules: [],
           filterItems: [],
         };
-        ctx.globalAlpha = 0.5;
-        drawEntity({ ctx, atlas, animationFrame }, ghost, visual, positionIndex, pipePositionIndex);
-        ctx.globalAlpha = 1;
+        if (visual.inserterGraphics) {
+          ctx.globalAlpha = 0.5;
+          drawInserter(ctx, atlas, ghost, visual.inserterGraphics);
+          ctx.globalAlpha = 1;
+        } else if (visual.graphics) {
+          const ghostCommands: DrawCommand[] = [];
+          collectEntity(ghostCommands, ghost, visual, { grid, ...connectors, animationFrame }, 0.5);
+          paint(ctx, atlas, ghostCommands);
+        }
       }
     }
 
@@ -455,19 +447,11 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
 
   rafHandle = requestAnimationFrame(tick);
 
-  /** Rebuilds the position/spatial indices and kicks off sprite preloading
-   *  for a new entity list — everything loadBlueprint/updateEntities share.
-   *  Deliberately does NOT touch the camera; loadBlueprint adds that on top
-   *  for first-load/switch-blueprint, updateEntities doesn't so edits never
-   *  jump the view. */
+  /** Rebuilds the neighbour and spatial indices and preloads sprites. Leaves
+   *  the camera alone, so edits never jump the view. */
   function rebuildIndices(newEntities: PlacedEntity[]): void {
     entities = newEntities;
-    positionIndex = buildPositionIndex(entities, isBeltLike);
-    beltFrameCache = buildBeltFrameCache(entities, isBeltLike, positionIndex);
-    pipePositionIndex = buildPipePositionIndex(entities, isPipeLike, isPipeToGround);
-    pipeVariantCache = buildPipeVariantCache(entities, isPipeLike, pipePositionIndex);
-    wallPositionIndex = buildWallPositionIndex(entities, isWallLike);
-    wallVariantCache = buildWallVariantCache(entities, isWall, wallPositionIndex);
+    grid = buildGrid(entities);
 
     const boxes: IndexedBox[] = [];
     for (const e of entities) {
@@ -483,86 +467,19 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
     }
     spatialIndex = new SpatialIndex(boxes);
 
-    // Kick off sprite loads for everything now visible, then redraw once the
-    // initial burst settles so entities don't sit as outlines. Exhaustive
-    // over EntityGraphics' `kind` so a new variant added later fails to
-    // compile here instead of silently never preloading its sheets (they'd
-    // still eventually load on first draw-time atlas.get() miss, just with
-    // a visible outline-box flash first).
+    // Preload every sheet the visible entities reference, so nothing flashes
+    // as an outline on first paint.
     for (const e of entities) {
-      const graphics = visualFor(e.name)?.graphics;
-      if (!graphics) continue;
-      switch (graphics.kind) {
-        case "sprite-4way":
-        case "static":
-        case "belt":
-        case "underground":
-          atlas.get(graphics.sheet);
-          if (graphics.kind !== "belt" && graphics.kind !== "underground" && graphics.shadow) atlas.get(graphics.shadow.sheet);
-          break;
-        case "layered-static":
-          atlas.get(graphics.base.sheet);
-          if (graphics.shadow) atlas.get(graphics.shadow.sheet);
-          for (const layer of graphics.layers) atlas.get(layer.sheet);
-          break;
-        case "pipe":
-          for (const layer of Object.values(graphics.connectors)) atlas.get(layer.sheet);
-          break;
-        case "splitter":
-          atlas.get(graphics.belt.sheet);
-          atlas.get(graphics.body.north.sheet);
-          atlas.get(graphics.body.east.sheet);
-          atlas.get(graphics.body.south.sheet);
-          atlas.get(graphics.body.west.sheet);
-          break;
-        case "gate":
-          atlas.get(graphics.sprites.north.sheet);
-          atlas.get(graphics.sprites.east.sheet);
-          atlas.get(graphics.shadows.north.sheet);
-          atlas.get(graphics.shadows.east.sheet);
-          break;
-        case "fusion-generator":
-          // Unlike gate, all 4 directions are genuinely distinct art here
-          // (no north===south/east===west aliasing), so all 8 sheets need
-          // preloading, not just the 2 gate gets away with.
-          for (const dir of ["north", "east", "south", "west"] as const) {
-            atlas.get(graphics.sprites[dir].sheet);
-            atlas.get(graphics.shadows[dir].sheet);
-          }
-          break;
-        case "pipe-to-ground":
-        case "valve":
-          atlas.get(graphics.sprites.north.sheet);
-          atlas.get(graphics.sprites.east.sheet);
-          atlas.get(graphics.sprites.south.sheet);
-          atlas.get(graphics.sprites.west.sheet);
-          break;
-        case "wall":
-          for (const l of [
-            graphics.single, graphics.singleShadow,
-            graphics.straightVertical, graphics.straightVerticalShadow,
-            graphics.straightHorizontal, graphics.straightHorizontalShadow,
-            graphics.cornerRight, graphics.cornerRightShadow,
-            graphics.cornerLeft, graphics.cornerLeftShadow,
-            graphics.t, graphics.tShadow,
-            graphics.endingRight, graphics.endingRightShadow,
-            graphics.endingLeft, graphics.endingLeftShadow,
-          ]) {
-            if (l) atlas.get(l.sheet);
-          }
-          break;
-        case "straight-rail":
-          for (const dir of ["north", "northeast", "east", "southeast", "south", "southwest", "west", "northwest"] as const) {
-            const layers = graphics[dir];
-            atlas.get(layers.stonePathBackground.sheet);
-            atlas.get(layers.stonePath.sheet);
-            atlas.get(layers.ties.sheet);
-            atlas.get(layers.backplates.sheet);
-            atlas.get(layers.metals.sheet);
-          }
-          break;
-        case "none":
-          break;
+      const visual = visualFor(e.name);
+      for (const layer of visual?.graphics?.layers ?? []) {
+        const sprites = "per" in layer ? Object.values(layer.sprites) : [layer.sprites];
+        for (const sprite of sprites) atlas.get(sprite.sheet);
+      }
+      const ins = visual?.inserterGraphics;
+      if (ins) {
+        atlas.get(ins.platform.sheet);
+        atlas.get(ins.handBase.sheet);
+        atlas.get(ins.handOpen.sheet);
       }
     }
     void atlas.whenIdle().then(() => draw());
@@ -601,10 +518,7 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
       altMode = enabled;
     },
     setInteractionMode(newMode) {
-      // A fresh entry into 'place' mode (including switching which entity
-      // is selected in the palette) starts facing north again — carrying
-      // over a stale rotation from whatever was placed previously would be
-      // surprising, not convenient.
+      // Entering place mode, or switching entity, resets the facing.
       if (newMode.kind === "place" && (mode.kind !== "place" || mode.entityName !== newMode.entityName)) {
         ghostDirection = 0;
       }
@@ -707,10 +621,8 @@ function drawGrid(ctx: CanvasRenderingContext2D, camera: Camera, viewportW: numb
   ctx.fillStyle = checkerPattern(ctx);
   ctx.fillRect(startX, startY, endX - startX, endY - startY);
 
-  // A subtle chunk-boundary line every 8 tiles (Factorio's own chunk size)
-  // survives from the old line-grid — still useful for gauging scale/
-  // alignment at a glance, just layered over the checker instead of being
-  // the whole floor. Skipped once zoomed out far enough that it'd be noise.
+  // Chunk boundary every 8 tiles, hidden when zoomed out far enough to be
+  // noise.
   if (camera.state.pixelsPerTile >= 16) {
     ctx.strokeStyle = "rgba(255,255,255,0.06)";
     ctx.lineWidth = 1.5 / camera.state.pixelsPerTile;
