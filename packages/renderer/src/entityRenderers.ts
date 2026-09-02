@@ -33,8 +33,9 @@
 import type { PlacedEntity, SpriteLayer } from "@factoriotools/engine";
 import { effectiveFootprint, type ResolvedVisual } from "./entityLookup.js";
 import type { SpriteAtlas } from "./spriteAtlas.js";
-import { classifyBelt, toCardinal, opposite, STRAIGHT_ROW, Dir4, type BeltLookupEntity, type BeltFrame } from "./beltGraph.js";
+import { classifyBelt, toCardinal, toDir8Name, opposite, STRAIGHT_ROW, Dir4, type BeltLookupEntity, type BeltFrame } from "./beltGraph.js";
 import { classifyPipe, type PipeLookupEntity, type PipeVariant } from "./pipeGraph.js";
+import { classifyWall, type WallLookupEntity, type WallSprite } from "./wallGraph.js";
 
 export interface DrawContext {
   ctx: CanvasRenderingContext2D;
@@ -60,6 +61,8 @@ export interface RenderContext extends DrawContext {
   pipePositionIndex: Map<string, PipeLookupEntity>;
   beltFrameCache: Map<number, BeltFrame>;
   pipeVariantCache: Map<number, PipeVariant>;
+  wallPositionIndex: Map<string, WallLookupEntity>;
+  wallVariantCache: Map<number, WallSprite>;
 }
 
 /** One rendering strategy for one family of EntityGraphics `kind`s. Every
@@ -107,12 +110,13 @@ export function drawLayer(dc: DrawContext, layer: SpriteLayer, x: number, y: num
   if (!img) return;
   const frameW = layer.frameWidth || img.width;
   const frameH = layer.frameHeight || img.height;
-  let srcX = 0;
+  let srcX = layer.srcX ?? 0;
+  const srcY = layer.srcY ?? 0;
   const directionCount = layer.directionCount ?? 1;
   if (direction !== undefined && directionCount > 1) {
     const cardinal = toCardinal(direction);
     const column = Math.round(cardinal / 4) % directionCount;
-    srcX = column * frameW;
+    srcX += column * frameW;
   }
   // direction===undefined (static/animated-in-place layers) always draws
   // frame (0,0) — the same static pose the game's own blueprint/ghost
@@ -123,7 +127,7 @@ export function drawLayer(dc: DrawContext, layer: SpriteLayer, x: number, y: num
   const [shiftX, shiftY] = layer.shift ?? [0, 0];
   const cx = x + shiftX;
   const cy = y + shiftY;
-  dc.ctx.drawImage(img, srcX, 0, frameW, frameH, cx - drawW / 2, cy - drawH / 2, drawW, drawH);
+  dc.ctx.drawImage(img, srcX, srcY, frameW, frameH, cx - drawW / 2, cy - drawH / 2, drawW, drawH);
 }
 
 /** The common case (Sprite4WayGraphics): shadow first (if present), then
@@ -170,29 +174,33 @@ export class LayeredStaticRenderer implements EntityRenderer {
   }
 }
 
-const GATE_SLOT: Record<Dir4, "north" | "east" | "south" | "west"> = {
+/** Cardinal Dir4 -> DirectionalSpriteSet's own slot names — shared by every
+ *  renderer whose graphics use that 4-file shape (GateRenderer,
+ *  DirectionalStaticRenderer below). */
+const DIRECTION_SLOT: Record<Dir4, "north" | "east" | "south" | "west"> = {
   [Dir4.North]: "north",
   [Dir4.East]: "east",
   [Dir4.South]: "south",
   [Dir4.West]: "west",
 };
 
-/** GateGraphics: picks its sprite+shadow pair by facing (see
- *  DirectionalSpriteSet's own doc comment in types.ts for why gates need 4
- *  file-per-direction slots rather than SpriteLayer's directionCount
- *  columns — north/south alias the same vertical file, east/west alias the
- *  same horizontal one), then draws shadow-then-sprite like
- *  Sprite4WayRenderer does, at frame (0,0) — the closed resting pose, no
- *  live open/close animation. */
-export class GateRenderer implements EntityRenderer {
+/** DirectionalSpriteGraphics: picks its sprite+shadow pair by facing (see
+ *  DirectionalSpriteSet's own doc comment in types.ts for why gates/
+ *  fusion-generator need 4 file-per-direction slots rather than
+ *  SpriteLayer's directionCount columns — a gate's north/south alias the
+ *  same vertical file and east/west alias the same horizontal one;
+ *  fusion-generator's 4 slots are all genuinely distinct), then draws
+ *  shadow-then-sprite like Sprite4WayRenderer does, at frame (0,0) — the
+ *  closed/idle resting pose, no live animation. */
+export class DirectionalSpriteRenderer implements EntityRenderer {
   draw(rc: RenderContext, entity: PlacedEntity, visual: ResolvedVisual, x: number, y: number): void {
     const graphics = visual.graphics;
     const [w, h] = visual.tileFootprint;
-    if (!graphics || graphics.kind !== "gate") {
+    if (!graphics || (graphics.kind !== "gate" && graphics.kind !== "fusion-generator")) {
       drawOutline(rc.ctx, x, y, w, h, "rgba(230,221,206,0.45)");
       return;
     }
-    const slot = GATE_SLOT[toCardinal(entity.direction)];
+    const slot = DIRECTION_SLOT[toCardinal(entity.direction)];
     const sprite = graphics.sprites[slot];
     const shadow = graphics.shadows[slot];
     if (!rc.atlas.get(sprite.sheet)) {
@@ -201,6 +209,94 @@ export class GateRenderer implements EntityRenderer {
     }
     drawLayer(rc, shadow, x, y);
     drawLayer(rc, sprite, x, y);
+  }
+}
+
+/** DirectionalStaticGraphics: picks its sprite by facing via the same
+ *  DIRECTION_SLOT lookup GateRenderer uses (see DirectionalStaticGraphics'
+ *  own doc comment in types.ts) — no shadow layer exists for either kind
+ *  this covers (pipe-to-ground, valve), unlike gates. */
+export class DirectionalStaticRenderer implements EntityRenderer {
+  draw(rc: RenderContext, entity: PlacedEntity, visual: ResolvedVisual, x: number, y: number): void {
+    const graphics = visual.graphics;
+    const [w, h] = visual.tileFootprint;
+    if (!graphics || (graphics.kind !== "pipe-to-ground" && graphics.kind !== "valve")) {
+      drawOutline(rc.ctx, x, y, w, h, "rgba(230,221,206,0.45)");
+      return;
+    }
+    const sprite = graphics.sprites[DIRECTION_SLOT[toCardinal(entity.direction)]];
+    if (!rc.atlas.get(sprite.sheet)) {
+      drawOutline(rc.ctx, x, y, w, h, "rgba(230,221,206,0.45)");
+      return;
+    }
+    drawLayer(rc, sprite, x, y);
+  }
+}
+
+const WALL_SHADOW_KEY: Record<WallSprite, "singleShadow" | "straightVerticalShadow" | "straightHorizontalShadow" | "cornerRightShadow" | "cornerLeftShadow" | "tShadow" | "endingRightShadow" | "endingLeftShadow"> = {
+  single: "singleShadow",
+  straightVertical: "straightVerticalShadow",
+  straightHorizontal: "straightHorizontalShadow",
+  cornerRight: "cornerRightShadow",
+  cornerLeft: "cornerLeftShadow",
+  t: "tShadow",
+  endingRight: "endingRightShadow",
+  endingLeft: "endingLeftShadow",
+};
+
+/** WallGraphics: picks one of 8 base sprites by neighbor classification
+ *  (see classifyWall/MASK_TO_WALL_SPRITE in wallGraph.ts for the bitmask
+ *  -> sprite mapping, and its own doc comment for why these sprites are
+ *  never rotated) and draws shadow-then-sprite, same as Sprite4WayRenderer. */
+export class WallRenderer implements EntityRenderer {
+  draw(rc: RenderContext, entity: PlacedEntity, visual: ResolvedVisual, x: number, y: number): void {
+    const graphics = visual.graphics;
+    const [w, h] = visual.tileFootprint;
+    if (!graphics || graphics.kind !== "wall") {
+      drawOutline(rc.ctx, x, y, w, h, "rgba(230,221,206,0.45)");
+      return;
+    }
+    const spriteKey = rc.wallVariantCache.get(entity.entityNumber) ?? classifyWall({ x: Math.round(entity.x), y: Math.round(entity.y) }, rc.wallPositionIndex);
+    const shadowKey = WALL_SHADOW_KEY[spriteKey];
+    const sprite = graphics[spriteKey];
+    const shadow = graphics[shadowKey];
+    if (!rc.atlas.get(sprite.sheet)) {
+      drawOutline(rc.ctx, x, y, w, h, "rgba(230,221,206,0.45)");
+      return;
+    }
+    if (shadow) drawLayer(rc, shadow, x, y);
+    drawLayer(rc, sprite, x, y);
+  }
+}
+
+/** RailGraphics: picks the 5-layer set for the entity's own 8-way facing
+ *  (toDir8Name — straight-rail is the only entity in this codebase with
+ *  real diagonal-direction art, see RailGraphics' own doc comment in
+ *  types.ts), then draws all 5 layers bottom-to-top in the fixed order
+ *  the real game uses (stonePathBackground, stonePath, ties, backplates,
+ *  metals — same order as teoxoy/factorio-blueprint-editor's draw_rail).
+ *  None of these are shadows in the usual sense (rails have no separate
+ *  shadow layer, confirmed by spike) — stonePathBackground IS the visual
+ *  "shadow"/ballast-bed equivalent, just not flagged draw_as_shadow in the
+ *  source data, so it's drawn like any other opaque layer via drawLayer. */
+export class RailRenderer implements EntityRenderer {
+  draw(rc: RenderContext, entity: PlacedEntity, visual: ResolvedVisual, x: number, y: number): void {
+    const graphics = visual.graphics;
+    const [w, h] = visual.tileFootprint;
+    if (!graphics || graphics.kind !== "straight-rail") {
+      drawOutline(rc.ctx, x, y, w, h, "rgba(230,221,206,0.45)");
+      return;
+    }
+    const layers = graphics[toDir8Name(entity.direction)];
+    if (!rc.atlas.get(layers.metals.sheet)) {
+      drawOutline(rc.ctx, x, y, w, h, "rgba(230,221,206,0.45)");
+      return;
+    }
+    drawLayer(rc, layers.stonePathBackground, x, y);
+    drawLayer(rc, layers.stonePath, x, y);
+    drawLayer(rc, layers.ties, x, y);
+    drawLayer(rc, layers.backplates, x, y);
+    drawLayer(rc, layers.metals, x, y);
   }
 }
 

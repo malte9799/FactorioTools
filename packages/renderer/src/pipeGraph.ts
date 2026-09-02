@@ -117,12 +117,20 @@ export function classifyPipe(
   return MASK_TO_VARIANT[mask]!;
 }
 
-/** pipe-to-ground's single open side is its own facing direction (the end
- *  that visibly sticks into the ground is the CLOSED end — confirmed by
- *  spike the socket/connection ring renders on the opposite side from the
- *  ground-facing flare). */
+/** pipe-to-ground's single open side is its own facing direction — ported
+ *  from teoxoy/factorio-blueprint-editor's checkFluidConnection (see the
+ *  project's own "use reference renderer for ground truth" memory): its
+ *  fluid_box's one "normal" pipe_connection sits at the entity's own tile
+ *  (offset [0,0], confirmed by spike against the real dump) with
+ *  connection.direction 0, so the match condition reduces to "the
+ *  neighbor's own placed direction equals the direction pointing back from
+ *  the neighbor to this tile" — i.e. the open side faces the SAME way the
+ *  entity itself faces, not the opposite. (An earlier version of this
+ *  function had the sign backwards — confirmed wrong live in-app: both
+ *  ends of an underground-to-underground pair opened toward each other
+ *  instead of outward toward their plain-pipe neighbors.) */
 export function pipeToGroundOpenSide(direction: number): Dir4 {
-  return opposite(toCardinal(direction));
+  return toCardinal(direction);
 }
 
 /** Builds the `x,y -> entity` lookup classifyPipe needs, once per loaded

@@ -30,6 +30,12 @@ export interface ResolvedVisual {
    *  know a neighboring pipe-to-ground only opens on ONE side (its own
    *  facing), unlike a plain pipe/heat-pipe which is open on all 4. */
   isPipeToGround: boolean;
+  /** True for walls AND gates — wallGraph.ts's neighbor classification
+   *  should consider both when deciding a wall's connection shape (a gate
+   *  sitting in a wall run connects to the walls on either side of it in
+   *  the real game), even though only walls themselves go through
+   *  WallRenderer's rotation-per-bitmask logic. */
+  isWallLike: boolean;
   /** True for inserters — dispatches to the platform+hand composite draw
    *  instead of drawSprite4Way, regardless of whether inserterGraphics
    *  resolved (missing graphics still routes here so it gets the inserter-
@@ -68,6 +74,7 @@ export function buildVisualLookup(data: GameData, catalog: RenderCatalog): Map<s
       isBeltLike: false,
       isPipeLike: false,
       isPipeToGround: false,
+      isWallLike: false,
       isInserter: false,
       isMachine: true,
       isBeacon: false,
@@ -83,6 +90,7 @@ export function buildVisualLookup(data: GameData, catalog: RenderCatalog): Map<s
       isBeltLike: false,
       isPipeLike: false,
       isPipeToGround: false,
+      isWallLike: false,
       isInserter: false,
       isMachine: false,
       isBeacon: true,
@@ -108,6 +116,7 @@ export function buildVisualLookup(data: GameData, catalog: RenderCatalog): Map<s
       isBeltLike: true,
       isPipeLike: false,
       isPipeToGround: false,
+      isWallLike: false,
       isInserter: false,
       isMachine: false,
       isBeacon: false,
@@ -126,6 +135,7 @@ export function buildVisualLookup(data: GameData, catalog: RenderCatalog): Map<s
       isBeltLike: false,
       isPipeLike: false,
       isPipeToGround: false,
+      isWallLike: false,
       isInserter: true,
       isMachine: false,
       isBeacon: false,
@@ -143,6 +153,7 @@ export function buildVisualLookup(data: GameData, catalog: RenderCatalog): Map<s
       isBeltLike: e.graphics?.kind === "belt" || e.graphics?.kind === "underground" || e.graphics?.kind === "splitter",
       isPipeLike: e.graphics?.kind === "pipe",
       isPipeToGround: e.name === "pipe-to-ground",
+      isWallLike: e.graphics?.kind === "wall" || e.name === "gate",
       isInserter: false,
       isMachine: false,
       isBeacon: false,

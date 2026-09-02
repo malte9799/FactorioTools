@@ -81,6 +81,17 @@ export interface SpriteLayer {
    *  animation grid (frame_count 32, line_length 8 -> 4 rows x 8 cols).
    *  Defaults to 1. */
   lineLength?: number;
+  /** Fixed pixel offset of this specific frame within the sheet, for the
+   *  rare case the frame isn't at a `directionCount`/`lineLength`-derived
+   *  grid position — straight-rail's pictures.{8 directions} each name a
+   *  literal {x,y} pixel offset into one shared packed sheet (confirmed by
+   *  spike: north and east share a file but sit at different (x,y), not
+   *  different grid columns of the same row), which directionCount's
+   *  column-index math can't express. Added (not multiplied into srcX like
+   *  directionCount's column does) on top of whatever frame the normal
+   *  direction/animation logic already picked. Defaults to 0. */
+  srcX?: number;
+  srcY?: number;
   /** This layer's own shift, in tiles, from the entity's collision-box
    *  center — Factorio's real dump carries this on essentially every
    *  layer (confirmed by spike against chemical-plant: shift [0.016,
@@ -116,8 +127,11 @@ export type EntityGraphics =
   | BeltEntityGraphics
   | UndergroundGraphics
   | PipeGraphics
+  | DirectionalStaticGraphics
   | SplitterGraphics
-  | GateGraphics
+  | DirectionalSpriteGraphics
+  | WallGraphics
+  | RailGraphics
   | { kind: "none" };
 
 /** The common case: one main sprite (direction-indexed or animation-cycle,
@@ -192,6 +206,92 @@ export interface PipeGraphics {
   connectors: Record<string, SpriteLayer>;
 }
 
+/** 4 entirely separate whole-file sprites, one per cardinal facing, no
+ *  shadow layer — pipe-to-ground (pictures.{north,east,south,west},
+ *  confirmed by spike) and valve (animations.{north,east,south,west}, same
+ *  shape) both use this; the entity's own `direction` field picks which
+ *  one to draw. Distinct from DirectionalSpriteGraphics, which DOES have a
+ *  shadow slot. See pipeToGroundOpenSide in pipeGraph.ts for how
+ *  pipe-to-ground's `direction` also decides which side visually connects
+ *  to a neighbor (valve has no such neighbor-facing concept — it's drawn
+ *  and that's it, like any other Sprite4WayGraphics would be if it had a
+ *  directionCount column sheet instead of 4 separate files). */
+export interface DirectionalStaticGraphics {
+  kind: "pipe-to-ground" | "valve";
+  sprites: DirectionalSpriteSet;
+}
+
+/** Neighbor-aware connection art for walls — same idea as PipeGraphics, but
+ *  walls do NOT have one pre-rendered sprite per neighbor bitmask the way
+ *  pipes do (confirmed by spike against data.raw.wall.stone-wall's own
+ *  `pictures`): only 8 base sprites exist (single/straight_vertical/
+ *  straight_horizontal/corner_right_down/corner_left_down/t_up/ending_left/
+ *  ending_right). Both corner pieces and both ending pieces already have
+ *  dedicated art for their two "natural" orientations (corner: N|E and
+ *  N|W; ending: N-only, leaning right or left) — only the other two
+ *  orientations of each, and T's other three orientations, are drawn as a
+ *  rotation of the nearest dedicated sprite. Rendered by WallRenderer
+ *  (packages/renderer/src/entityRenderers.ts) rather than
+ *  ConnectionArtRenderer, since the rotation-per-bitmask mapping has no
+ *  equivalent in pipes' pure sheet-lookup model. */
+export interface WallGraphics {
+  kind: "wall";
+  single: SpriteLayer;
+  singleShadow?: ShadowLayer;
+  straightVertical: SpriteLayer;
+  straightVerticalShadow?: ShadowLayer;
+  straightHorizontal: SpriteLayer;
+  straightHorizontalShadow?: ShadowLayer;
+  cornerRight: SpriteLayer;
+  cornerRightShadow?: ShadowLayer;
+  cornerLeft: SpriteLayer;
+  cornerLeftShadow?: ShadowLayer;
+  t: SpriteLayer;
+  tShadow?: ShadowLayer;
+  endingRight: SpriteLayer;
+  endingRightShadow?: ShadowLayer;
+  endingLeft: SpriteLayer;
+  endingLeftShadow?: ShadowLayer;
+}
+
+/** One rail piece's 5 always-drawn static layers, in the exact bottom-to-
+ *  top draw order the real game uses (confirmed against
+ *  teoxoy/factorio-blueprint-editor's draw_straight_rail — see
+ *  [[feedback_reference_renderer_for_ground_truth]]): the stone ballast
+ *  background, the stone path itself, the wooden ties, the metal rail's
+ *  backplates, then the visible metal rails on top. None of these are
+ *  animated in this pipeline's model (each has a `variation_count` for
+ *  random appearance, matching belts — frame 0 is always drawn, per this
+ *  project's static-pose convention). */
+export interface RailLayerSet {
+  stonePathBackground: SpriteLayer;
+  stonePath: SpriteLayer;
+  ties: SpriteLayer;
+  backplates: SpriteLayer;
+  metals: SpriteLayer;
+}
+
+/** straight-rail (and, later, curved/diagonal rail kinds) has genuinely
+ *  distinct art for all 8 compass directions (data.raw.straight-rail.
+ *  straight-rail.pictures.{north,northeast,east,southeast,south,southwest,
+ *  west,northwest} — confirmed by spike), unlike every other directional
+ *  entity in this codebase which only ever needs 4. Diagonal directions
+ *  (northeast/southeast/southwest/northwest) are visually larger (a 45°
+ *  rail spans more screen area than a cardinal one) and use a different
+ *  raw sprite size — RailRenderer doesn't need to know this, it just draws
+ *  whichever SpriteLayer's own frameWidth/frameHeight/shift says. */
+export interface RailGraphics {
+  kind: "straight-rail";
+  north: RailLayerSet;
+  northeast: RailLayerSet;
+  east: RailLayerSet;
+  southeast: RailLayerSet;
+  south: RailLayerSet;
+  southwest: RailLayerSet;
+  west: RailLayerSet;
+  northwest: RailLayerSet;
+}
+
 /** Splitters composite a belt-lane animation (`belt_animation_set`) with a
  *  separate body/case sprite (`structure`, one whole PNG per cardinal
  *  direction — not columns in a shared sheet) plus a `structurePatch` that
@@ -223,9 +323,10 @@ export interface SplitterGraphics {
  *  see SplitterGraphics) and gates (vertical_animation/horizontal_animation
  *  are 2 distinct PNGs — a gate only ever has 2 real facings since it sits
  *  on a straight wall run, so north/south alias the same `vertical` sprite
- *  and east/west alias `horizontal`; GateGraphics still stores all 4 slots
- *  rather than adding a "2 vs 4 variants" branch to every reader of this
- *  type). Keys index directly by toCardinal()'s own 0/4/8/12 scheme (see
+ *  and east/west alias `horizontal`; DirectionalSpriteGraphics still stores
+ *  all 4 slots rather than adding a "2 vs 4 variants" branch to every
+ *  reader of this type). Keys index directly by toCardinal()'s own
+ *  0/4/8/12 scheme (see
  *  packages/renderer/src/beltGraph.ts). */
 export interface DirectionalSpriteSet<TLayer = SpriteLayer> {
   north: TLayer;
@@ -234,18 +335,21 @@ export interface DirectionalSpriteSet<TLayer = SpriteLayer> {
   west: TLayer;
 }
 
-/** Gates have no simple static picture (confirmed by spike: no plain
- *  `picture`/`graphics_set` field at all) — their real art is
- *  vertical_animation/horizontal_animation, each a {sprite, shadow} pair
- *  and an open/close animation-cycle grid (frame_count/line_length), always
- *  drawn at frame (0,0) — the closed resting pose — matching this
- *  pipeline's "static preview, no live animation" convention for every
- *  other multi-frame entity. A gate only has 2 real orientations (it sits
- *  on a straight wall run, so its own `direction` is either N/S or E/W),
- *  represented via DirectionalSpriteSet with north===south and east===west
- *  rather than inventing a 2-slot variant of that type. */
-export interface GateGraphics {
-  kind: "gate";
+/** A main sprite + shadow pair per cardinal facing, always drawn at frame
+ *  (0,0) (this pipeline's "static preview, no live animation" convention).
+ *  Two real entities use this:
+ *  - Gates: no simple static picture (confirmed by spike: no plain
+ *    `picture`/`graphics_set` field at all) — their real art is
+ *    vertical_animation/horizontal_animation, each a {sprite, shadow} pair.
+ *    A gate only has 2 real orientations (it sits on a straight wall run,
+ *    so its own `direction` is either N/S or E/W), represented here with
+ *    north===south and east===west rather than inventing a 2-slot variant
+ *    of DirectionalSpriteSet.
+ *  - fusion-generator: graphics_set.{north,east,south,west}_graphics_set.
+ *    animation, each independently a real {sprite, shadow} pair — all 4
+ *    slots are genuinely distinct here, no aliasing. */
+export interface DirectionalSpriteGraphics {
+  kind: "gate" | "fusion-generator";
   sprites: DirectionalSpriteSet;
   shadows: DirectionalSpriteSet;
 }

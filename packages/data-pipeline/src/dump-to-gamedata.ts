@@ -627,6 +627,31 @@ function sheetsOf(graphics: EntityGraphics | undefined): string[] {
     }
     case "gate":
       return [graphics.sprites.north, graphics.sprites.east, graphics.shadows.north, graphics.shadows.east].map((l) => l.sheet);
+    case "fusion-generator":
+      return [
+        graphics.sprites.north, graphics.sprites.east, graphics.sprites.south, graphics.sprites.west,
+        graphics.shadows.north, graphics.shadows.east, graphics.shadows.south, graphics.shadows.west,
+      ].map((l) => l.sheet);
+    case "pipe-to-ground":
+    case "valve":
+      return [graphics.sprites.north, graphics.sprites.east, graphics.sprites.south, graphics.sprites.west].map((l) => l.sheet);
+    case "wall": {
+      const layers = [
+        graphics.single, graphics.singleShadow,
+        graphics.straightVertical, graphics.straightVerticalShadow,
+        graphics.straightHorizontal, graphics.straightHorizontalShadow,
+        graphics.cornerRight, graphics.cornerRightShadow,
+        graphics.cornerLeft, graphics.cornerLeftShadow,
+        graphics.t, graphics.tShadow,
+        graphics.endingRight, graphics.endingRightShadow,
+        graphics.endingLeft, graphics.endingLeftShadow,
+      ];
+      return layers.filter((l): l is SpriteLayer => l !== undefined).map((l) => l.sheet);
+    }
+    case "straight-rail": {
+      const dirs = [graphics.north, graphics.northeast, graphics.east, graphics.southeast, graphics.south, graphics.southwest, graphics.west, graphics.northwest];
+      return dirs.flatMap((d) => [d.stonePathBackground, d.stonePath, d.ties, d.backplates, d.metals]).map((l) => l.sheet);
+    }
     case "none":
       return [];
   }

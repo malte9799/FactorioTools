@@ -3,6 +3,7 @@ export * from "./spriteAtlas.js";
 export * from "./iconAtlas.js";
 export * from "./entityLookup.js";
 export * from "./beltGraph.js";
+export * from "./wallGraph.js";
 export * from "./spatialIndex.js";
 export * from "./entityRenderers.js";
 export * from "./entityDraw.js";

@@ -6,6 +6,7 @@ import { buildVisualLookup, effectiveFootprint, type ResolvedVisual } from "./en
 import { drawEntity, drawAltModeOverlay } from "./entityDraw.js";
 import { buildPositionIndex, buildBeltFrameCache, type BeltLookupEntity, type BeltFrame } from "./beltGraph.js";
 import { buildPipePositionIndex, buildPipeVariantCache, type PipeLookupEntity, type PipeVariant } from "./pipeGraph.js";
+import { buildWallPositionIndex, buildWallVariantCache, type WallLookupEntity, type WallSprite } from "./wallGraph.js";
 import { SpatialIndex, type IndexedBox } from "./spatialIndex.js";
 
 export interface HighlightRole {
@@ -110,6 +111,8 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
   let beltFrameCache = new Map<number, BeltFrame>();
   let pipePositionIndex = new Map<string, PipeLookupEntity>();
   let pipeVariantCache = new Map<number, PipeVariant>();
+  let wallPositionIndex = new Map<string, WallLookupEntity>();
+  let wallVariantCache = new Map<number, WallSprite>();
   let spatialIndex = new SpatialIndex([]);
   let highlight: HighlightRole | null = null;
   let altMode = false;
@@ -158,6 +161,18 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
 
   function isPipeToGround(name: string): boolean {
     return visualLookup.get(name)?.isPipeToGround ?? false;
+  }
+
+  function isWallLike(name: string): boolean {
+    return visualLookup.get(name)?.isWallLike ?? false;
+  }
+
+  // Only real walls (not gates) go through WallRenderer's rotation-per-
+  // bitmask classification — a gate counts as a connecting neighbor (see
+  // WallLookupEntity's own doc comment) but has its own facing-based
+  // GateRenderer with no rotation-per-bitmask concept.
+  function isWall(name: string): boolean {
+    return visualLookup.get(name)?.graphics?.kind === "wall";
   }
 
   /** Factorio snaps placement so the footprint's edges land on the tile
@@ -219,7 +234,7 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
         alpha = isProducer || isConsumer || isBeacon ? 1 : 0.28;
       }
       ctx.globalAlpha = alpha;
-      drawEntity({ ctx, atlas, animationFrame }, entity, visual, positionIndex, pipePositionIndex, beltFrameCache, pipeVariantCache);
+      drawEntity({ ctx, atlas, animationFrame }, entity, visual, positionIndex, pipePositionIndex, beltFrameCache, pipeVariantCache, wallPositionIndex, wallVariantCache);
 
       if (hasHighlight) {
         const isProducer = highlight!.producers.has(entity.entityNumber);
@@ -451,6 +466,8 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
     beltFrameCache = buildBeltFrameCache(entities, isBeltLike, positionIndex);
     pipePositionIndex = buildPipePositionIndex(entities, isPipeLike, isPipeToGround);
     pipeVariantCache = buildPipeVariantCache(entities, isPipeLike, pipePositionIndex);
+    wallPositionIndex = buildWallPositionIndex(entities, isWallLike);
+    wallVariantCache = buildWallVariantCache(entities, isWall, wallPositionIndex);
 
     const boxes: IndexedBox[] = [];
     for (const e of entities) {
@@ -503,6 +520,46 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
           atlas.get(graphics.sprites.east.sheet);
           atlas.get(graphics.shadows.north.sheet);
           atlas.get(graphics.shadows.east.sheet);
+          break;
+        case "fusion-generator":
+          // Unlike gate, all 4 directions are genuinely distinct art here
+          // (no north===south/east===west aliasing), so all 8 sheets need
+          // preloading, not just the 2 gate gets away with.
+          for (const dir of ["north", "east", "south", "west"] as const) {
+            atlas.get(graphics.sprites[dir].sheet);
+            atlas.get(graphics.shadows[dir].sheet);
+          }
+          break;
+        case "pipe-to-ground":
+        case "valve":
+          atlas.get(graphics.sprites.north.sheet);
+          atlas.get(graphics.sprites.east.sheet);
+          atlas.get(graphics.sprites.south.sheet);
+          atlas.get(graphics.sprites.west.sheet);
+          break;
+        case "wall":
+          for (const l of [
+            graphics.single, graphics.singleShadow,
+            graphics.straightVertical, graphics.straightVerticalShadow,
+            graphics.straightHorizontal, graphics.straightHorizontalShadow,
+            graphics.cornerRight, graphics.cornerRightShadow,
+            graphics.cornerLeft, graphics.cornerLeftShadow,
+            graphics.t, graphics.tShadow,
+            graphics.endingRight, graphics.endingRightShadow,
+            graphics.endingLeft, graphics.endingLeftShadow,
+          ]) {
+            if (l) atlas.get(l.sheet);
+          }
+          break;
+        case "straight-rail":
+          for (const dir of ["north", "northeast", "east", "southeast", "south", "southwest", "west", "northwest"] as const) {
+            const layers = graphics[dir];
+            atlas.get(layers.stonePathBackground.sheet);
+            atlas.get(layers.stonePath.sheet);
+            atlas.get(layers.ties.sheet);
+            atlas.get(layers.backplates.sheet);
+            atlas.get(layers.metals.sheet);
+          }
           break;
         case "none":
           break;

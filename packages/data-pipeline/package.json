@@ -6,6 +6,7 @@
   "scripts": {
     "dump-to-gamedata": "tsx src/dump-to-gamedata.ts",
     "extract-sprites": "tsx src/extract-sprites.ts",
+    "build-debug-lab": "tsx src/build-debug-lab.ts",
     "check": "tsc --noEmit"
   },
   "dependencies": {

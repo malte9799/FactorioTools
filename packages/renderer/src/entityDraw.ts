@@ -10,6 +10,7 @@ import type { ResolvedVisual } from "./entityLookup.js";
 import type { IconAtlas } from "./iconAtlas.js";
 import type { BeltLookupEntity, BeltFrame } from "./beltGraph.js";
 import type { PipeLookupEntity, PipeVariant } from "./pipeGraph.js";
+import type { WallLookupEntity, WallSprite } from "./wallGraph.js";
 import {
   type DrawContext,
   type RenderContext,
@@ -19,8 +20,11 @@ import {
   BeltRenderer,
   UndergroundBeltRenderer,
   SplitterRenderer,
-  GateRenderer,
+  DirectionalSpriteRenderer,
+  WallRenderer,
   InserterRenderer,
+  DirectionalStaticRenderer,
+  RailRenderer,
   pipeRenderer,
 } from "./entityRenderers.js";
 
@@ -29,8 +33,11 @@ const layeredStaticRenderer = new LayeredStaticRenderer();
 const beltRenderer = new BeltRenderer();
 const undergroundBeltRenderer = new UndergroundBeltRenderer();
 const splitterRenderer = new SplitterRenderer();
-const gateRenderer = new GateRenderer();
+const directionalSpriteRenderer = new DirectionalSpriteRenderer();
+const wallRenderer = new WallRenderer();
 const inserterRenderer = new InserterRenderer();
+const directionalStaticRenderer = new DirectionalStaticRenderer();
+const railRenderer = new RailRenderer();
 
 /** Selects the EntityRenderer instance for a resolved visual — the only
  *  place that maps "what kind of thing is this" to "which rendering
@@ -44,7 +51,10 @@ function rendererFor(visual: ResolvedVisual): EntityRenderer {
   if (visual.isBeltLike && visual.graphics?.kind === "belt") return beltRenderer;
   if (visual.graphics?.kind === "underground") return undergroundBeltRenderer;
   if (visual.graphics?.kind === "splitter") return splitterRenderer;
-  if (visual.graphics?.kind === "gate") return gateRenderer;
+  if (visual.graphics?.kind === "gate" || visual.graphics?.kind === "fusion-generator") return directionalSpriteRenderer;
+  if (visual.graphics?.kind === "wall") return wallRenderer;
+  if (visual.graphics?.kind === "straight-rail") return railRenderer;
+  if (visual.graphics?.kind === "pipe-to-ground" || visual.graphics?.kind === "valve") return directionalStaticRenderer;
   if (visual.isPipeLike && visual.graphics?.kind === "pipe") return pipeRenderer;
   if (visual.isInserter) return inserterRenderer;
   if (visual.graphics?.kind === "layered-static") return layeredStaticRenderer;
@@ -59,8 +69,10 @@ export function drawEntity(
   pipePositionIndex: Map<string, PipeLookupEntity>,
   beltFrameCache: Map<number, BeltFrame> = new Map(),
   pipeVariantCache: Map<number, PipeVariant> = new Map(),
+  wallPositionIndex: Map<string, WallLookupEntity> = new Map(),
+  wallVariantCache: Map<number, WallSprite> = new Map(),
 ): void {
-  const rc: RenderContext = { ...dc, positionIndex, pipePositionIndex, beltFrameCache, pipeVariantCache };
+  const rc: RenderContext = { ...dc, positionIndex, pipePositionIndex, beltFrameCache, pipeVariantCache, wallPositionIndex, wallVariantCache };
   rendererFor(visual).draw(rc, entity, visual, entity.x, entity.y);
 }
 

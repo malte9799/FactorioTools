@@ -25,6 +25,22 @@ export function toCardinal(direction: number): Dir4 {
   return [Dir4.North, Dir4.East, Dir4.South, Dir4.West][cardinalIndex]!;
 }
 
+/** RailGraphics' own 8 named slots — straight-rail is the first entity kind
+ *  in this codebase with genuinely distinct art for the 4 diagonal
+ *  directions too (every other directional entity collapses to 4-way via
+ *  toCardinal). Values match the 16-way blueprint scheme's own diagonal
+ *  slots (2/6/10/14 — see this file's own top doc comment), confirmed
+ *  against teoxoy/factorio-blueprint-editor's getDirName8Way. */
+export type Dir8Name = "north" | "northeast" | "east" | "southeast" | "south" | "southwest" | "west" | "northwest";
+const DIR8_NAMES: Dir8Name[] = ["north", "northeast", "east", "southeast", "south", "southwest", "west", "northwest"];
+
+/** Rounds any blueprint direction value onto the nearest of the 8 named
+ *  compass slots (0,2,4,...,14 -> north,northeast,east,...,northwest). */
+export function toDir8Name(direction: number): Dir8Name {
+  const index = Math.round(direction / 2) % 8;
+  return DIR8_NAMES[index]!;
+}
+
 export type BeltConnection = "straight" | "curve-left" | "curve-right" | "side-left" | "side-right";
 
 export interface BeltFrame {

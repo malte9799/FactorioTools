@@ -9,7 +9,7 @@
  * graphics_set interpreter — each shape below was confirmed against the
  * real dump before being written, not inferred from Lua source.
  */
-import type { EntityGraphics, MenuGroup, MenuPosition, RenderCatalog, RenderEntityProto, SpriteLayer } from "@factoriotools/engine";
+import type { EntityGraphics, MenuGroup, MenuPosition, RailLayerSet, RenderCatalog, RenderEntityProto, SpriteLayer } from "@factoriotools/engine";
 import type { LocaleTables } from "./locale.js";
 
 type Raw = Record<string, Record<string, any>>;
@@ -40,7 +40,13 @@ function footprintOf(proto: any): [number, number] {
  *  (outline fallback) instead of picking up something wrong. */
 function extractPicture(source: any): EntityGraphics | undefined {
   if (!source) return undefined;
-  const layers: any[] | undefined = source.layers ?? source.sheets ?? (source.filename ? [source] : undefined);
+  // `filenames` (plural, an array of files the frame strip is split
+  // across — confirmed by spike on thruster: 64 frames as 4 lines x 8/file
+  // across 2 files) is treated as a single layer via its first file only;
+  // frame (0,0) — this pipeline's static-pose convention — always lives in
+  // file 0, so the later files covering only later frames are never needed.
+  const single = source.filename ? source : source.filenames ? { ...source, filename: source.filenames[0] } : undefined;
+  const layers: any[] | undefined = source.layers ?? source.sheets ?? (single ? [single] : undefined);
   if (!layers) {
     // One level deeper: {picture: {...}}, {animation: {...}}, or the
     // per-direction {north: {...}, ...} wrapper.
@@ -53,6 +59,24 @@ function extractPicture(source: any): EntityGraphics | undefined {
     // but those go through extractPipeConnectors instead since they need
     // ALL variants, not just one representative).
     if (source.single) return extractPicture(source.single);
+    // Turrets' graphics_set wraps its real base sprite one level deeper
+    // still, under base_visualisation.animation (a per-direction
+    // {north,east,south,west[,diagonals]} wrapper the `source.north` check
+    // above already knows how to recurse into) — confirmed by spike on
+    // flamethrower-turret/railgun-turret, the two turret prototypes whose
+    // `folded_animation` is itself a per-direction wrapper around the gun
+    // NOZZLE piece rather than a {layers:[...]} object for the turret's own
+    // base/body (gun-turret/laser-turret/rocket-turret's folded_animation
+    // IS the base body directly, no graphics_set needed). base_visualisation
+    // is itself sometimes an array of random-appearance variants rather
+    // than a single object (confirmed on tesla-turret) — variant [0] is
+    // taken as the static representative, same convention as
+    // multiLayerPlatformGraphics uses for cargo-landing-pad's own variant
+    // array.
+    if (source.base_visualisation) {
+      const bv = Array.isArray(source.base_visualisation) ? source.base_visualisation[0] : source.base_visualisation;
+      return extractPicture(bv?.animation);
+    }
     // Rail signals wrap their real sprite one level deeper still, under
     // ground_picture_set.structure.layers (confirmed by spike) — the
     // direction_count:16/frame_count:3 on that layer are the signal's own
@@ -207,21 +231,125 @@ function gateGraphics(proto: any): EntityGraphics | undefined {
   };
 }
 
-/** cargo-landing-pad and space-platform-hub have no single representative
- *  sprite: their real base structure is graphics_set.picture, an array of
- *  random-appearance variants, each a composite of 4 equally-weighted
- *  edge/corner pieces with no single "main" layer (graphics_set.animation
- *  is a separate decal, not the base structure). Takes variant [0] as the
- *  static representative and composes its 4 layers as LayeredStaticGraphics
- *  (first layer becomes `base`, rest go in `layers`).
+/** fusion-generator has no plain static picture field either (confirmed by
+ *  spike) — its real art is graphics_set.{north,east,south,west}_graphics_
+ *  set.animation, each a {main sprite, shadow} pair via the standard
+ *  {layers:[...]} shape. All 4 directions have distinct dedicated art
+ *  (unlike gates' 2-orientation aliasing), so this reuses GateGraphics'
+ *  DirectionalSpriteSet+shadow shape as a 4-real-direction case of it. */
+function fusionGeneratorGraphics(proto: any): EntityGraphics | undefined {
+  const gs = proto.graphics_set;
+  const north = extractSpriteWithShadow(gs?.north_graphics_set?.animation);
+  const east = extractSpriteWithShadow(gs?.east_graphics_set?.animation);
+  const south = extractSpriteWithShadow(gs?.south_graphics_set?.animation);
+  const west = extractSpriteWithShadow(gs?.west_graphics_set?.animation);
+  if (!north || !east || !south || !west) return undefined;
+  return {
+    kind: "fusion-generator",
+    sprites: { north: north.sprite, east: east.sprite, south: south.sprite, west: west.sprite },
+    shadows: { north: north.shadow, east: east.shadow, south: south.shadow, west: west.shadow },
+  };
+}
+
+/** pipe-to-ground and valve each have 4 facings as 4 entirely separate
+ *  whole-file sprites (pipe-to-ground: pictures.{north,east,south,west};
+ *  valve: animations.{north,east,south,west} — same shape, each a bare
+ *  {filename,width,height,scale} with no shadow, confirmed by spike), so
+ *  this pulls all 4 directly rather than picking one representative the
+ *  way extractPicture does for other entities. Mirrors gateGraphics'
+ *  DirectionalSpriteSet shape, just with no shadow slot needed. */
+function directionalStaticGraphics(proto: any, field: string, kind: "pipe-to-ground" | "valve"): EntityGraphics | undefined {
+  const pics = proto[field];
+  // Valve's sprites use a single `size` (square) instead of separate
+  // width/height (confirmed by spike on one-way-valve) — pipe-to-ground
+  // uses width/height directly, so both are checked.
+  const toLayer = (p: any): SpriteLayer | undefined =>
+    p?.filename ? { sheet: p.filename, frameWidth: p.width ?? p.size, frameHeight: p.height ?? p.size, scale: p.scale ?? 1 } : undefined;
+  const north = toLayer(pics?.north);
+  const east = toLayer(pics?.east);
+  const south = toLayer(pics?.south);
+  const west = toLayer(pics?.west);
+  if (!north || !east || !south || !west) return undefined;
+  return { kind, sprites: { north, east, south, west } };
+}
+
+const RAIL_DIRECTIONS = ["north", "northeast", "east", "southeast", "south", "southwest", "west", "northwest"] as const;
+const RAIL_LAYER_KEYS: { field: string; out: keyof RailLayerSet }[] = [
+  { field: "stone_path_background", out: "stonePathBackground" },
+  { field: "stone_path", out: "stonePath" },
+  { field: "ties", out: "ties" },
+  { field: "backplates", out: "backplates" },
+  { field: "metals", out: "metals" },
+];
+
+/** straight-rail's pictures.{8 directions} each carry the same 5 named
+ *  layers (stone_path_background, stone_path, ties, backplates, metals —
+ *  confirmed by spike), every one a bare {filename,width,height,shift,
+ *  scale,variation_count} sprite with no `layers` wrapper. Draw order
+ *  bottom-to-top matches teoxoy/factorio-blueprint-editor's draw_rail
+ *  exactly (background first, metals on top) — see
+ *  [[feedback_reference_renderer_for_ground_truth]].
  *
- *  KNOWN LIMITATION: the real game also composites graphics_set.connections
- *  (a neighbor-aware wall/corner connector system, like pipeGraph.ts's
- *  classifyPipe but with more variants) to join the 4 pieces into one
- *  continuous border — not modelled here, so an isolated pad renders as 4
- *  separate fragments with visible gaps. Confirmed this is genuinely how it
- *  looks without `connections`, not a shift-math bug — still an
- *  improvement over the previous total absence of any sprite. */
+ *  Only 4 of the 8 direction entries are ever populated in the real dump
+ *  (north/northeast/east/southeast); south/southwest/west/northwest are
+ *  literally `{}` (confirmed by spike) — a rail piece looks pixel-identical
+ *  whether "facing" one way or its 180°-opposite along the same line, so
+ *  Factorio doesn't duplicate the art. Falls back to `RAIL_OPPOSITE_DIR`'s
+ *  pictures for the 4 empty ones, exactly matching draw_rail's own
+ *  `if (Object.entries(ps).length === 0) ps = pictures[dir % 8]` fallback
+ *  (that modulo, in the reference's OWN 0/2/4/6/8/10/12/14 8-way encoding,
+ *  is precisely "the opposite direction's 4-way-equivalent slot"). */
+const RAIL_OPPOSITE_DIR: Record<(typeof RAIL_DIRECTIONS)[number], (typeof RAIL_DIRECTIONS)[number]> = {
+  north: "north",
+  northeast: "northeast",
+  east: "east",
+  southeast: "southeast",
+  south: "north",
+  southwest: "northeast",
+  west: "east",
+  northwest: "southeast",
+};
+
+function railGraphics(proto: any): EntityGraphics | undefined {
+  const pics = proto.pictures;
+  const toLayer = (p: any): SpriteLayer | undefined =>
+    p?.filename
+      ? { sheet: p.filename, frameWidth: p.width, frameHeight: p.height, shift: p.shift, scale: p.scale ?? 1, srcX: p.x ?? 0, srcY: p.y ?? 0 }
+      : undefined;
+  const result: any = { kind: "straight-rail" };
+  for (const dir of RAIL_DIRECTIONS) {
+    const dirPics = pics?.[dir];
+    const source = dirPics && Object.keys(dirPics).length > 0 ? dirPics : pics?.[RAIL_OPPOSITE_DIR[dir]];
+    const layers: any = {};
+    for (const { field, out } of RAIL_LAYER_KEYS) {
+      const layer = toLayer(source?.[field]);
+      if (!layer) return undefined;
+      layers[out] = layer;
+    }
+    result[dir] = layers;
+  }
+  return result;
+}
+
+/** cargo-landing-pad, space-platform-hub, and cargo-bay have no single
+ *  representative sprite: their real base structure is graphics_set.picture,
+ *  an array of random-appearance variants (each a composite of 1+ layers
+ *  with no single "main" layer — graphics_set.animation, where present, is
+ *  a separate decal, not the base structure). Takes variant [0] as the
+ *  static representative and composes its layers as LayeredStaticGraphics
+ *  (first layer becomes `base`, rest go in `layers` — for cargo-bay, whose
+ *  variants only ever have the one layer, this degenerates to a plain
+ *  single-sprite draw with an empty `layers` array).
+ *
+ *  KNOWN LIMITATION (cargo-landing-pad/space-platform-hub only, whose
+ *  variants really are 4 equally-weighted edge/corner pieces): the real
+ *  game also composites graphics_set.connections (a neighbor-aware
+ *  wall/corner connector system, like pipeGraph.ts's classifyPipe but with
+ *  more variants) to join the 4 pieces into one continuous border — not
+ *  modelled here, so an isolated pad renders as 4 separate fragments with
+ *  visible gaps. Confirmed this is genuinely how it looks without
+ *  `connections`, not a shift-math bug — still an improvement over the
+ *  previous total absence of any sprite. */
 function multiLayerPlatformGraphics(proto: any): EntityGraphics | undefined {
   const variant = proto.graphics_set?.picture?.[0];
   const layers: any[] | undefined = variant?.layers;
@@ -256,6 +384,53 @@ function extractSpriteWithShadow(anim: any): { sprite: SpriteLayer; shadow: Spri
   return { sprite: toLayer(main), shadow: toLayer(shadow) };
 }
 
+/** Walls have no single representative sprite and no pipe-style
+ *  one-file-per-neighbor-bitmask set either: confirmed by spike against
+ *  data.raw.wall.stone-wall, `pictures` has exactly 8 named variants
+ *  (single, straight_vertical, straight_horizontal, corner_right_down,
+ *  corner_left_down, t_up, ending_right, ending_left), each a real
+ *  {layers:[main,shadow]} pair extractSpriteWithShadow already knows how
+ *  to unwrap. corner_right_down/corner_left_down are their own dedicated
+ *  sprites (N|E and N|W respectively) — WallRenderer only falls back to
+ *  rotating one of them for the other 2 corner cases, similarly t_up is
+ *  the only dedicated T orientation and ending_right/ending_left the only
+ *  two dedicated ending orientations (see WallGraphics' own doc comment in
+ *  types.ts). Returns undefined (outline fallback) if any of the 8
+ *  required variants is missing, matching this pipeline's existing
+ *  all-or-nothing convention for other multi-piece entities (splitters,
+ *  gates). */
+function wallGraphics(proto: any): EntityGraphics | undefined {
+  const pics = proto.pictures;
+  const single = extractSpriteWithShadow(pics?.single);
+  const straightVertical = extractSpriteWithShadow(pics?.straight_vertical);
+  const straightHorizontal = extractSpriteWithShadow(pics?.straight_horizontal);
+  const cornerRight = extractSpriteWithShadow(pics?.corner_right_down);
+  const cornerLeft = extractSpriteWithShadow(pics?.corner_left_down);
+  const t = extractSpriteWithShadow(pics?.t_up);
+  const endingRight = extractSpriteWithShadow(pics?.ending_right);
+  const endingLeft = extractSpriteWithShadow(pics?.ending_left);
+  if (!single || !straightVertical || !straightHorizontal || !cornerRight || !cornerLeft || !t || !endingRight || !endingLeft) return undefined;
+  return {
+    kind: "wall",
+    single: single.sprite,
+    singleShadow: single.shadow,
+    straightVertical: straightVertical.sprite,
+    straightVerticalShadow: straightVertical.shadow,
+    straightHorizontal: straightHorizontal.sprite,
+    straightHorizontalShadow: straightHorizontal.shadow,
+    cornerRight: cornerRight.sprite,
+    cornerRightShadow: cornerRight.shadow,
+    cornerLeft: cornerLeft.sprite,
+    cornerLeftShadow: cornerLeft.shadow,
+    t: t.sprite,
+    tShadow: t.shadow,
+    endingRight: endingRight.sprite,
+    endingRightShadow: endingRight.shadow,
+    endingLeft: endingLeft.sprite,
+    endingLeftShadow: endingLeft.shadow,
+  };
+}
+
 function extractPipeConnectors(pictures: any): EntityGraphics | undefined {
   const connectors: Record<string, { sheet: string; frameWidth: number; frameHeight: number; scale?: number }> = {};
   for (const key of PIPE_VARIANT_KEYS) {
@@ -286,7 +461,6 @@ const ROTATES_FOOTPRINT = new Set(["splitter", "fast-splitter", "express-splitte
 const PICTURE_FIELD: Record<string, string> = {
   container: "picture",
   "logistic-container": "picture",
-  wall: "pictures",
   roboport: "base",
   "storage-tank": "pictures",
   pump: "animations",
@@ -317,6 +491,35 @@ const PICTURE_FIELD: Record<string, string> = {
   "asteroid-collector": "graphics_set",
   "agricultural-tower": "graphics_set",
   "mining-drill": "graphics_set",
+  // Turrets: graphics_set.base_visualisation.animation is the turret's real
+  // stationary base/body sprite (per-direction {north,east,south,west[,
+  // diagonals]} — extractPicture's own base_visualisation fallback recurses
+  // into it), universal across every ammo/electric/fluid-turret prototype
+  // (confirmed by spike). `folded_animation` was tried first but is NOT a
+  // reliable substitute: for gun-turret/laser-turret/tesla-turret/
+  // rocket-turret it happens to BE the base body, but for flamethrower-
+  // turret/railgun-turret it's only the gun NOZZLE piece (a much smaller,
+  // separately-shifted sprite), which rendered as a nonsensical fragment
+  // rather than the turret's actual body. Each base sprite also has a
+  // `*-mask` layer (a team-color tint mask) extractPicture doesn't know
+  // about; picking the first non-shadow layer as `main` skips it, matching
+  // the "one main + one shadow" simplification used everywhere else here.
+  "ammo-turret": "graphics_set",
+  "electric-turret": "graphics_set",
+  "fluid-turret": "graphics_set",
+  // artillery-turret has no folded_animation of its own — base_picture is
+  // its stationary base/platform only (no rotating cannon barrel, same
+  // "static pose" simplification already used for rocket-silo/inserters).
+  "artillery-turret": "base_picture",
+  reactor: "picture",
+  "linked-container": "picture",
+  "infinity-container": "picture",
+  "electric-energy-interface": "picture",
+  thruster: "graphics_set",
+  "burner-generator": "animation",
+  "fusion-reactor": "graphics_set",
+  "selector-combinator": "sprites",
+  "lightning-attractor": "chargable_graphics",
 };
 
 const SIMPLE_STATIC_TABLES = Object.keys(PICTURE_FIELD);
@@ -384,11 +587,11 @@ export function buildRenderCatalog(raw: Raw, locale: LocaleTables, version: stri
   // they're filtered rather than cluttering the catalog.
   const NOT_PLACEABLE = /^(crash-site-|factorio-logo-|factorio-space-age-logo)/;
 
-  const add = (proto: any, graphics: EntityGraphics | undefined) => {
+  const add = (proto: any, graphics: EntityGraphics | undefined, footprintOverride?: [number, number]) => {
     if (entities[proto.name] || NOT_PLACEABLE.test(proto.name)) return;
     entities[proto.name] = {
       name: proto.name,
-      tileFootprint: footprintOf(proto),
+      tileFootprint: footprintOverride ?? footprintOf(proto),
       graphics,
       rotatesFootprint: ROTATES_FOOTPRINT.has(proto.name),
       localised: locale.entityName.get(proto.name) ?? proto.name,
@@ -418,33 +621,35 @@ export function buildRenderCatalog(raw: Raw, locale: LocaleTables, version: stri
     add(proto, extractPipeConnectors(proto.pictures));
   }
   for (const proto of Object.values(raw["pipe-to-ground"] ?? {})) {
-    // pipe-to-ground's 4 facings are 4 entirely separate image files (not
-    // columns of one sheet the way poles/other direction_count>1 entities
-    // are), which doesn't fit either extractPicture's single-sheet model
-    // or the neighbor-classified connector model above — so, matching
-    // this pipeline's existing "static preview pose" simplification, only
-    // the north-facing file is kept as a single representative sprite;
-    // the entity still renders (just always in its north pose) rather
-    // than needing a third graphics variant just for this one case.
-    add(proto, extractPicture(proto.pictures?.north));
+    add(proto, directionalStaticGraphics(proto, "pictures", "pipe-to-ground"));
   }
   for (const proto of Object.values(raw["heat-pipe"] ?? {})) {
     add(proto, extractPipeConnectors(proto.connection_sprites));
   }
-  // Underground belts have their OWN static entrance/exit sprites
-  // (structure.direction_in / direction_out, confirmed by spike on
-  // fast-underground-belt — a single 768x768 sheet, 4 columns (one per
-  // cardinal facing, same convention as poles) x rows, with direction_out
-  // at row 0 and direction_in at row 1 (their sheet.y offsets — 0 and
-  // frameHeight — confirm this; only these two rows are ever drawn from,
-  // the sheet's other rows are unrelated belt-animation content this
-  // renderer doesn't use). direction_in is the entrance a belt feeds into
-  // (item disappears); direction_out is the exit it re-emerges from — which
-  // one a given placed entity needs depends on its own blueprint `type`
-  // field (PlacedEntity.undergroundType), not derivable from direction
-  // alone, so both row offsets are kept rather than picking one
-  // "representative" sprite as this mapper originally (incorrectly) did.
-  for (const proto of Object.values(raw["underground-belt"] ?? {})) {
+  for (const proto of Object.values(raw.valve ?? {})) {
+    add(proto, directionalStaticGraphics(proto, "animations", "valve"));
+  }
+  // Underground belts AND loaders (loader/loader-1x1, all tiers) share the
+  // exact same structure.direction_in / direction_out shape (confirmed by
+  // spike on both fast-underground-belt and loader-1x1) — a single sheet, 4
+  // columns (one per cardinal facing) x 2 rows, direction_out at row 0 and
+  // direction_in at row 1 (their sheet.y offsets — 0 and frameHeight —
+  // confirm this; only these two rows are ever drawn from, the sheet's
+  // other rows on underground belts specifically are unrelated
+  // belt-animation content this renderer doesn't use). direction_in is the
+  // entrance a belt feeds into (item disappears); direction_out is the exit
+  // it re-emerges from — which one a given placed entity needs depends on
+  // its own blueprint `type` field (PlacedEntity.undergroundType, read
+  // generically off ANY entity with that field, not underground-belt-
+  // specific — loaders use the identical "input"/"output" convention for
+  // which side of the container they load/unload), not derivable from
+  // direction alone, so both row offsets are kept rather than picking one
+  // "representative" sprite. Loaders' own belt-strip animation
+  // (belt_animation_set) and container-transition overlay layers
+  // (belt_reader) are NOT modelled — this draws the loader's structural
+  // housing only, the same "good enough static representative" tradeoff
+  // this pipeline already makes for e.g. inserters' platform. */
+  for (const proto of Object.values({ ...(raw["underground-belt"] ?? {}), ...(raw["loader-1x1"] ?? {}), ...(raw.loader ?? {}) })) {
     const outSheet = proto.structure?.direction_out?.sheet;
     const inSheet = proto.structure?.direction_in?.sheet;
     const sheet = outSheet ?? inSheet;
@@ -471,7 +676,29 @@ export function buildRenderCatalog(raw: Raw, locale: LocaleTables, version: stri
   for (const proto of Object.values(raw.gate ?? {})) {
     add(proto, gateGraphics(proto));
   }
-  for (const table of ["cargo-landing-pad", "space-platform-hub"]) {
+  for (const proto of Object.values(raw["fusion-generator"] ?? {})) {
+    add(proto, fusionGeneratorGraphics(proto));
+  }
+  for (const proto of Object.values(raw.wall ?? {})) {
+    add(proto, wallGraphics(proto));
+  }
+  // Rails' own selection_box is a fixed generic hitbox shared identically
+  // across straight/curved/diagonal rail prototypes (confirmed by spike —
+  // NOT usable as a visual footprint the way every other entity's
+  // selection_box is), so this passes an explicit footprint override
+  // instead of footprintOf's default collision_box read. [2,2] matches
+  // straight-rail's own real collision_box (confirmed by spike) for
+  // cardinal directions; diagonal-direction rails visually overhang this
+  // (their sprite is ~6 tiles across, per the raw dump) but a 2x2
+  // footprint is still the correct SELECTION/placement-grid size for every
+  // direction (rails use Factorio's 2x2 build_grid_size uniformly) — this
+  // pipeline's existing snapAxis placement logic (packages/renderer/src/
+  // render.ts) already derives snapping from footprint parity generically,
+  // so [2,2] gets that right for free without rail-specific snap code.
+  for (const proto of Object.values(raw["straight-rail"] ?? {})) {
+    add(proto, railGraphics(proto), [2, 2]);
+  }
+  for (const table of ["cargo-landing-pad", "space-platform-hub", "cargo-bay"]) {
     for (const proto of Object.values(raw[table] ?? {})) {
       add(proto, multiLayerPlatformGraphics(proto));
     }
