@@ -1,32 +1,24 @@
-/** Regenerates packages/engine/src/data/debug-lab.ts's DEBUG_BLUEPRINT
- *  string. Decodes the blueprint currently baked into that file, appends
- *  (or replaces, if already present) named connection-shape test suites in
- *  free space below the existing layout, then re-encodes and writes the
- *  file back out.
+/** Regenerates DEBUG_BLUEPRINT in packages/engine/src/data/debug-lab.ts: a
+ *  catalogue of every renderable entity, grouped by type and sorted by size,
+ *  plus the connection-shape suites that cover neighbour-aware art.
  *
  *  Run with: npm run build-debug-lab --workspace=@factoriotools/data-pipeline
  *
- *  Per the file's own doc comment, DEBUG_BLUEPRINT is meant to grow: when a
- *  render bug is found and fixed, add a new suite function here (or extend
- *  an existing one) rather than hand-editing the base64 string directly. */
+ *  Regenerate this whenever a render bug is found, so the fix keeps a
+ *  standing check. */
 import { readFileSync, writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
-import {
-  decodeBlueprintString,
-  encodeBlueprintString,
-  normaliseEntities,
-  denormaliseEntities,
-} from "@factoriotools/engine";
-import type { Blueprint, PlacedEntity } from "@factoriotools/engine";
+import { encodeBlueprintString, denormaliseEntities } from "@factoriotools/engine";
+import type { Blueprint, EntityGraphics, GameData, PlacedEntity, RenderCatalog } from "@factoriotools/engine";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const DEBUG_LAB_PATH = join(__dirname, "../../engine/src/data/debug-lab.ts");
+const DATA_DIR = join(__dirname, "../../../apps/site/public/data");
 
 const N = 0, E = 4, S = 8, W = 12;
+const DIRECTIONS = [N, E, S, W];
 
-/** One entity at (x,y) with the given name/direction — entity_number is
- *  assigned later, once, across the whole merged layout. */
 interface Spec {
   name: string;
   x: number;
@@ -47,10 +39,8 @@ function pipeToGround(x: number, y: number, direction: number): Spec {
   return { name: "pipe-to-ground", x, y, direction };
 }
 
-/** A labeled block of specs, placed with its own top-left origin — each
- *  suite below returns a list of these so the caller can lay them out in a
- *  simple flowing grid without every suite needing to know its neighbors'
- *  extents. */
+/** A block of specs placed from its own top-left origin, so the caller can
+ *  flow blocks without each knowing its neighbours' extents. */
 interface Block {
   label: string;
   width: number;
@@ -58,12 +48,9 @@ interface Block {
   specs: (originX: number, originY: number) => Spec[];
 }
 
-/** Straight run, all 4 corners, all 4 T-junctions, and the cross — the
- *  same 9-shape suite used to verify wallGraph.ts's MASK_TO_WALL_SPRITE
- *  live in-app (see the "Wall sprites never rotate" project memory). Each
- *  group is a plus-shaped cluster of up to 5 walls (a center plus whichever
- *  neighbors the shape needs), spaced 4 tiles apart so shadows don't
- *  overlap between groups. */
+/** Every wall connection shape: isolated, both straights, all four corners,
+ *  all four T-junctions, and the cross. Each is a plus-shaped cluster of a
+ *  centre wall plus whichever neighbours the shape needs. */
 function wallConnectionSuite(): Block {
   const groups: { dirs: number[] }[] = [
     { dirs: [] }, // isolated single
@@ -106,10 +93,7 @@ function wallConnectionSuite(): Block {
   };
 }
 
-/** Same 9-shape neighbor suite as wallConnectionSuite, but for plain pipes
- *  — pipes have a real dedicated sprite for all 16 neighbor bitmasks (see
- *  pipeGraph.ts's MASK_TO_VARIANT), so this exists mainly to catch
- *  regressions rather than to hunt for missing-sprite fallbacks. */
+/** The same shapes as the wall suite, for pipes. */
 function pipeConnectionSuite(): Block {
   const groups: { dirs: number[] }[] = [
     { dirs: [] },
@@ -152,15 +136,8 @@ function pipeConnectionSuite(): Block {
   };
 }
 
-/** Underground pipe (pipe-to-ground) connection suite: for each of the 4
- *  facings, (a) a single underground with a plain pipe butted against its
- *  open side, to verify the open side faces the right way and visibly
- *  connects (the open side is the SAME as the entity's own facing — see
- *  pipeToGroundOpenSide's own doc comment in pipeGraph.ts, ported from the
- *  reference renderer and confirmed live in-app), and (b) a pair of
- *  undergrounds each facing outward (away from each other, toward their
- *  own plain-pipe neighbor) across a gap, matching how the real game
- *  actually uses them to duck underneath other entities. */
+/** Per facing: an underground with a pipe against its open side, and a pair
+ *  facing each other across a gap — one continuous underground run. */
 function undergroundPipeSuite(): Block {
   const dirs = [N, E, S, W];
   const offsets: Record<number, [number, number]> = {
@@ -178,18 +155,13 @@ function undergroundPipeSuite(): Block {
       const specs: Spec[] = [];
       dirs.forEach((dir, i) => {
         const cx = originX + i * colWidth + 1;
-        // (a) single underground + a plain pipe on its open side (the SAME
-        // side as `dir`, per pipeToGroundOpenSide).
+        // A pipe against the underground's open side, which is its facing.
         const [odx, ody] = offsets[dir]!;
         const singleY = originY + 1;
         specs.push(pipeToGround(cx, singleY, dir));
         specs.push(pipe(cx + odx, singleY + ody));
 
-        // (b) two undergrounds forming one continuous underground run
-        // across a 1-tile gap (the shortest possible run) — entity 1's
-        // open side (== its own `dir`) must face entity 2, and entity 2's
-        // open side must face back toward entity 1, so each one's facing
-        // points INTO the gap between them, not away from it.
+        // A pair facing into the gap between them: the shortest run.
         const pairY = originY + 4;
         const [ddx, ddy] = offsets[dir]!;
         const farDir = { [N]: S, [E]: W, [S]: N, [W]: E }[dir]!;
@@ -201,13 +173,8 @@ function undergroundPipeSuite(): Block {
   };
 }
 
-/** Belt start/end cap suite: for N and E facings (enough to catch a
- *  direction-mapping mistake without needing all 4), (a) an isolated
- *  single belt tile (both a start AND an end cap, per the "walls dont
- *  connect"-style bug report this suite exists to catch — see
- *  [[feedback_verify_sprite_reads_in_app]]'s belt-rows-12-19 entry) and
- *  (b) a 3-tile run, where only the first tile should show a start cap
- *  and only the last should show an end cap, with the middle tile plain. */
+/** An isolated belt (both caps) and a 3-tile run (a cap at each end only),
+ *  for two facings. */
 function beltCapSuite(): Block {
   const dirs = [N, E];
   const colWidth = 3;
@@ -228,10 +195,7 @@ function beltCapSuite(): Block {
     },
   };
 }
-
-/** Lays out a list of blocks left-to-right in a single row, `gap` tiles
- *  apart, starting at (startX, startY). Returns every spec from every
- *  block with an absolute position. */
+/** Lays out a list of blocks left to right, `gap` tiles apart. */
 function layoutRow(blocks: Block[], startX: number, startY: number, gap: number): Spec[] {
   const specs: Spec[] = [];
   let x = startX;
@@ -242,29 +206,148 @@ function layoutRow(blocks: Block[], startX: number, startY: number, gap: number)
   return specs;
 }
 
+interface Entry {
+  name: string;
+  footprint: [number, number];
+  rotates: boolean;
+  group: string;
+  subgroup: string;
+  sortKey: string;
+}
+
+/** An entity rotates on screen if any of its layers picks art by facing. */
+function rotates(graphics: EntityGraphics | undefined): boolean {
+  for (const layer of graphics?.layers ?? []) {
+    if ("per" in layer && (layer.per === "dir4" || layer.per === "dir8")) return true;
+    if (layer.column?.by === "direction" || layer.row?.by === "direction") return true;
+  }
+  return false;
+}
+
+/** Every renderable entity, with the same GameData-wins precedence the
+ *  renderer's own lookup uses. */
+function collectEntries(data: GameData, catalog: RenderCatalog): Entry[] {
+  const seen = new Map<string, Entry>();
+  const menu = catalog.menuPositions;
+
+  const add = (
+    name: string,
+    footprint: [number, number],
+    graphics: EntityGraphics | undefined,
+    alwaysRotates = false,
+  ): void => {
+    if (seen.has(name)) return;
+    const pos = menu[name];
+    seen.set(name, {
+      name,
+      footprint,
+      rotates: alwaysRotates || rotates(graphics),
+      group: pos?.group ?? "other",
+      subgroup: pos?.subgroup ?? "other",
+      sortKey: pos?.order ?? name,
+    });
+  };
+
+  for (const m of Object.values(data.machines)) add(m.name, m.tileFootprint ?? m.size, m.graphics);
+  for (const b of Object.values(data.beacons)) add(b.name, b.size, b.graphics);
+  for (const b of Object.values(data.belts)) add(b.name, [1, 1], b.graphics);
+  // Inserters are drawn procedurally, outside EntityGraphics, and always face.
+  for (const i of Object.values(data.inserters)) add(i.name, [1, 1], undefined, true);
+  for (const e of Object.values(catalog.entities)) add(e.name, e.tileFootprint, e.graphics);
+
+  return [...seen.values()];
+}
+
+/** Internal duplicates of an entity that is already shown: the game gives
+ *  them no build-menu slot, and they share another entity's art. */
+const ALIASES = new Set(["red-chest", "blue-chest", "hidden-electric-energy-interface"]);
+
+const GROUP_ORDER = ["logistics", "production", "intermediate-products", "space", "combat", "effects", "other"];
+
+function groupRank(group: string): number {
+  const i = GROUP_ORDER.indexOf(group);
+  return i === -1 ? GROUP_ORDER.length : i;
+}
+
+/** One row per subgroup, so related entities sit together: belts on one row,
+ *  chests on another. Within a row, smallest footprint first, then the game's
+ *  own menu order, so size progressions read left to right. */
+function catalogueRows(entries: Entry[]): Entry[][] {
+  const bySubgroup = new Map<string, Entry[]>();
+  for (const e of entries) {
+    if (ALIASES.has(e.name)) continue;
+    const key = `${groupRank(e.group)}/${e.group}/${e.subgroup}`;
+    const row = bySubgroup.get(key);
+    if (row) row.push(e);
+    else bySubgroup.set(key, [e]);
+  }
+
+  const area = (e: Entry) => e.footprint[0] * e.footprint[1];
+  for (const row of bySubgroup.values()) {
+    row.sort((a, b) => area(a) - area(b) || a.sortKey.localeCompare(b.sortKey));
+  }
+  return [...bySubgroup.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([, row]) => row);
+}
+
+/** Factorio centres an odd-sized footprint on a half tile and an even-sized
+ *  one on a whole tile, so its edges always land on the grid. */
+function snap(coord: number, size: number): number {
+  return Math.round(size) % 2 === 1 ? Math.floor(coord) + 0.5 : Math.round(coord);
+}
+
+/** The catalogue proper: one row per subgroup, each entity shown once if it
+ *  doesn't rotate and once per facing if it does. Entities share a row's top
+ *  edge, and the next row clears the tallest span in this one. */
+function catalogueSpecs(rows: Entry[][], originX: number, originY: number): Spec[] {
+  const specs: Spec[] = [];
+  const GAP = 1;
+  const ROW_GAP = 3;
+  let y = originY;
+
+  for (const row of rows) {
+    let rowSpan = 0;
+    let x = originX;
+    for (const entry of row) {
+      const [w, h] = entry.footprint;
+      for (const direction of entry.rotates ? DIRECTIONS : [N]) {
+        // Rotating a non-square entity swaps which axis its size spans.
+        const turned = direction === E || direction === W;
+        const spanX = turned ? h : w;
+        const spanY = turned ? w : h;
+        specs.push({
+          name: entry.name,
+          x: snap(x + spanX / 2, spanX),
+          y: snap(y + spanY / 2, spanY),
+          direction,
+        });
+        x += spanX + GAP;
+        rowSpan = Math.max(rowSpan, spanY);
+      }
+      x += GAP;
+    }
+    y += rowSpan + ROW_GAP;
+  }
+  return specs;
+}
 function main(): void {
-  const source = readFileSync(DEBUG_LAB_PATH, "utf8");
-  const match = source.match(/"(0eNq[^"]+)"/);
-  if (!match) throw new Error(`Couldn't find a blueprint string in ${DEBUG_LAB_PATH}`);
-  const envelope = decodeBlueprintString(match[1]!);
-  if (!envelope.blueprint) throw new Error("DEBUG_BLUEPRINT's envelope has no top-level blueprint");
-  const existing = normaliseEntities(envelope.blueprint);
+  const data = JSON.parse(readFileSync(join(DATA_DIR, "game-data.json"), "utf8")) as GameData;
+  const catalog = JSON.parse(readFileSync(join(DATA_DIR, "render-catalog.json"), "utf8")) as RenderCatalog;
 
-  // Drop any previously-generated connection-suite entities (recognised by
-  // y >= FLOOR_Y) before re-adding them, so re-running this script updates
-  // the suites in place instead of duplicating them on every run.
-  const FLOOR_Y = 2000;
-  const kept = existing.filter((e) => e.y < FLOOR_Y);
+  const entries = collectEntries(data, catalog);
+  const rows = catalogueRows(entries);
+  const catalogue = catalogueSpecs(rows, 0, 0);
 
-  const newSpecs = layoutRow(
+  // Connection suites sit below the catalogue, clear of its tallest row.
+  const suitesY = Math.max(...catalogue.map((s) => s.y)) + 8;
+  const suites = layoutRow(
     [wallConnectionSuite(), pipeConnectionSuite(), undergroundPipeSuite(), beltCapSuite()],
-    -744.5, // matches the existing layout's own left edge
-    FLOOR_Y,
+    0,
+    suitesY,
     6,
   );
 
   let nextNumber = 1;
-  const merged: PlacedEntity[] = [...kept, ...newSpecs].map((e) => ({
+  const merged: PlacedEntity[] = [...catalogue, ...suites].map((e) => ({
     entityNumber: nextNumber++,
     name: e.name,
     x: e.x,
@@ -276,16 +359,22 @@ function main(): void {
   }));
 
   const blueprint: Blueprint = {
-    item: envelope.blueprint.item,
-    label: envelope.blueprint.label,
-    version: envelope.blueprint.version,
+    item: "blueprint",
+    label: "Renderer debug lab",
+    version: 562949956632576,
     entities: denormaliseEntities(merged),
   };
-  const newString = encodeBlueprintString({ blueprint });
 
-  const output = source.replace(match[0], `"${newString}"`);
-  writeFileSync(DEBUG_LAB_PATH, output);
-  console.log(`Wrote ${DEBUG_LAB_PATH} — ${merged.length} entities (${kept.length} kept, ${newSpecs.length} generated).`);
+  const source = readFileSync(DEBUG_LAB_PATH, "utf8");
+  const match = source.match(/"(0eNq[^"]+)"/);
+  if (!match) throw new Error(`Couldn't find a blueprint string in ${DEBUG_LAB_PATH}`);
+  writeFileSync(DEBUG_LAB_PATH, source.replace(match[0], `"${encodeBlueprintString({ blueprint })}"`));
+
+  const shown = new Set(catalogue.map((s) => s.name)).size;
+  console.log(
+    `Wrote ${DEBUG_LAB_PATH} — ${merged.length} entities: ` +
+      `${shown} kinds in ${rows.length} rows, ${suites.length} in connection suites.`,
+  );
 }
 
 main();

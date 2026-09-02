@@ -362,9 +362,8 @@ function buildMenuIndex(raw: Raw, locale: LocaleTables): { menuGroups: MenuGroup
 export function buildRenderCatalog(raw: Raw, locale: LocaleTables, version: string): RenderCatalog {
   const entities: Record<string, RenderEntityProto> = {};
 
-  // A handful of "container"-typed prototypes are cutscene set-dressing
-  // (crash-site-*, factorio-logo-*) — not placeable in any blueprint, so
-  // they're filtered rather than cluttering the catalog.
+  // Cutscene set-dressing that shares the container prototype type but can't
+  // appear in a blueprint.
   const NOT_PLACEABLE = /^(crash-site-|factorio-logo-|factorio-space-age-logo)/;
 
   const add = (proto: any, graphics: EntityGraphics | undefined, footprintOverride?: [number, number]) => {
