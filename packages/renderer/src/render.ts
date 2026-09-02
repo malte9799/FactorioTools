@@ -5,6 +5,7 @@ import { IconAtlas } from "./iconAtlas.js";
 import { buildVisualLookup, effectiveFootprint, makeConnectorPredicates, type ResolvedVisual } from "./entityLookup.js";
 import { drawAltModeOverlay } from "./entityDraw.js";
 import { buildGrid, NeighbourGrid } from "./neighbours/grid.js";
+import type { PlatformBox } from "./neighbours/platform.js";
 import { collectEntity, type CollectContext } from "./draw/collect.js";
 import { paint, drawOutline } from "./draw/paint.js";
 import type { DrawCommand } from "./draw/commands.js";
@@ -109,6 +110,7 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
   let entities: PlacedEntity[] = [];
   let grid = new NeighbourGrid();
   let spatialIndex = new SpatialIndex([]);
+  let platformBoxes: PlatformBox[] = [];
   let highlight: HighlightRole | null = null;
   let altMode = false;
   let animationFrame = 0;
@@ -197,7 +199,7 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
 
     // Collect every sprite first, then paint them in one globally sorted
     // pass, so no entity's shadow can land on a neighbour drawn before it.
-    const collectCtx: CollectContext = { grid, ...connectors, animationFrame };
+    const collectCtx: CollectContext = { grid, ...connectors, platformBoxes, animationFrame };
     const commands: DrawCommand[] = [];
     const procedural: PlacedEntity[] = [];
     for (const entity of visibleEntities) {
@@ -272,7 +274,7 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
           ctx.globalAlpha = 1;
         } else if (visual.graphics) {
           const ghostCommands: DrawCommand[] = [];
-          collectEntity(ghostCommands, ghost, visual, { grid, ...connectors, animationFrame }, 0.5);
+          collectEntity(ghostCommands, ghost, visual, { grid, ...connectors, platformBoxes, animationFrame }, 0.5);
           paint(ctx, atlas, ghostCommands);
         }
       }
@@ -454,16 +456,19 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
     grid = buildGrid(entities);
 
     const boxes: IndexedBox[] = [];
+    platformBoxes = [];
     for (const e of entities) {
       const visual = visualFor(e.name);
       const [w, h] = visual ? effectiveFootprint(visual, e.direction) : FALLBACK_FOOTPRINT;
-      boxes.push({
+      const box = {
         entityNumber: e.entityNumber,
         left: e.x - w / 2,
         top: e.y - h / 2,
         right: e.x + w / 2,
         bottom: e.y + h / 2,
-      });
+      };
+      boxes.push(box);
+      if (connectors.isPlatformLike(e.name)) platformBoxes.push(box);
     }
     spatialIndex = new SpatialIndex(boxes);
 

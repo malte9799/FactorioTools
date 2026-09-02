@@ -105,10 +105,17 @@ export function staticGraphics(source: any): EntityGraphics | undefined {
 
 const DIR4 = ["north", "east", "south", "west"] as const;
 
-/** True for a {north,east,south,west} wrapper holding a whole sprite each,
- *  rather than one sheet with facings as columns. */
-function isPerDirection(source: any): boolean {
-  return DIR4.every((d) => source?.[d] !== undefined);
+/** Finds the {north,east,south,west} wrapper holding a whole sprite per
+ *  facing, which may sit a level or two inside the field an entity names —
+ *  an asteroid collector's is under graphics_set.animation. */
+function perDirectionSource(source: any): any {
+  if (!source || typeof source !== "object") return undefined;
+  if (DIR4.every((d) => source[d] !== undefined)) return source;
+  for (const key of ["animation", "idle_animation", "picture", "pictures", "structure"]) {
+    const found = perDirectionSource(source[key]);
+    if (found) return found;
+  }
+  return undefined;
 }
 
 /** Stacks several art sources bottom to top, for entities whose pieces live
@@ -130,10 +137,11 @@ export function stackSources(sources: any[]): EntityGraphics | undefined {
  *  Animation frames are never cycled: a blueprint shows idle buildings, so
  *  each layer holds frame 0, the pose the game's own ghost preview uses. */
 export function directionColumnGraphics(source: any): EntityGraphics | undefined {
-  if (isPerDirection(source)) {
+  const perDir = perDirectionSource(source);
+  if (perDir) {
     const perFacing: { sprites: Record<string, Sprite>; shadow: boolean }[] = [];
     for (const d of DIR4) {
-      const layers = unwrapAll(source[d]);
+      const layers = unwrapAll(perDir[d]);
       if (layers.length === 0) return undefined;
       layers.forEach((l, i) => {
         const slot = (perFacing[i] ??= { sprites: {}, shadow: l.shadow });
@@ -176,6 +184,7 @@ const RENDER_LAYERS: Record<string, Layer> = {
   "ground-patch": Layer.Floor,
   "lower-object": Layer.LowerObject,
   "lower-object-above-shadow": Layer.LowerObject,
+  "lower-object-overlay": Layer.LowerObject,
   "transport-belt-endings": Layer.LowerObject,
   "transport-belt-reader": Layer.Object,
   object: Layer.Object,

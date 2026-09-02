@@ -95,5 +95,6 @@ export function makeConnectorPredicates(lookup: Map<string, ResolvedVisual>) {
   const isPipeLike = (name: string) => has("pipe")(name) || name === "pipe-to-ground";
   const isWallLike = (name: string) => has("wall")(name) || name === "gate";
   const isBeltLike = has("belt");
-  return { isPipeLike, isWallLike, isBeltLike };
+  const isPlatformLike = has("platform");
+  return { isPipeLike, isWallLike, isBeltLike, isPlatformLike };
 }

@@ -67,7 +67,13 @@ export function mountEntityPreview(container: HTMLElement, entityName: string, d
     } else if (visual.graphics) {
       const commands: DrawCommand[] = [];
       const never = () => false;
-      collectEntity(commands, entity, visual, { grid: new NeighbourGrid(), isPipeLike: never, isWallLike: never, isBeltLike: never, animationFrame: 0 }, 1);
+      collectEntity(
+        commands,
+        entity,
+        visual,
+        { grid: new NeighbourGrid(), isPipeLike: never, isWallLike: never, isBeltLike: never, platformBoxes: [], animationFrame: 0 },
+        1,
+      );
       paint(ctx, atlas, commands);
     }
     ctx.restore();

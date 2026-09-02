@@ -136,7 +136,7 @@ export interface EntityGraphics {
 
 /** Names a neighbour-classification rule; the rules live in
  *  packages/renderer/src/neighbours. */
-export type ConnectorKind = "pipe" | "wall" | "belt";
+export type ConnectorKind = "pipe" | "wall" | "belt" | "platform";
 
 
 export interface MachineProto {

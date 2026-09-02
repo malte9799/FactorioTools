@@ -6,8 +6,10 @@ import type { EntityGraphics, GraphicsLayer, MenuGroup, MenuPosition, RenderCata
 import type { LocaleTables } from "./locale.js";
 import {
   directionColumnGraphics,
+  layerOf,
   perDirection,
   stackSources,
+  unwrapAll,
   toSprite,
   unwrap,
 } from "./sprite-shapes.js";
@@ -105,7 +107,9 @@ function undergroundGraphics(proto: any): EntityGraphics | undefined {
     layers: [
       {
         layer: Layer.Object,
-        sprites: { ...sprite, y: 0 },
+        // One column per facing; the entrance and exit rows are picked by
+        // the entity's own end, so the grid origin resets to the sheet's top.
+        sprites: { ...sprite, y: 0, columns: 4 },
         column: { by: "direction" },
         row: { by: "underground-end", inIndex: rowOf(inn, 1), outIndex: rowOf(out, 0) },
       },
@@ -125,8 +129,22 @@ function splitterGraphics(proto: any): EntityGraphics | undefined {
   const body = perDirection(structure, DIR4);
   if (!body) return undefined;
 
+  // A splitter straddles two tiles, so it carries a belt lane either side of
+  // its centre, offset across its own facing.
+  const lane = (side: -1 | 1): Record<(typeof DIR4)[number], Sprite> => {
+    const across = (d: (typeof DIR4)[number]): [number, number] =>
+      d === "north" || d === "south" ? [0.5 * side, 0] : [0, 0.5 * side];
+    return {
+      north: { ...belt, shift: across("north") },
+      east: { ...belt, shift: across("east") },
+      south: { ...belt, shift: across("south") },
+      west: { ...belt, shift: across("west") },
+    };
+  };
+
   const layers: GraphicsLayer[] = [
-    { layer: Layer.LowerObject, sprites: belt, column: { by: "animation" }, row: { by: "connection" } },
+    { layer: Layer.LowerObject, sprites: lane(-1), per: "dir4", column: { by: "animation" }, row: { by: "connection" } },
+    { layer: Layer.LowerObject, sprites: lane(1), per: "dir4", column: { by: "animation" }, row: { by: "connection" } },
     { layer: Layer.Object, sprites: body, per: "dir4" },
   ];
 
@@ -220,18 +238,73 @@ function railGraphics(proto: any): EntityGraphics | undefined {
   return { layers };
 }
 
-/** Some Space Age structures declare their base as an array of random
- *  appearance variants; variant 0 is the static representative. */
+/** Cargo hubs and bays declare an array of random appearance variants, each
+ *  holding only the structure's edge pieces; the body sits separately under
+ *  `animation`. Variant 0 is the static representative. The actual platform
+ *  surface comes from `connections` — see platformGraphics below. */
 function variantStackGraphics(proto: any): EntityGraphics | undefined {
-  const variant = proto.graphics_set?.picture?.[0];
-  const raw: any[] | undefined = variant?.layers;
-  if (!Array.isArray(raw) || raw.length === 0) return undefined;
+  const gs = proto.graphics_set;
   const layers: GraphicsLayer[] = [];
-  for (const l of raw) {
+  for (const l of gs?.picture?.[0]?.layers ?? []) {
     const sprite = toSprite(l);
     if (sprite) layers.push({ layer: l.draw_as_shadow ? Layer.Shadow : Layer.Object, sprites: sprite });
   }
-  return layers.length > 0 ? { layers } : undefined;
+  for (const l of unwrapAll(gs?.animation)) {
+    layers.push({ layer: l.shadow ? Layer.Shadow : Layer.Object, sprites: l.sprite });
+  }
+  const platform = platformGraphics(gs?.connections);
+  if (platform) layers.push(...platform);
+  return layers.length > 0 ? { layers, connector: platform ? "platform" : undefined } : undefined;
+}
+
+/** The 17 shapes cargo hubs/bays pick between for their floor plating,
+ *  keyed by which of their own kind sit adjacent — an auto-tiling system
+ *  like walls, but per edge/corner of a whole multi-tile footprint rather
+ *  than per tile. Each shape ships 1-4 random-looking variants (this pipeline
+ *  always takes variant 0) built from four sub-images layered in a fixed
+ *  order, each with its own render_layer. */
+const PLATFORM_SHAPES = [
+  "top_wall",
+  "right_wall",
+  "bottom_wall",
+  "left_wall",
+  "top_left_outer_corner",
+  "top_right_outer_corner",
+  "bottom_left_outer_corner",
+  "bottom_right_outer_corner",
+  "top_left_inner_corner",
+  "top_right_inner_corner",
+  "bottom_left_inner_corner",
+  "bottom_right_inner_corner",
+  "bridge_horizontal_narrow",
+  "bridge_vertical_narrow",
+  "bridge_horizontal_wide",
+  "bridge_vertical_wide",
+  "bridge_crossing",
+] as const;
+
+function platformGraphics(connections: any): GraphicsLayer[] | undefined {
+  if (!connections) return undefined;
+  // Every shape's variant 0 has the same four sub-images in the same order;
+  // one GraphicsLayer per sub-image position, each keyed by shape name.
+  const bySlot: Record<string, Sprite>[] = [];
+  const slotLayer: Layer[] = [];
+  for (const shape of PLATFORM_SHAPES) {
+    const variant = connections[shape]?.[0];
+    if (!Array.isArray(variant)) return undefined;
+    variant.forEach((sub: any, slot: number) => {
+      const raw = sub.layers?.[0] ?? sub;
+      const sprite = toSprite(raw);
+      if (!sprite) return;
+      (bySlot[slot] ??= {})[shape] = sprite;
+      slotLayer[slot] = layerOf(sub.render_layer, Layer.Object);
+    });
+  }
+  return bySlot.map((sprites, slot) => ({
+    layer: slotLayer[slot]!,
+    sprites,
+    per: "connection" as const,
+  }));
 }
 
 const ROTATES_FOOTPRINT = new Set(["splitter", "fast-splitter", "express-splitter", "turbo-splitter"]);

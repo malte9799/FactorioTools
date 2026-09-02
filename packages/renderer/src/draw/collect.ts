@@ -4,6 +4,7 @@ import { dir4Name, dir8Name, toCardinal, opposite, type NeighbourGrid } from "..
 import { classifyPipe } from "../neighbours/pipe.js";
 import { classifyWall } from "../neighbours/wall.js";
 import { classifyBelt, type BeltCap } from "../neighbours/belt.js";
+import { classifyPlatform, type PlatformBox } from "../neighbours/platform.js";
 import { PIXELS_PER_TILE, type DrawCommand } from "./commands.js";
 
 export interface CollectContext {
@@ -11,6 +12,9 @@ export interface CollectContext {
   isPipeLike: (name: string) => boolean;
   isWallLike: (name: string) => boolean;
   isBeltLike: (name: string) => boolean;
+  /** Every platform-connectable entity's footprint box, for cargo hubs/bays
+   *  to find flush neighbours across their whole edge, not just one tile. */
+  platformBoxes: PlatformBox[];
   animationFrame: number;
 }
 
@@ -23,6 +27,9 @@ interface EntityFrame {
   connectionName: string;
   /** Start/end pieces closing off a belt run, each on an adjacent tile. */
   caps: BeltCap[];
+  /** A cargo hub/bay draws several connection pieces at once — one per edge
+   *  and corner — instead of picking a single shape like pipes and walls do. */
+  platformShapes: string[];
   animation: number;
   undergroundIn: boolean;
 }
@@ -35,6 +42,7 @@ function resolveFrame(entity: PlacedEntity, visual: ResolvedVisual, ctx: Collect
     connectionIndex: 0,
     connectionName: "",
     caps: [],
+    platformShapes: [],
     animation: ctx.animationFrame,
     undergroundIn: entity.undergroundType !== "output",
   };
@@ -50,6 +58,11 @@ function resolveFrame(entity: PlacedEntity, visual: ResolvedVisual, ctx: Collect
       const shape = classifyBelt(x, y, entity.direction, ctx.grid, ctx.isBeltLike);
       frame.connectionIndex = shape.row;
       frame.caps = shape.caps;
+      break;
+    }
+    case "platform": {
+      const box = ctx.platformBoxes.find((b) => b.entityNumber === entity.entityNumber);
+      if (box) frame.platformShapes = classifyPlatform(box, ctx.platformBoxes);
       break;
     }
   }
@@ -133,6 +146,17 @@ export function collectEntity(
   const frame = resolveFrame(entity, visual, ctx);
 
   graphics.layers.forEach((layer, order) => {
+    // A cargo hub/bay draws several connection pieces at once — one per
+    // edge/corner, each with its own baked-in shift — instead of the single
+    // connection-name pick every other connector uses.
+    if (graphics.connector === "platform" && "per" in layer && layer.per === "connection") {
+      for (const shape of frame.platformShapes) {
+        const sprite = layer.sprites[shape];
+        if (sprite) push(out, sprite, 0, 0, entity, layer.layer, order, alpha);
+      }
+      return;
+    }
+
     const sprite = spriteFor(layer, entity, frame);
     if (!sprite) return;
     const column = axisIndex(layer.column, frame);
