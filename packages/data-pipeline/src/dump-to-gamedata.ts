@@ -186,7 +186,7 @@ function alwaysDrawnPieces(workingVisualisations: any[] | undefined, baseSheet: 
 }
 
 function graphicsForMachine(proto: any): EntityGraphics | undefined {
-  const graphics = directionColumnGraphics(machineAnimation(proto), true);
+  const graphics = directionColumnGraphics(machineAnimation(proto));
   if (!graphics) return undefined;
 
   const body = graphics.layers[graphics.layers.length - 1]!;

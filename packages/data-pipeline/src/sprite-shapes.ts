@@ -34,30 +34,60 @@ export function toSprite(raw: any): Sprite | undefined {
   };
 }
 
-/** Unwraps the nesting Factorio puts around sprite declarations, returning the
- *  main sprite and its shadow if one is declared alongside. */
-export function unwrap(source: any): { main?: Sprite; shadow?: Sprite } {
-  if (!source) return {};
+export interface UnwrappedLayer {
+  sprite: Sprite;
+  shadow: boolean;
+  /** Columns of this layer's own grid, which the layer's frame axes index. */
+  columns: number;
+  /** True when those columns are facings rather than animation frames. */
+  directionIndexed: boolean;
+}
 
-  const layers: any[] | undefined =
+/** Unwraps the nesting Factorio puts around sprite declarations into every
+ *  layer it holds, in declaration order. Machines are routinely built from
+ *  several — a centrifuge is three towers, each with its own shadow. */
+export function unwrapAll(source: any): UnwrappedLayer[] {
+  if (!source) return [];
+
+  const raw: any[] | undefined =
     source.layers ?? source.sheets ?? (source.filename || source.filenames ? [source] : undefined);
 
-  if (!layers) {
-    if (source.north) return unwrap(source.north);
-    if (source.animation) return unwrap(source.animation);
-    if (source.picture) return unwrap(source.picture);
-    if (source.single) return unwrap(source.single);
+  if (!raw) {
+    if (source.north) return unwrapAll(source.north);
+    if (source.animation) return unwrapAll(source.animation);
+    if (source.picture) return unwrapAll(source.picture);
+    if (source.single) return unwrapAll(source.single);
     if (source.base_visualisation) {
       const bv = Array.isArray(source.base_visualisation) ? source.base_visualisation[0] : source.base_visualisation;
-      return unwrap(bv?.animation);
+      return unwrapAll(bv?.animation);
     }
-    if (source.structure) return unwrap(source.structure);
-    return {};
+    if (source.structure) return unwrapAll(source.structure);
+    return [];
   }
 
+  const out: UnwrappedLayer[] = [];
+  for (const layer of raw) {
+    // Tint masks recolour the layer beneath by force, which this renderer
+    // has no concept of; drawn plainly they cover it with a flat silhouette.
+    if (layer.apply_runtime_tint || layer.flags?.includes("mask")) continue;
+    const sprite = toSprite(layer);
+    if (!sprite) continue;
+    out.push({
+      sprite,
+      shadow: layer.draw_as_shadow === true,
+      columns: sprite.columns ?? 1,
+      directionIndexed: isDirectionIndexed(layer),
+    });
+  }
+  return out;
+}
+
+/** The first main sprite and its shadow, for callers that only want one pair. */
+export function unwrap(source: any): { main?: Sprite; shadow?: Sprite } {
+  const layers = unwrapAll(source);
   return {
-    main: toSprite(layers.find((l) => !l.draw_as_shadow) ?? layers[0]),
-    shadow: toSprite(layers.find((l) => l.draw_as_shadow)),
+    main: layers.find((l) => !l.shadow)?.sprite ?? layers[0]?.sprite,
+    shadow: layers.find((l) => l.shadow)?.sprite,
   };
 }
 
@@ -81,38 +111,57 @@ function isPerDirection(source: any): boolean {
   return DIR4.every((d) => source?.[d] !== undefined);
 }
 
-/** An entity's main art plus shadow, however its facings are expressed: one
- *  sheet with facing columns, one whole sheet per facing, or neither.
- *  `animated` chooses what a multi-column sheet's columns mean when the data
- *  itself is ambiguous. */
-export function directionColumnGraphics(source: any, animated = false): EntityGraphics | undefined {
+/** Stacks several art sources bottom to top, for entities whose pieces live
+ *  under separate fields — a turret's base and its gun, a train stop's rail
+ *  overlay, post and sign. */
+export function stackSources(sources: any[]): EntityGraphics | undefined {
+  const layers: GraphicsLayer[] = [];
+  for (const source of sources) {
+    const part = directionColumnGraphics(source);
+    if (part) layers.push(...part.layers);
+  }
+  return layers.length > 0 ? { layers } : undefined;
+}
+
+/** An entity's art, however its facings are expressed: one sheet with facing
+ *  columns, one whole sheet per facing, or neither. Every layer the source
+ *  declares is kept — machines are routinely built from several.
+ *
+ *  Animation frames are never cycled: a blueprint shows idle buildings, so
+ *  each layer holds frame 0, the pose the game's own ghost preview uses. */
+export function directionColumnGraphics(source: any): EntityGraphics | undefined {
   if (isPerDirection(source)) {
-    const mains = {} as Record<(typeof DIR4)[number], Sprite>;
-    const shadows = {} as Record<(typeof DIR4)[number], Sprite>;
-    let anyShadow = false;
+    const perFacing: { sprites: Record<string, Sprite>; shadow: boolean }[] = [];
     for (const d of DIR4) {
-      const { main, shadow } = unwrap(source[d]);
-      if (!main) return undefined;
-      mains[d] = main;
-      shadows[d] = shadow ?? main;
-      if (shadow) anyShadow = true;
+      const layers = unwrapAll(source[d]);
+      if (layers.length === 0) return undefined;
+      layers.forEach((l, i) => {
+        const slot = (perFacing[i] ??= { sprites: {}, shadow: l.shadow });
+        slot.sprites[d] = l.sprite;
+      });
     }
-    const column: GraphicsLayer["column"] = animated ? { by: "animation" } : { by: "none" };
-    const layers: GraphicsLayer[] = [];
-    if (anyShadow) layers.push({ layer: Layer.Shadow, sprites: shadows, per: "dir4" });
-    layers.push({ layer: Layer.Object, sprites: mains, per: "dir4", column });
-    return { layers };
+    // Facings must agree on how many layers they have, or a slot would be
+    // missing art for some directions.
+    const complete = perFacing.filter((slot) => DIR4.every((d) => slot.sprites[d]));
+    if (complete.length === 0) return undefined;
+    return {
+      layers: complete.map((slot) => ({
+        layer: slot.shadow ? Layer.Shadow : Layer.Object,
+        sprites: slot.sprites as Record<(typeof DIR4)[number], Sprite>,
+        per: "dir4" as const,
+      })),
+    };
   }
 
-  const { main, shadow } = unwrap(source);
-  if (!main) return undefined;
-  const raw = source?.layers?.[0] ?? source;
-  const column: GraphicsLayer["column"] = isDirectionIndexed(raw)
-    ? { by: "direction" }
-    : animated && (main.columns ?? 1) > 1
-      ? { by: "animation" }
-      : { by: "none" };
-  return { layers: withShadow({ layer: Layer.Object, sprites: main, column }, shadow) };
+  const unwrapped = unwrapAll(source);
+  if (unwrapped.length === 0) return undefined;
+  return {
+    layers: unwrapped.map((l) => ({
+      layer: l.shadow ? Layer.Shadow : Layer.Object,
+      sprites: l.sprite,
+      column: l.directionIndexed ? ({ by: "direction" } as const) : ({ by: "none" } as const),
+    })),
+  };
 }
 
 export function withShadow(main: GraphicsLayer, shadow: Sprite | undefined): GraphicsLayer[] {

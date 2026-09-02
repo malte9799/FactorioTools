@@ -7,6 +7,7 @@ import type { LocaleTables } from "./locale.js";
 import {
   directionColumnGraphics,
   perDirection,
+  stackSources,
   toSprite,
   unwrap,
 } from "./sprite-shapes.js";
@@ -302,7 +303,17 @@ const PICTURE_FIELD: Record<string, string> = {
   "lightning-attractor": "chargable_graphics",
 };
 
-const SIMPLE_STATIC_TABLES = Object.keys(PICTURE_FIELD);
+/** Tables whose art spans several fields, stacked bottom to top. A turret's
+ *  gun sits on its base; a train stop's post and sign on its rail overlay. */
+const STACKED_FIELDS: Record<string, string[]> = {
+  "train-stop": ["rail_overlay_animations", "animations", "top_animations"],
+  "ammo-turret": ["graphics_set", "folded_animation"],
+  "electric-turret": ["graphics_set", "folded_animation"],
+  "fluid-turret": ["graphics_set", "folded_animation"],
+  "artillery-turret": ["base_picture", "cannon_base_pictures", "cannon_barrel_pictures"],
+};
+
+const SIMPLE_STATIC_TABLES = [...new Set([...Object.keys(PICTURE_FIELD), ...Object.keys(STACKED_FIELDS)])];
 
 /** Item tables that can carry a `place_result` — every prototype table an
  *  actually-placeable item could belong to. Kept as an explicit list rather
@@ -378,8 +389,13 @@ export function buildRenderCatalog(raw: Raw, locale: LocaleTables, version: stri
   };
 
   for (const table of SIMPLE_STATIC_TABLES) {
+    const stacked = STACKED_FIELDS[table];
     const field = PICTURE_FIELD[table];
     for (const proto of Object.values(raw[table] ?? {})) {
+      if (stacked) {
+        add(proto, stackSources(stacked.map((f) => proto[f])));
+        continue;
+      }
       // A prototype may not use its table's usual field — passive chests
       // carry `animation` where other containers carry `picture`.
       const source = (field ? proto[field] : undefined) ?? proto.animation ?? proto.picture ?? proto.pictures;
