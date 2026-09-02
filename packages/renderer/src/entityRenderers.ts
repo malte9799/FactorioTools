@@ -432,7 +432,7 @@ export class BeltRenderer implements EntityRenderer {
     // never indexed since it isn't part of the loaded blueprint), which
     // falls back to classifying live against its own would-be position.
     const cached = rc.beltFrameCache.get(entity.entityNumber);
-    const { row, overlayRow } = cached ?? classifyBelt(
+    const { row, overlayRows } = cached ?? classifyBelt(
       { entityNumber: entity.entityNumber, name: entity.name, x: Math.round(entity.x), y: Math.round(entity.y), direction: entity.direction, isBeltLike: true },
       rc.positionIndex,
     );
@@ -455,11 +455,12 @@ export class BeltRenderer implements EntityRenderer {
     const drawH = (frameH * scale) / BASE_PIXELS_PER_TILE;
     rc.ctx.drawImage(img, col * frameW, row * frameH, frameW, frameH, x - drawW / 2, y - drawH / 2, drawW, drawH);
 
-    // Side-load rows (12-19) are a thin merge-chevron decal, not a full
-    // belt sprite (confirmed by spike, see BeltFrame's own doc comment) —
-    // drawn on top of the straight belt frame just painted above, using
-    // the same frame geometry (same sheet, same per-frame size).
-    if (overlayRow !== undefined) {
+    // Start/end caps (rows 12-19) are thin chevron decals, not full belt
+    // sprites (see BeltFrame's own doc comment) — drawn on top of the
+    // straight/curve frame just painted above, using the same frame
+    // geometry (same sheet, same per-frame size). A single-tile belt with
+    // nothing on either side draws both.
+    for (const overlayRow of overlayRows) {
       rc.ctx.drawImage(img, col * frameW, overlayRow * frameH, frameW, frameH, x - drawW / 2, y - drawH / 2, drawW, drawH);
     }
   }

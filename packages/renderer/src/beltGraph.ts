@@ -49,15 +49,24 @@ export interface BeltFrame {
    *  connection shape. */
   row: number;
   connection: BeltConnection;
-  /** Side-load rows (12-19) are NOT a standalone belt sprite — confirmed by
-   *  spike opening those rows directly: they're a thin merge-chevron decal
-   *  meant to be drawn ON TOP of the ordinary straight-belt frame (`row`
-   *  above is already set to STRAIGHT_ROW[facing] for a side-load, exactly
-   *  like the plain-straight case), not a replacement for it. Drawing only
-   *  the side-load row alone (the original bug) left the belt tile
-   *  underneath missing entirely, which read as the belt "ending" there.
-   *  Undefined for every non-side-load connection. */
-  overlayRow?: number;
+  /** Rows 12-19 are NOT side-load merge decals — that was this codebase's
+   *  own earlier misreading of the sheet (see the project's "verify sprite
+   *  reads in-app" rule: even a spike that "cross-checked against the
+   *  sheet's actual per-row pixel content" got the SEMANTICS wrong here,
+   *  not just the row numbers, since the pixel content alone doesn't say
+   *  what a row means). Ported from teoxoy/factorio-blueprint-editor's
+   *  getBeltSpriteFromData: rows 12-19 are START/END caps — a thin
+   *  chevron decal drawn ON TOP of the ordinary straight-belt frame
+   *  (`row` above stays STRAIGHT_ROW[facing]) at the tile's own back edge
+   *  (start, when nothing feeds into this belt) or front edge (end, when
+   *  nothing receives this belt's output) — see START_ROW/END_ROW below
+   *  and classifyBelt's own doc comment. Side-loading (an item merging in
+   *  from the side while the belt continues straight) has no dedicated
+   *  decal at all in the real sprite data — it's purely a gameplay/logic
+   *  distinction, invisible in the art. Up to 2 of these can apply to one
+   *  tile (an isolated single-tile belt has both a start and an end cap),
+   *  hence an array rather than one optional field. */
+  overlayRows: number[];
 }
 
 /** Row layout re-confirmed by rendering an isolated 4-direction test
@@ -103,11 +112,29 @@ const CURVE_ROW: Record<Dir4, { left: number; right: number }> = {
   [Dir4.West]: { left: 10, right: 7 },
 };
 
-const SIDE_LOAD_ROW: Record<Dir4, { left: number; right: number }> = {
-  [Dir4.North]: { left: 12, right: 16 },
-  [Dir4.East]: { left: 13, right: 17 },
-  [Dir4.South]: { left: 14, right: 18 },
-  [Dir4.West]: { left: 15, right: 19 },
+/** Start-cap row per facing — drawn when nothing feeds into this belt's
+ *  back edge. Ported directly from getBeltSpriteFromData's 'start' case
+ *  (bas.starting_{south,west,north,east}_index defaults 13/15/17/19,
+ *  1-based; converted to this codebase's 0-based rows here), confirmed
+ *  against the real sheet's row content (each shows a chevron sitting at
+ *  one frame edge, consistent with an end-of-belt cap) rather than
+ *  trusted from the reference alone. */
+const START_ROW: Record<Dir4, number> = {
+  [Dir4.North]: 12,
+  [Dir4.East]: 14,
+  [Dir4.South]: 16,
+  [Dir4.West]: 18,
+};
+
+/** End-cap row per facing — drawn when nothing receives this belt's
+ *  output ahead. Ported from getBeltSpriteFromData's 'end' case
+ *  (bas.ending_{north,east,south,west}_index defaults 18/20/14/16,
+ *  1-based -> 0-based rows here). */
+const END_ROW: Record<Dir4, number> = {
+  [Dir4.North]: 17,
+  [Dir4.East]: 19,
+  [Dir4.South]: 13,
+  [Dir4.West]: 15,
 };
 
 export function opposite(dir: Dir4): Dir4 {
@@ -170,6 +197,7 @@ export function classifyBelt(
   };
 
   const behindNeighbor = neighborAt(behind);
+  const aheadNeighbor = neighborAt(facing);
   const leftNeighbor = neighborAt(left);
   const rightNeighbor = neighborAt(right);
 
@@ -177,26 +205,38 @@ export function classifyBelt(
   const leftFeed = feedsIn(leftNeighbor, left);
   const rightFeed = feedsIn(rightNeighbor, right);
 
+  // Start/end caps are independent of straight-vs-curve shape (ported from
+  // getBeltSprites: both are computed unconditionally alongside the base
+  // sprite, not as alternatives to it) — a belt gets a start cap whenever
+  // NOTHING belt-like sits behind it at all (regardless of that neighbor's
+  // own facing; an unrelated belt pointing the wrong way still means this
+  // tile isn't truly the start of a line, but the real game still doesn't
+  // draw a cap there — only a fully empty/non-belt tile behind does),
+  // matching the reference's plain `if (conn.from)`/`if (conn.to)` presence
+  // check rather than feedsIn's stricter facing check (which is reserved
+  // for deciding curve-vs-straight, a different question).
+  const overlayRows: number[] = [];
+  if (!behindNeighbor?.isBeltLike) overlayRows.push(START_ROW[facing]);
+  if (!aheadNeighbor?.isBeltLike) overlayRows.push(END_ROW[facing]);
+
   // A perpendicular feed without a straight-behind feed is a curve (the
-  // belt bends to receive from the side); with a straight-behind feed too,
-  // it's a side-load (items merge in from the side onto an otherwise
-  // straight run) — this distinction is exactly what rows 4-11 vs 12-19
-  // represent. A side-load's row 12-19 is only a thin merge decal, NOT a
-  // full belt sprite (confirmed by spike, see BeltFrame's own doc comment)
-  // — `row` stays the ordinary STRAIGHT_ROW so the belt underneath still
-  // renders, and the decal goes out via `overlayRow` for the renderer to
-  // draw on top of it.
+  // belt bends to receive from the side); a perpendicular feed WITH a
+  // straight-behind feed is a side-load (items merge in from the side onto
+  // an otherwise straight run) — side-loading has no dedicated sprite of
+  // its own (see BeltFrame's own doc comment), so it's visually identical
+  // to plain "straight" here; `connection` still records it distinctly for
+  // any future caller that cares about the logical shape, not just pixels.
   if (leftFeed && !rightFeed) {
     return straightFeed
-      ? { row: STRAIGHT_ROW[facing], connection: "side-left", overlayRow: SIDE_LOAD_ROW[facing].left }
-      : { row: CURVE_ROW[facing].left, connection: "curve-left" };
+      ? { row: STRAIGHT_ROW[facing], connection: "side-left", overlayRows }
+      : { row: CURVE_ROW[facing].left, connection: "curve-left", overlayRows };
   }
   if (rightFeed && !leftFeed) {
     return straightFeed
-      ? { row: STRAIGHT_ROW[facing], connection: "side-right", overlayRow: SIDE_LOAD_ROW[facing].right }
-      : { row: CURVE_ROW[facing].right, connection: "curve-right" };
+      ? { row: STRAIGHT_ROW[facing], connection: "side-right", overlayRows }
+      : { row: CURVE_ROW[facing].right, connection: "curve-right", overlayRows };
   }
-  return { row: STRAIGHT_ROW[facing], connection: "straight" };
+  return { row: STRAIGHT_ROW[facing], connection: "straight", overlayRows };
 }
 
 /** A splitter's own (entityNumber, x, y) don't index it correctly at all:

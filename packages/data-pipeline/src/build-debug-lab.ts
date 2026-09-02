@@ -37,6 +37,9 @@ interface Spec {
 function wall(x: number, y: number): Spec {
   return { name: "stone-wall", x, y };
 }
+function belt(x: number, y: number, direction: number): Spec {
+  return { name: "transport-belt", x, y, direction };
+}
 function pipe(x: number, y: number): Spec {
   return { name: "pipe", x, y };
 }
@@ -198,6 +201,34 @@ function undergroundPipeSuite(): Block {
   };
 }
 
+/** Belt start/end cap suite: for N and E facings (enough to catch a
+ *  direction-mapping mistake without needing all 4), (a) an isolated
+ *  single belt tile (both a start AND an end cap, per the "walls dont
+ *  connect"-style bug report this suite exists to catch — see
+ *  [[feedback_verify_sprite_reads_in_app]]'s belt-rows-12-19 entry) and
+ *  (b) a 3-tile run, where only the first tile should show a start cap
+ *  and only the last should show an end cap, with the middle tile plain. */
+function beltCapSuite(): Block {
+  const dirs = [N, E];
+  const colWidth = 3;
+  return {
+    label: "belt start/end caps",
+    width: dirs.length * colWidth,
+    height: 6,
+    specs: (originX, originY) => {
+      const specs: Spec[] = [];
+      dirs.forEach((dir, i) => {
+        const cx = originX + i * colWidth;
+        specs.push(belt(cx, originY + 1, dir));
+        for (let j = 0; j < 3; j++) {
+          specs.push(dir === N ? belt(cx, originY + 3 + j, dir) : belt(cx + j, originY + 3, dir));
+        }
+      });
+      return specs;
+    },
+  };
+}
+
 /** Lays out a list of blocks left-to-right in a single row, `gap` tiles
  *  apart, starting at (startX, startY). Returns every spec from every
  *  block with an absolute position. */
@@ -226,7 +257,7 @@ function main(): void {
   const kept = existing.filter((e) => e.y < FLOOR_Y);
 
   const newSpecs = layoutRow(
-    [wallConnectionSuite(), pipeConnectionSuite(), undergroundPipeSuite()],
+    [wallConnectionSuite(), pipeConnectionSuite(), undergroundPipeSuite(), beltCapSuite()],
     -744.5, // matches the existing layout's own left edge
     FLOOR_Y,
     6,
