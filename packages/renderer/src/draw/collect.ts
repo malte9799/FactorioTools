@@ -3,7 +3,7 @@ import type { ResolvedVisual } from "../entityLookup.js";
 import { dir4Name, dir8Name, toCardinal, opposite, type NeighbourGrid } from "../neighbours/grid.js";
 import { classifyPipe } from "../neighbours/pipe.js";
 import { classifyWall } from "../neighbours/wall.js";
-import { classifyBelt } from "../neighbours/belt.js";
+import { classifyBelt, type BeltCap } from "../neighbours/belt.js";
 import { PIXELS_PER_TILE, type DrawCommand } from "./commands.js";
 
 export interface CollectContext {
@@ -21,8 +21,8 @@ interface EntityFrame {
   /** Belt connection row, or a pipe/wall variant name. */
   connectionIndex: number;
   connectionName: string;
-  /** Extra rows drawn over the body (belt start/end caps). */
-  extraRows: number[];
+  /** Start/end pieces closing off a belt run, each on an adjacent tile. */
+  caps: BeltCap[];
   animation: number;
   undergroundIn: boolean;
 }
@@ -34,7 +34,7 @@ function resolveFrame(entity: PlacedEntity, visual: ResolvedVisual, ctx: Collect
     direction: Math.round(toCardinal(entity.direction) / 4) % 4,
     connectionIndex: 0,
     connectionName: "",
-    extraRows: [],
+    caps: [],
     animation: ctx.animationFrame,
     undergroundIn: entity.undergroundType !== "output",
   };
@@ -49,7 +49,7 @@ function resolveFrame(entity: PlacedEntity, visual: ResolvedVisual, ctx: Collect
     case "belt": {
       const shape = classifyBelt(x, y, entity.direction, ctx.grid, ctx.isBeltLike);
       frame.connectionIndex = shape.row;
-      frame.extraRows = shape.caps;
+      frame.caps = shape.caps;
       break;
     }
   }
@@ -91,6 +91,8 @@ function push(
   layer: Layer,
   order: number,
   alpha: number,
+  offsetX = 0,
+  offsetY = 0,
 ): void {
   const column = rawColumn % Math.max(sprite.columns ?? 1, 1);
   const scale = sprite.scale ?? 1;
@@ -103,11 +105,13 @@ function push(
     sy: (sprite.y ?? 0) + row * sprite.frameHeight,
     sw: sprite.frameWidth,
     sh: sprite.frameHeight,
-    dx: entity.x + shiftX - dw / 2,
-    dy: entity.y + shiftY - dh / 2,
+    dx: entity.x + offsetX + shiftX - dw / 2,
+    dy: entity.y + offsetY + shiftY - dh / 2,
     dw,
     dh,
     layer,
+    // Sorted by the entity's own row, not the offset one, so a cap stays
+    // with the belt it belongs to.
     y: entity.y,
     order,
     alpha,
@@ -135,10 +139,10 @@ export function collectEntity(
     const row = axisIndex(layer.row, frame);
     push(out, sprite, column, row, entity, layer.layer, order, alpha);
 
-    // Belt caps ride on the body layer's own grid, one row each.
-    if (layer.row?.by === "connection" && frame.extraRows.length > 0) {
-      for (const capRow of frame.extraRows) {
-        push(out, sprite, column, capRow, entity, layer.layer, order, alpha);
+    // Belt caps share the body's grid but sit on the adjacent tile.
+    if (layer.row?.by === "connection") {
+      for (const cap of frame.caps) {
+        push(out, sprite, column, cap.row, entity, layer.layer, order, alpha, cap.dx, cap.dy);
       }
     }
   });

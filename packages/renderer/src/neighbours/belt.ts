@@ -1,4 +1,4 @@
-import { leftOf, opposite, rightOf, toCardinal, type Cardinal, type NeighbourGrid } from "./grid.js";
+import { leftOf, opposite, rightOf, step, toCardinal, type Cardinal, type NeighbourGrid } from "./grid.js";
 import { Dir } from "./grid.js";
 
 /** Row indices into a belt_animation_set sheet's 20 rows. */
@@ -33,11 +33,20 @@ const END_CAP: Record<Cardinal, number> = {
   [Dir.West]: 15,
 };
 
+/** A cap piece closing off one end of a belt run. Its art covers the tile
+ *  the run would continue onto, so it is drawn one tile off the belt's own
+ *  centre: the start cap behind, the end cap ahead. */
+export interface BeltCap {
+  row: number;
+  dx: number;
+  dy: number;
+}
+
 export interface BeltShape {
   /** Row for the belt body. */
   row: number;
-  /** Cap rows drawn over the body; up to two for a lone belt tile. */
-  caps: number[];
+  /** Up to two, for a lone belt tile. */
+  caps: BeltCap[];
 }
 
 export function classifyBelt(
@@ -61,19 +70,34 @@ export function classifyBelt(
     return n !== undefined && isBeltLike(n.name);
   };
 
-  const caps: number[] = [];
-  if (!occupied(behind)) caps.push(START_CAP[facing]);
-  if (!occupied(facing)) caps.push(END_CAP[facing]);
-
   const fromLeft = feedsFrom(left);
   const fromRight = feedsFrom(right);
   const fromBehind = feedsFrom(behind);
 
   // A side feed with nothing behind bends the belt; with a straight feed too
-  // it merges, which the art doesn't distinguish from straight.
-  if (fromLeft && !fromRight && !fromBehind) return { row: CURVE[facing].left, caps };
-  if (fromRight && !fromLeft && !fromBehind) return { row: CURVE[facing].right, caps };
-  return { row: STRAIGHT[facing], caps };
+  // it merges, which the art doesn't distinguish from straight. A bend takes
+  // its input from that side rather than from behind.
+  const curvesLeft = fromLeft && !fromRight && !fromBehind;
+  const curvesRight = fromRight && !fromLeft && !fromBehind;
+  const inputSide = curvesLeft ? left : curvesRight ? right : behind;
+  const row = curvesLeft ? CURVE[facing].left : curvesRight ? CURVE[facing].right : STRAIGHT[facing];
+
+  // A cap closes an end nothing continues onto. The sprite covers the
+  // neighbouring tile, so it is offset half its own overhang that way.
+  const caps: BeltCap[] = [];
+  if (!occupied(inputSide)) caps.push({ row: START_CAP[facing], ...offsetTowards(inputSide) });
+  if (!occupied(facing)) caps.push({ row: END_CAP[facing], ...offsetTowards(facing) });
+
+  return { row, caps };
 }
+
+/** Belt art is drawn two tiles across, so a cap meant for the neighbouring
+ *  tile sits half a tile out — a full tile would leave a seam. */
+function offsetTowards(dir: Cardinal): { dx: number; dy: number } {
+  const { dx, dy } = step(dir);
+  return { dx: dx * CAP_OFFSET, dy: dy * CAP_OFFSET };
+}
+
+const CAP_OFFSET = 0.5;
 
 export { STRAIGHT as STRAIGHT_ROW };
