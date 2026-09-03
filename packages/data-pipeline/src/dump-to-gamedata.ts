@@ -260,12 +260,44 @@ function alwaysDrawnPieces(workingVisualisations: any[] | undefined, baseSheet: 
   return [...partial, ...full, ...top];
 }
 
+/** pumpjack's own rotating baseplate (the pipe-connector piece its horsehead
+ *  pump sits on) — a `base_picture` field the rest of graphicsForMachine
+ *  never reads (it only looks at graphics_set's animation/idle_animation,
+ *  which for pumpjack is the north-only horsehead pump itself; the pump's
+ *  motion doesn't need to visually rotate, but the baseplate's pipe stub
+ *  does). Declared as one plain {width,height} sheet with no direction_count
+ *  of its own, but confirmed against the real file — both it and its shadow
+ *  are physically 4 frames wide (N,E,S,W in that column order) — Factorio
+ *  apparently defaults an entity's own direction count (4, no diagonals
+ *  declared) onto a field like this with no count of its own.
+ *
+ *  Its object piece goes on Layer.LowerObject rather than sharing the
+ *  horsehead's Layer.Object: paint order sorts by layer first and each
+ *  sprite's own y-shift only second (compareDrawCommands in
+ *  draw/commands.ts), and the baseplate's shift (-0.148) is less negative
+ *  than the horsehead's (-0.75) — same layer, it would win the y-sort and
+ *  cover the pump it's meant to sit under, regardless of array order. */
+function pumpjackBaseGraphics(proto: any): GraphicsLayer[] {
+  const bp = proto.base_picture;
+  if (!bp) return [];
+  const layers: GraphicsLayer[] = [];
+  for (const raw of unwrapAll(bp)) {
+    const sprites = {} as Record<(typeof DIR4)[number], Sprite>;
+    DIR4.forEach((d, i) => {
+      sprites[d] = { ...raw.sprite, x: (raw.sprite.x ?? 0) + i * raw.sprite.frameWidth };
+    });
+    layers.push({ layer: raw.shadow ? Layer.Shadow : Layer.LowerObject, sprites, per: "dir4" });
+  }
+  return layers;
+}
+
 function graphicsForMachine(proto: any): EntityGraphics | undefined {
   const graphics = directionColumnGraphics(machineAnimation(proto));
   if (!graphics) return undefined;
 
   const body = graphics.layers[graphics.layers.length - 1]!;
   const baseSheet = "per" in body ? undefined : body.sprites.sheet;
+  graphics.layers.unshift(...pumpjackBaseGraphics(proto));
   graphics.layers.push(...alwaysDrawnPieces(proto.graphics_set?.working_visualisations, baseSheet));
   return graphics;
 }
