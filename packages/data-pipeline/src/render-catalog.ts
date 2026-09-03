@@ -161,6 +161,22 @@ function splitterGraphics(proto: any): EntityGraphics | undefined {
   return { connector: "belt", layers };
 }
 
+/** A roboport's `base` is the body with its hatch opening left uncovered;
+ *  the closed-hatch cap and the seam patch over it are separate fields,
+ *  always drawn together at their animation's first (closed) frame since a
+ *  blueprint shows an idle roboport. */
+function roboportGraphics(proto: any): EntityGraphics | undefined {
+  const layers: GraphicsLayer[] = [];
+  for (const l of unwrapAll(proto.base)) {
+    layers.push({ layer: l.shadow ? Layer.Shadow : Layer.Object, sprites: l.sprite });
+  }
+  const patch = toSprite(proto.base_patch);
+  if (patch) layers.push({ layer: Layer.Object, sprites: patch });
+  const door = toSprite(proto.door_animation_down);
+  if (door) layers.push({ layer: Layer.Object, sprites: door });
+  return layers.length > 0 ? { layers } : undefined;
+}
+
 /** Gates only have two real orientations, so north aliases south and east
  *  aliases west. */
 function gateGraphics(proto: any): EntityGraphics | undefined {
@@ -315,7 +331,6 @@ const ROTATES_FOOTPRINT = new Set(["splitter", "fast-splitter", "express-splitte
 const PICTURE_FIELD: Record<string, string> = {
   container: "picture",
   "logistic-container": "picture",
-  roboport: "base",
   "storage-tank": "pictures",
   pump: "animations",
   "offshore-pump": "graphics_set",
@@ -446,9 +461,9 @@ function buildMenuIndex(raw: Raw, locale: LocaleTables): { menuGroups: MenuGroup
 export function buildRenderCatalog(raw: Raw, locale: LocaleTables, version: string): RenderCatalog {
   const entities: Record<string, RenderEntityProto> = {};
 
-  // Cutscene set-dressing that shares the container prototype type but can't
-  // appear in a blueprint.
-  const NOT_PLACEABLE = /^(crash-site-|factorio-logo-|factorio-space-age-logo)/;
+  // Cutscene set-dressing and map-generated ruins that share a real
+  // prototype type but have no placing item, so can't appear in a blueprint.
+  const NOT_PLACEABLE = /^(crash-site-|factorio-logo-|factorio-space-age-logo|fulgoran-ruin-)/;
 
   const add = (proto: any, graphics: EntityGraphics | undefined, footprintOverride?: [number, number]) => {
     if (entities[proto.name] || NOT_PLACEABLE.test(proto.name)) return;
@@ -496,6 +511,9 @@ export function buildRenderCatalog(raw: Raw, locale: LocaleTables, version: stri
   }
   for (const proto of Object.values(raw.gate ?? {})) {
     add(proto, gateGraphics(proto));
+  }
+  for (const proto of Object.values(raw.roboport ?? {})) {
+    add(proto, roboportGraphics(proto));
   }
   for (const proto of Object.values(raw["fusion-generator"] ?? {})) {
     add(proto, fusionGeneratorGraphics(proto));

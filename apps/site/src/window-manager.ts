@@ -60,6 +60,12 @@ export function makeFloatingWindow(el: HTMLElement, options: FloatingWindowOptio
     options.onClose?.();
   };
   closeButton.addEventListener("click", onCloseClick);
+  // The titlebar's own pointerdown starts a drag and captures the pointer,
+  // which swallows the click a press-on-the-button would otherwise produce
+  // (the browser resolves the synthetic click against whichever element has
+  // capture, not the button itself) — stop it here before it bubbles there.
+  const onCloseButtonPointerDown = (e: PointerEvent) => e.stopPropagation();
+  closeButton.addEventListener("pointerdown", onCloseButtonPointerDown);
 
   let x = options.x;
   let y = options.y;
@@ -151,6 +157,7 @@ export function makeFloatingWindow(el: HTMLElement, options: FloatingWindowOptio
       if (destroyed) return;
       destroyed = true;
       closeButton.removeEventListener("click", onCloseClick);
+      closeButton.removeEventListener("pointerdown", onCloseButtonPointerDown);
       el.removeEventListener("pointerdown", onPointerDownRaise);
       titlebar.removeEventListener("pointerdown", onTitlebarPointerDown);
       titlebar.removeEventListener("pointermove", onTitlebarPointerMove);
