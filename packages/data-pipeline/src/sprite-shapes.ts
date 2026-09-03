@@ -147,23 +147,44 @@ export function stackSources(sources: any[]): EntityGraphics | undefined {
 export function directionColumnGraphics(source: any): EntityGraphics | undefined {
   const perDir = perDirectionSource(source);
   if (perDir) {
-    const perFacing: { sprites: Record<string, Sprite>; shadow: boolean }[] = [];
+    // Zip each facing's own layer list into shared slots — but by ROLE
+    // (shadow vs. object) first, then by position within that role, not by
+    // raw position across the whole list. A facing's own layer count/order
+    // isn't guaranteed to match its siblings' (confirmed by spike: vanilla
+    // electric-mining-drill's south animation has its shadow at a different
+    // index than north/east/west, and electromagnetic-plant's top layer is
+    // absent on some facings) — zipping by raw index there silently swaps a
+    // shadow into an object slot (or vice versa) for the facing whose layer
+    // order differs, producing an opaque shadow-shaped sprite or a missing
+    // top layer instead of the real art.
+    const shadowSlots: { sprites: Record<string, Sprite> }[] = [];
+    const objectSlots: { sprites: Record<string, Sprite> }[] = [];
     for (const d of DIR4) {
       const layers = unwrapAll(perDir[d]);
       if (layers.length === 0) return undefined;
-      layers.forEach((l, i) => {
-        const slot = (perFacing[i] ??= { sprites: {}, shadow: l.shadow });
+      let shadowI = 0;
+      let objectI = 0;
+      for (const l of layers) {
+        const slots = l.shadow ? shadowSlots : objectSlots;
+        const i = l.shadow ? shadowI++ : objectI++;
+        const slot = (slots[i] ??= { sprites: {} });
         slot.sprites[d] = l.sprite;
-      });
+      }
     }
-    // Facings must agree on how many layers they have, or a slot would be
-    // missing art for some directions.
-    const complete = perFacing.filter((slot) => DIR4.every((d) => slot.sprites[d]));
-    if (complete.length === 0) return undefined;
+    // A slot doesn't need every facing filled in — electric-mining-drill's
+    // small "output" decal layer is only absent for south, not missing
+    // entirely — so a slot with at least one facing survives, and
+    // spriteFor()/collectEntity() skip drawing it for a facing whose own
+    // entry is absent rather than treating that as no art at all.
+    const all = [
+      ...shadowSlots.map((slot) => ({ ...slot, shadow: true })),
+      ...objectSlots.map((slot) => ({ ...slot, shadow: false })),
+    ];
+    if (all.length === 0) return undefined;
     return {
-      layers: complete.map((slot) => ({
+      layers: all.map((slot) => ({
         layer: slot.shadow ? Layer.Shadow : Layer.Object,
-        sprites: slot.sprites as Record<(typeof DIR4)[number], Sprite>,
+        sprites: slot.sprites,
         per: "dir4" as const,
       })),
     };

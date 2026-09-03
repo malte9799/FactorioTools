@@ -127,8 +127,14 @@ export type GraphicsLayer = {
   row?: FrameAxis;
 } & (
   | { sprites: Sprite }
-  | { sprites: Record<Dir4Name, Sprite>; per: "dir4" }
-  | { sprites: Record<Dir8Name, Sprite>; per: "dir8" }
+  /** Partial: some Factorio entities (e.g. electric-mining-drill's small
+   *  "output" decal) omit a layer for one facing entirely while shipping it
+   *  for the other three — the layer still draws for the facings that have
+   *  it rather than being dropped everywhere just because one facing lacks
+   *  it. spriteFor()/collectEntity() already skip a layer when the current
+   *  facing's own entry is missing. */
+  | { sprites: Partial<Record<Dir4Name, Sprite>>; per: "dir4" }
+  | { sprites: Partial<Record<Dir8Name, Sprite>>; per: "dir8" }
   /** Keyed by a connector's variant name (pipe/wall connection shapes). */
   | { sprites: Record<string, Sprite>; per: "connection" }
 );

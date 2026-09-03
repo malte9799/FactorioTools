@@ -35,7 +35,7 @@ import type {
   Sprite,
 } from "@factoriotools/engine";
 import { loadLocale, localisedRecipeName, type LocaleTables } from "./locale.js";
-import { animationListGraphics, beltGraphics, directionColumnGraphics, sheetsOf, toSprite, unwrap } from "./sprite-shapes.js";
+import { animationListGraphics, beltGraphics, directionColumnGraphics, sheetsOf, toSprite, unwrap, unwrapAll } from "./sprite-shapes.js";
 import { buildRenderCatalog } from "./render-catalog.js";
 import type { RenderCatalog } from "@factoriotools/engine";
 
@@ -169,20 +169,95 @@ function machineAnimation(proto: any): any {
 
 const TRANSIENT_EFFECT_FILENAME = /scorchmark|scorch-mark|particles?\.png$/i;
 
+const DIR4 = ["north", "east", "south", "west"] as const;
+
 /** Some machines build their body from working_visualisations entries that
  *  are always on screen, rather than one main sprite: an "idle" state entry
  *  for electromagnetic-plant-likes, or several `always_draw` pieces for Space
- *  Age mining drills. */
-function alwaysDrawnPieces(workingVisualisations: any[] | undefined, baseSheet: string | undefined): Sprite[] {
-  const out: Sprite[] = [];
+ *  Age mining drills. Many of Space Age's mining-drill pieces (wheels,
+ *  support, output chute, ...) declare a separate {north,east,south,west}
+ *  _animation each, not one shared `animation` — reading only
+ *  `north_animation` (as this used to) freezes those pieces to their
+ *  north-facing art regardless of the entity's own direction, which reads as
+ *  "the drill doesn't rotate" since these pieces are the visually dominant
+ *  chassis. Returned as `per: "dir4"` when a piece is actually direction-
+ *  split, or a plain sprite when it isn't (so a single-direction piece still
+ *  renders — better than dropping it for lack of the other 3 facings). */
+function alwaysDrawnPieces(workingVisualisations: any[] | undefined, baseSheet: string | undefined): GraphicsLayer[] {
+  // Two ordering quirks the renderer's own paint order (layer, then each
+  // command's y-shift, and only THEN array declaration order — see
+  // compareDrawCommands in draw/commands.ts) won't get right by array
+  // position alone, since these pieces all share Layer.Object and their
+  // differing shiftY values would otherwise decide the outcome instead:
+  //  - electric-mining-drill's own rotating arm/head assembly (declared for
+  //    every facing) must draw OVER its east/south/west-only ore-chute
+  //    overlay — confirmed against the real game — so it's promoted a whole
+  //    layer, to Layer.AboveObject.
+  //  - a piece named "*-front.*" (electric-mining-drill's own -front.png
+  //    pieces, Factorio's own naming for "goes in front of everything else
+  //    here") goes a layer above even that, on Layer.AboveObject pushed
+  //    after the arm/head, so it wins the y-tiebreak against it too.
+  const full: GraphicsLayer[] = [];
+  const partial: GraphicsLayer[] = [];
+  const top: GraphicsLayer[] = [];
+  const isFrontPiece = (sprites: Partial<Record<(typeof DIR4)[number], Sprite>> | Sprite): boolean => {
+    const sprite = "sheet" in sprites ? sprites : (sprites.north ?? sprites.east ?? sprites.south ?? sprites.west);
+    return /-front\.[^/]+$/.test(sprite?.sheet ?? "");
+  };
   for (const entry of workingVisualisations ?? []) {
-    const isIdle = Array.isArray(entry.draw_in_states) && entry.draw_in_states.includes("idle");
-    if (!isIdle && entry.always_draw !== true) continue;
+    // `always_draw` means "draw whenever this entry's own state is active",
+    // not "draw regardless of state" — a machine with idle/warm-up/working/
+    // cool-down sub-animations (electromagnetic-plant and friends) marks
+    // several of those `always_draw: true`, one per state, and Factorio only
+    // shows whichever one matches the machine's current state. A blueprint
+    // renders the idle pose, so any entry naming OTHER states via
+    // draw_in_states must be skipped, or every state's art (including ones
+    // whose own layers happen to be a shadow) gets stacked into one frame.
+    // An entry with no draw_in_states at all (the mining-drill chassis
+    // pieces this function was written for) has no state to filter on and
+    // is always drawn, matching the prior behaviour for that shape.
+    const states: string[] | undefined = entry.draw_in_states;
+    if (Array.isArray(states) && !states.includes("idle")) continue;
+    if (!Array.isArray(states) && entry.always_draw !== true) continue;
+
+    if (DIR4.some((d) => entry[`${d}_animation`])) {
+      // A direction's own `{dir}_animation` can hold more than one non-
+      // shadow sub-layer (electric-mining-drill's south chute is
+      // output.png UNDER front.png, east/west have only the one) — zipped
+      // into separate slots by position within that direction's own list,
+      // so a second sub-layer still gets its own GraphicsLayer instead of
+      // being silently dropped by unwrap()'s "first match only" pick.
+      const slots: Partial<Record<(typeof DIR4)[number], Sprite>>[] = [];
+      for (const d of DIR4) {
+        const source = entry[`${d}_animation`] ?? entry.animation;
+        unwrapAll(source)
+          .filter((l) => !l.shadow)
+          .forEach((l, i) => {
+            (slots[i] ??= {})[d] = l.sprite;
+          });
+      }
+      const anyMain = slots[0]?.north ?? slots[0]?.east ?? slots[0]?.south ?? slots[0]?.west;
+      if (!anyMain || anyMain.sheet === baseSheet || TRANSIENT_EFFECT_FILENAME.test(anyMain.sheet)) continue;
+      // Some pieces (electric-mining-drill's east/south/west-only ore-chute
+      // overlay) never had north art to begin with — Factorio simply doesn't
+      // draw that piece facing north, not "art is missing". Pushed as a
+      // partial dir4 record rather than requiring every facing, so it still
+      // renders for the facings it does have instead of being dropped
+      // everywhere for lack of the other one/two.
+      const isFull = DIR4.every((d) => slots[0]?.[d]);
+      for (const sprites of slots) {
+        if (isFrontPiece(sprites)) top.push({ layer: Layer.AboveObject, sprites, per: "dir4" });
+        else if (isFull) full.push({ layer: Layer.AboveObject, sprites, per: "dir4" });
+        else partial.push({ layer: Layer.Object, sprites, per: "dir4" });
+      }
+      continue;
+    }
+
     const { main } = unwrap(entry.north_animation ?? entry.animation);
     if (!main || main.sheet === baseSheet || TRANSIENT_EFFECT_FILENAME.test(main.sheet)) continue;
-    out.push(main);
+    (isFrontPiece(main) ? top : full).push({ layer: Layer.AboveObject, sprites: main });
   }
-  return out;
+  return [...partial, ...full, ...top];
 }
 
 function graphicsForMachine(proto: any): EntityGraphics | undefined {
@@ -191,9 +266,7 @@ function graphicsForMachine(proto: any): EntityGraphics | undefined {
 
   const body = graphics.layers[graphics.layers.length - 1]!;
   const baseSheet = "per" in body ? undefined : body.sprites.sheet;
-  for (const piece of alwaysDrawnPieces(proto.graphics_set?.working_visualisations, baseSheet)) {
-    graphics.layers.push({ layer: Layer.Object, sprites: piece });
-  }
+  graphics.layers.push(...alwaysDrawnPieces(proto.graphics_set?.working_visualisations, baseSheet));
   return graphics;
 }
 

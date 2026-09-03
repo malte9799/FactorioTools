@@ -2,11 +2,16 @@
   "version": "0.0.1",
   "configurations": [
     {
+      "name": "site-preview",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["run", "preview", "--workspace", "apps/site", "--", "--port", "4174", "--strictPort"],
+      "port": 4174
+    },
+    {
       "name": "site-dev",
       "runtimeExecutable": "npm",
-      "runtimeArgs": ["run", "dev", "--prefix", "apps/site"],
-      "port": 5173,
-      "autoPort": true
+      "runtimeArgs": ["run", "dev", "--workspace", "apps/site", "--", "--port", "4175", "--strictPort"],
+      "port": 4175
     }
   ]
 }
