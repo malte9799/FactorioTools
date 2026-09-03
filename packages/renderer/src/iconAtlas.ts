@@ -59,3 +59,13 @@ export class IconAtlas {
     await this.ready;
   }
 }
+
+// See spriteAtlas.ts's getSharedSpriteAtlas() for why this is a module-level
+// singleton rather than per-mount state: the icon sheet is small compared to
+// the entity sprites, but there's no reason to re-fetch/re-decode it either.
+let sharedIconAtlas: IconAtlas | undefined;
+
+export function getSharedIconAtlas(): IconAtlas {
+  if (!sharedIconAtlas) sharedIconAtlas = new IconAtlas();
+  return sharedIconAtlas;
+}

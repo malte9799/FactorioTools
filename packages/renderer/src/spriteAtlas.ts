@@ -27,7 +27,16 @@ export class SpriteAtlas {
    *  triggers a load in the background otherwise so a later frame picks it
    *  up once ready. Never throws — a missing/broken sheet just means that
    *  entity draws as its outline fallback, mirroring the calc engine's
-   *  graceful-degradation philosophy for unrecognised entities. */
+   *  graceful-degradation philosophy for unrecognised entities.
+   *
+   *  Waits on img.decode() before making the image available, rather than
+   *  onload alone: onload fires once bytes are downloaded, but the actual
+   *  pixel decode of a multi-MB sheet (some of these are 10MB+) otherwise
+   *  happens lazily on the first drawImage() call — right on the main
+   *  thread, right when a pan brings a bunch of never-before-seen entities
+   *  into view at once. decode() forces that work off onto the browser's
+   *  own decode path ahead of time so the draw loop's drawImage calls hit
+   *  an already-decoded bitmap instead of jank-inducing synchronous work. */
   get(modPath: string): HTMLImageElement | undefined {
     const existing = this.images.get(modPath);
     if (existing) return existing;
@@ -35,9 +44,12 @@ export class SpriteAtlas {
       const url = sheetUrl(modPath);
       const promise = new Promise<HTMLImageElement>((resolve, reject) => {
         const img = new Image();
+        img.decoding = "async";
         img.onload = () => {
-          this.images.set(modPath, img);
-          resolve(img);
+          (img.decode?.() ?? Promise.resolve()).catch(() => {}).then(() => {
+            this.images.set(modPath, img);
+            resolve(img);
+          });
         };
         img.onerror = () => reject(new Error(`sprite failed to load: ${url}`));
         img.src = url;
@@ -57,4 +69,18 @@ export class SpriteAtlas {
   async whenIdle(): Promise<void> {
     await Promise.allSettled([...this.loading.values()]);
   }
+}
+
+// A blueprint the size of the Debug Lab (one of every entity) touches
+// nearly the full ~200MB sprite-sheet set, and decoding that is real CPU
+// work independent of the browser's HTTP cache. mountRenderer() used to
+// construct a fresh SpriteAtlas per mount, so navigating away from the
+// tool and back (or any hashchange remount) re-decoded everything from
+// scratch. One module-level instance survives remounts within the same
+// page load, so a sheet is only ever ` new Image()`-decoded once per tab.
+let sharedAtlas: SpriteAtlas | undefined;
+
+export function getSharedSpriteAtlas(): SpriteAtlas {
+  if (!sharedAtlas) sharedAtlas = new SpriteAtlas();
+  return sharedAtlas;
 }

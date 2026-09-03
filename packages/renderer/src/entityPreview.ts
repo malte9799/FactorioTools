@@ -1,5 +1,5 @@
 import type { PlacedEntity } from "@factoriotools/engine";
-import { SpriteAtlas } from "./spriteAtlas.js";
+import { getSharedSpriteAtlas } from "./spriteAtlas.js";
 import type { ResolvedVisual } from "./entityLookup.js";
 import { collectEntity } from "./draw/collect.js";
 import { paint } from "./draw/paint.js";
@@ -13,10 +13,10 @@ import type { DrawCommand } from "./draw/commands.js";
  *  properties GUI's header. Shares the exact drawEntity() dispatch the main
  *  blueprint canvas uses (same sprite atlas convention, same alt-mode-free
  *  static pose) rather than a second rendering path, so the preview always
- *  matches what the entity actually looks like on the grid. Owns its own
- *  SpriteAtlas instance — previews are opened one at a time (a single
- *  selection's GUI), so sharing the main renderer's atlas isn't worth the
- *  coupling. */
+ *  matches what the entity actually looks like on the grid. Shares the main
+ *  renderer's SpriteAtlas (see spriteAtlas.ts's getSharedSpriteAtlas) so
+ *  opening a properties panel never re-decodes a sheet the main canvas has
+ *  already loaded. */
 export function mountEntityPreview(container: HTMLElement, entityName: string, direction: number, visual: ResolvedVisual): () => void {
   const canvas = document.createElement("canvas");
   canvas.style.display = "block";
@@ -26,7 +26,7 @@ export function mountEntityPreview(container: HTMLElement, entityName: string, d
 
   const ctx = canvas.getContext("2d")!;
   ctx.imageSmoothingEnabled = false;
-  const atlas = new SpriteAtlas();
+  const atlas = getSharedSpriteAtlas();
 
   const entity: PlacedEntity = {
     entityNumber: -1,
