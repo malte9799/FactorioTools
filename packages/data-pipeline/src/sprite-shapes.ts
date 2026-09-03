@@ -199,12 +199,16 @@ export function layerOf(renderLayer: string | undefined, fallback = Layer.Object
   return (renderLayer ? RENDER_LAYERS[renderLayer] : undefined) ?? fallback;
 }
 
-/** Stacks the always-visible entries of an animation_list, honouring each
- *  entry's own render_layer. */
+/** Stacks the always-visible entries of an animation_list (or a
+ *  working_visualisations list, same shape), honouring each entry's own
+ *  render_layer. A `fadeout` entry is a transient running-state effect
+ *  (steam, exhaust) with no `always_draw` of its own — skipped along with
+ *  any entry explicitly marked always_draw: false, since a blueprint shows
+ *  entities idle. */
 export function animationListGraphics(list: any[] | undefined): EntityGraphics | undefined {
   const layers: GraphicsLayer[] = [];
   for (const entry of list ?? []) {
-    if (entry.always_draw === false) continue;
+    if (entry.always_draw === false || entry.fadeout) continue;
     const { main, shadow } = unwrap(entry.animation ?? entry);
     if (!main) continue;
     if (shadow) layers.push({ layer: Layer.Shadow, sprites: shadow });

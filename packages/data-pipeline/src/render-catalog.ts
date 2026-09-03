@@ -5,6 +5,7 @@ import { Layer } from "@factoriotools/engine";
 import type { EntityGraphics, GraphicsLayer, MenuGroup, MenuPosition, RenderCatalog, RenderEntityProto, Sprite } from "@factoriotools/engine";
 import type { LocaleTables } from "./locale.js";
 import {
+  animationListGraphics,
   directionColumnGraphics,
   layerOf,
   perDirection,
@@ -175,6 +176,22 @@ function roboportGraphics(proto: any): EntityGraphics | undefined {
   const door = toSprite(proto.door_animation_down);
   if (door) layers.push({ layer: Layer.Object, sprites: door });
   return layers.length > 0 ? { layers } : undefined;
+}
+
+/** A thruster's body is graphics_set.animation; its four pipe-connection
+ *  pieces are always-visible working_visualisations entries (the fifth, a
+ *  `fadeout` exhaust-flame effect, only shows while running and is skipped
+ *  for the same reason animationListGraphics skips !always_draw entries). */
+function thrusterGraphics(proto: any): EntityGraphics | undefined {
+  const gs = proto.graphics_set;
+  const { main, shadow } = unwrap(gs?.animation);
+  if (!main) return undefined;
+  const layers: GraphicsLayer[] = [];
+  if (shadow) layers.push({ layer: Layer.Shadow, sprites: shadow });
+  layers.push({ layer: Layer.Object, sprites: main });
+  const pipes = animationListGraphics(gs?.working_visualisations);
+  if (pipes) layers.push(...pipes.layers);
+  return { layers };
 }
 
 /** Gates only have two real orientations, so north aliases south and east
@@ -384,7 +401,6 @@ const PICTURE_FIELD: Record<string, string> = {
   "linked-container": "picture",
   "infinity-container": "picture",
   "electric-energy-interface": "picture",
-  thruster: "graphics_set",
   "burner-generator": "animation",
   "fusion-reactor": "graphics_set",
   "selector-combinator": "sprites",
@@ -514,6 +530,9 @@ export function buildRenderCatalog(raw: Raw, locale: LocaleTables, version: stri
   }
   for (const proto of Object.values(raw.roboport ?? {})) {
     add(proto, roboportGraphics(proto));
+  }
+  for (const proto of Object.values(raw.thruster ?? {})) {
+    add(proto, thrusterGraphics(proto));
   }
   for (const proto of Object.values(raw["fusion-generator"] ?? {})) {
     add(proto, fusionGeneratorGraphics(proto));
