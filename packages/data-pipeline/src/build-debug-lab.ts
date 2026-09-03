@@ -173,11 +173,13 @@ function undergroundPipeSuite(): Block {
   };
 }
 
-/** An isolated belt (both caps) and a 3-tile run (a cap at each end only),
+/** An isolated belt (both caps), a 3-tile run (a cap at each end only), a
+ *  right-hand curve (start cap on its side input), and a T-merge (a side
+ *  feed into a straight run, which draws as straight with no extra cap) —
  *  for two facings. */
 function beltCapSuite(): Block {
   const dirs = [N, E];
-  const colWidth = 3;
+  const colWidth = 5;
   return {
     label: "belt start/end caps",
     width: dirs.length * colWidth,
@@ -189,6 +191,28 @@ function beltCapSuite(): Block {
         specs.push(belt(cx, originY + 1, dir));
         for (let j = 0; j < 3; j++) {
           specs.push(dir === N ? belt(cx, originY + 3 + j, dir) : belt(cx + j, originY + 3, dir));
+        }
+        // A right-hand curve: fed from its right (east for a north-facing
+        // belt), bending to exit the way `dir` points.
+        const curveX = cx + 2;
+        if (dir === N) {
+          specs.push(belt(curveX, originY + 1, E));
+          specs.push(belt(curveX, originY, N));
+        } else {
+          specs.push(belt(curveX, originY + 2, N));
+          specs.push(belt(curveX + 1, originY + 2, E));
+        }
+        // A T-merge: a straight run with a side feed joining it — draws as
+        // plain straight, no extra cap where the side belt joins.
+        const mergeX = cx + 4;
+        if (dir === N) {
+          specs.push(belt(mergeX, originY + 2, N));
+          specs.push(belt(mergeX, originY + 1, N));
+          specs.push(belt(mergeX - 1, originY + 2, E));
+        } else {
+          specs.push(belt(mergeX - 2, originY + 5, E));
+          specs.push(belt(mergeX - 1, originY + 5, E));
+          specs.push(belt(mergeX - 2, originY + 4, S));
         }
       });
       return specs;

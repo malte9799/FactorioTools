@@ -87,9 +87,12 @@ export function classifyBelt(
   const row = curvesLeft ? CURVE[facing].left : curvesRight ? CURVE[facing].right : STRAIGHT[facing];
 
   // A cap closes an end nothing continues onto, shifted a full tile toward
-  // the neighbour it covers (ported from the reference renderer).
+  // the neighbour it covers. The reference renderer always shifts toward
+  // the belt's own behind/ahead — even for a curve's start cap, whose input
+  // is to a side — so this matches that rather than shifting toward
+  // inputSide, which only differs from `behind` on a curve.
   const caps: BeltCap[] = [];
-  if (!occupied(inputSide)) caps.push({ row: START_CAP[facing], ...offsetTowards(inputSide) });
+  if (!occupied(inputSide)) caps.push({ row: START_CAP[facing], ...offsetTowards(behind) });
   if (!occupied(facing)) caps.push({ row: END_CAP[facing], ...offsetTowards(facing) });
 
   return { row, caps };
