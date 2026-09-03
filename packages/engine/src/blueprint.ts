@@ -176,6 +176,7 @@ export function denormaliseEntities(entities: PlacedEntity[]): BpEntity[] {
     if (e.quality !== "normal") bp.quality = e.quality;
     if (e.recipe) bp.recipe = e.recipe;
     if (e.modules.length) bp.items = writeModules(e.modules);
+    if (e.undergroundType) bp.type = e.undergroundType;
     return bp;
   });
 }

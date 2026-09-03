@@ -96,26 +96,47 @@ function wallGraphics(proto: any): EntityGraphics | undefined {
   return { connector: "wall", layers };
 }
 
-/** Undergrounds and loaders share one sheet: facings as columns, entrance and
- *  exit as two rows. */
+/** Undergrounds and loaders share one sheet: facings as columns, entrance
+ *  and exit (and, for undergrounds only, their side-loading variants — a
+ *  different mouth piece for when a belt feeds in from the side rather
+ *  than straight on) as rows. A loader's structure has no side-loading
+ *  fields or ground-seam patches, so those layers are simply absent. */
 function undergroundGraphics(proto: any): EntityGraphics | undefined {
-  const out = proto.structure?.direction_out?.sheet;
-  const inn = proto.structure?.direction_in?.sheet;
+  const struct = proto.structure;
+  const out = struct?.direction_out?.sheet;
+  const inn = struct?.direction_in?.sheet;
   const sprite = toSprite(out ?? inn);
   if (!sprite) return undefined;
-  const rowOf = (s: any, fallback: number) => (s ? Math.round((s.y ?? 0) / s.height) : fallback);
-  return {
-    layers: [
-      {
-        layer: Layer.Object,
-        // One column per facing; the entrance and exit rows are picked by
-        // the entity's own end, so the grid origin resets to the sheet's top.
-        sprites: { ...sprite, y: 0, columns: 4 },
-        column: { by: "direction" },
-        row: { by: "underground-end", inIndex: rowOf(inn, 1), outIndex: rowOf(out, 0) },
-      },
-    ],
-  };
+  const rowOf = (s: any): number | undefined => (s ? Math.round((s.y ?? 0) / s.height) : undefined);
+
+  const layers: GraphicsLayer[] = [];
+  const backPatch = toSprite(struct?.back_patch?.sheet);
+  if (backPatch) layers.push({ layer: Layer.Object, sprites: { ...backPatch, columns: 4 }, column: { by: "direction" } });
+
+  layers.push({
+    layer: Layer.Object,
+    // One column per facing; the entrance/exit/side-loading rows are
+    // picked by the entity's own end and its live neighbours, so the grid
+    // origin resets to the sheet's top.
+    sprites: { ...sprite, y: 0, columns: 4 },
+    column: { by: "direction" },
+    row: {
+      by: "underground-end",
+      inIndex: rowOf(inn) ?? 1,
+      outIndex: rowOf(out) ?? 0,
+      inSideLoadIndex: rowOf(struct?.direction_in_side_loading?.sheet),
+      outSideLoadIndex: rowOf(struct?.direction_out_side_loading?.sheet),
+    },
+  });
+
+  const frontPatch = toSprite(struct?.front_patch?.sheet);
+  if (frontPatch) layers.push({ layer: Layer.Object, sprites: { ...frontPatch, columns: 4 }, column: { by: "direction" } });
+
+  // Needed so collectEntity's belt-connector branch runs at all — without
+  // it, an underground never picks up its own open-end cap or checks for
+  // side-loading, both resolved from live neighbours the same way a plain
+  // belt's are.
+  return { layers, connector: "belt" };
 }
 
 /** A splitter draws two belt lanes under a body whose art is one whole file

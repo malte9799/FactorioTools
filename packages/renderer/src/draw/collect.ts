@@ -3,7 +3,7 @@ import type { ResolvedVisual } from "../entityLookup.js";
 import { dir4Name, dir8Name, toCardinal, opposite, splitterLaneCells, type NeighbourGrid } from "../neighbours/grid.js";
 import { classifyPipe } from "../neighbours/pipe.js";
 import { classifyWall } from "../neighbours/wall.js";
-import { classifyBelt, type BeltCap } from "../neighbours/belt.js";
+import { classifyBeltCell, undergroundSideLoaded, type BeltCap } from "../neighbours/beltGraph.js";
 import { classifyPlatform, type PlatformBox } from "../neighbours/platform.js";
 import { PIXELS_PER_TILE, type DrawCommand } from "./commands.js";
 
@@ -37,6 +37,10 @@ interface EntityFrame {
   platformShapes: string[];
   animation: number;
   undergroundIn: boolean;
+  /** True when a belt-like entity feeds this underground's mouth from the
+   *  side rather than straight on — swaps in the direction_*_side_loading
+   *  sprite, which the plain mouth art doesn't otherwise account for. */
+  sideLoaded: boolean;
 }
 
 function resolveFrame(entity: PlacedEntity, visual: ResolvedVisual, ctx: CollectContext): EntityFrame {
@@ -51,6 +55,7 @@ function resolveFrame(entity: PlacedEntity, visual: ResolvedVisual, ctx: Collect
     platformShapes: [],
     animation: ctx.animationFrame,
     undergroundIn: entity.undergroundType !== "output",
+    sideLoaded: false,
   };
 
   switch (visual.graphics?.connector) {
@@ -64,14 +69,21 @@ function resolveFrame(entity: PlacedEntity, visual: ResolvedVisual, ctx: Collect
       if (entity.name.includes("splitter")) {
         // A splitter has no single tile of its own — each lane classifies
         // from its own cell, or a belt feeding the far lane would look like
-        // it feeds nothing.
+        // it feeds nothing. A splitter's lanes never curve.
         const [minus, plus] = splitterLaneCells(entity);
         frame.laneCaps = [
-          classifyBelt(minus.x, minus.y, entity.direction, ctx.grid, ctx.isBeltLike).caps,
-          classifyBelt(plus.x, plus.y, entity.direction, ctx.grid, ctx.isBeltLike).caps,
+          classifyBeltCell(minus.x, minus.y, entity.direction, ctx.grid, ctx.isBeltLike, true).caps,
+          classifyBeltCell(plus.x, plus.y, entity.direction, ctx.grid, ctx.isBeltLike, true).caps,
         ];
+      } else if (entity.undergroundType !== undefined) {
+        // An underground belt (or loader) never curves, and only ever
+        // shows the one cap for its own open end — the entrance's start
+        // cap, or the exit's end cap — never both.
+        const shape = classifyBeltCell(x, y, entity.direction, ctx.grid, ctx.isBeltLike, true);
+        frame.caps = shape.caps.filter((cap) => cap.kind === (frame.undergroundIn ? "start" : "end"));
+        frame.sideLoaded = undergroundSideLoaded(x, y, entity.direction, ctx.grid, ctx.isBeltLike);
       } else {
-        const shape = classifyBelt(x, y, entity.direction, ctx.grid, ctx.isBeltLike);
+        const shape = classifyBeltCell(x, y, entity.direction, ctx.grid, ctx.isBeltLike);
         frame.connectionIndex = shape.row;
         frame.caps = shape.caps;
       }
@@ -99,7 +111,11 @@ function axisIndex(axis: GraphicsLayer["column"], frame: EntityFrame): number {
     case "direction": return frame.direction;
     case "animation": return frame.animation;
     case "connection": return frame.connectionIndex;
-    case "underground-end": return frame.undergroundIn ? axis.inIndex : axis.outIndex;
+    case "underground-end": {
+      const sideLoadIndex = frame.undergroundIn ? axis.inSideLoadIndex : axis.outSideLoadIndex;
+      if (frame.sideLoaded && sideLoadIndex !== undefined) return sideLoadIndex;
+      return frame.undergroundIn ? axis.inIndex : axis.outIndex;
+    }
   }
 }
 

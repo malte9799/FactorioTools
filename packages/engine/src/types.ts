@@ -100,8 +100,17 @@ export type FrameAxis =
   | { by: "none" }
   /** Cardinal facing, 0..3. */
   | { by: "direction" }
-  /** Entrance vs. exit, for underground belts and loaders. */
-  | { by: "underground-end"; inIndex: number; outIndex: number }
+  /** Entrance vs. exit, for underground belts and loaders. inSideLoadIndex/
+   *  outSideLoadIndex are optional: an underground belt swaps to them when
+   *  a belt feeds its mouth from the side rather than straight on: absent,
+   *  a loader (which has no such variant) always uses inIndex/outIndex. */
+  | {
+      by: "underground-end";
+      inIndex: number;
+      outIndex: number;
+      inSideLoadIndex?: number;
+      outSideLoadIndex?: number;
+    }
   /** Advances with the renderer's clock. */
   | { by: "animation" }
   /** A neighbour-derived index, from the entity's `connector`. */

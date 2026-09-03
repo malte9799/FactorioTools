@@ -24,6 +24,7 @@ interface Spec {
   x: number;
   y: number;
   direction?: number;
+  undergroundType?: "input" | "output";
 }
 
 function wall(x: number, y: number): Spec {
@@ -31,6 +32,9 @@ function wall(x: number, y: number): Spec {
 }
 function belt(x: number, y: number, direction: number): Spec {
   return { name: "transport-belt", x, y, direction };
+}
+function underground(x: number, y: number, direction: number, type: "input" | "output"): Spec {
+  return { name: "underground-belt", x, y, direction, undergroundType: type };
 }
 function pipe(x: number, y: number): Spec {
   return { name: "pipe", x, y };
@@ -167,6 +171,52 @@ function undergroundPipeSuite(): Block {
         const farDir = { [N]: S, [E]: W, [S]: N, [W]: E }[dir]!;
         specs.push(pipeToGround(cx, pairY, dir));
         specs.push(pipeToGround(cx + ddx * 2, pairY + ddy * 2, farDir));
+      });
+      return specs;
+    },
+  };
+}
+
+/** Per facing: a plain underground entrance, an entrance side-loaded by a
+ *  belt (swaps to the direction_in_side_loading sprite), a plain exit, and
+ *  an exit side-loaded the same way — checking both the plain mouth art and
+ *  the side-loading swap on both ends. */
+function undergroundBeltSideLoadSuite(): Block {
+  const dirs = [N, E, S, W];
+  // Each facing's left side, as a {step, facing a belt sitting there needs
+  // to point back into the underground's mouth}.
+  const leftFeed: Record<number, { dx: number; dy: number; faces: number }> = {
+    [N]: { dx: -1, dy: 0, faces: E },
+    [E]: { dx: 0, dy: -1, faces: S },
+    [S]: { dx: 1, dy: 0, faces: W },
+    [W]: { dx: 0, dy: 1, faces: N },
+  };
+  const colWidth = 3;
+  return {
+    label: "underground belt side-loading",
+    width: dirs.length * colWidth,
+    height: 8,
+    specs: (originX, originY) => {
+      const specs: Spec[] = [];
+      dirs.forEach((dir, i) => {
+        const cx = originX + i * colWidth + 1;
+        const { dx, dy, faces } = leftFeed[dir]!;
+
+        // Plain entrance, nothing feeding its side.
+        specs.push(underground(cx, originY + 1, dir, "input"));
+
+        // Entrance side-loaded: a belt facing into it from its left.
+        const inY = originY + 3;
+        specs.push(underground(cx, inY, dir, "input"));
+        specs.push(belt(cx + dx, inY + dy, faces));
+
+        // Plain exit.
+        specs.push(underground(cx, originY + 5, dir, "output"));
+
+        // Exit side-loaded the same way.
+        const outY = originY + 7;
+        specs.push(underground(cx, outY, dir, "output"));
+        specs.push(belt(cx + dx, outY + dy, faces));
       });
       return specs;
     },
@@ -382,7 +432,7 @@ function main(): void {
   // Connection suites sit below the catalogue, clear of its tallest row.
   const suitesY = Math.max(...catalogue.map((s) => s.y)) + 8;
   const suites = layoutRow(
-    [wallConnectionSuite(), pipeConnectionSuite(), undergroundPipeSuite(), beltCapSuite()],
+    [wallConnectionSuite(), pipeConnectionSuite(), undergroundPipeSuite(), beltCapSuite(), undergroundBeltSideLoadSuite()],
     0,
     suitesY,
     6,
@@ -398,6 +448,7 @@ function main(): void {
     quality: "normal",
     modules: [],
     filterItems: [],
+    undergroundType: e.undergroundType,
   }));
 
   const blueprint: Blueprint = {
