@@ -14,11 +14,10 @@ import {
   loadData,
   ROTATION_TEST_BLUEPRINT,
   DEBUG_BLUEPRINT,
-  BUG_REPRO_BLUEPRINT,
   TIMESCALE_FACTOR,
 } from "@factoriotools/engine";
 import type { CalculationResult, Timescale, Blueprint, PlacedEntity, QualityName, MachineGroup, ModuleStack, ThroughputContext, BottleneckSubgroup } from "@factoriotools/engine";
-import { mountRenderer, isUndergroundLike, type BlueprintRenderer, type HighlightRole } from "@factoriotools/renderer";
+import { mountRenderer, type BlueprintRenderer, type HighlightRole } from "@factoriotools/renderer";
 import { buildRecipeCard, renderResults, type ViewOptions } from "./legacy-view/panels.js";
 import { icon } from "./legacy-view/icons.js";
 import { makeFloatingWindow } from "../../window-manager.js";
@@ -35,7 +34,7 @@ const TEMPLATE = `
     <div class="gui-titlebar">
       <span>Blueprint Library</span>
       <span class="grip" aria-hidden="true"></span>
-      <button type="button" id="library-collapse-all" class="library-collapse-all" title="Collapse all categories">▸</button>
+      <button type="button" id="library-collapse-toggle" class="library-collapse-toggle" title="Collapse sidebar">◂</button>
     </div>
     <div class="gui-body" id="library-body"></div>
   </div>
@@ -56,7 +55,6 @@ const TEMPLATE = `
         <button id="demo" class="ghost" type="button">Load an example</button>
         <button id="rotation-test" class="ghost" type="button">Load rotation test</button>
         <button id="debug-lab" class="ghost" type="button">Load debug lab</button>
-        <button id="bug-repro" class="ghost" type="button">Load bug repro</button>
         <select id="bp-picker" hidden aria-label="Blueprint in book"></select>
       </div>
       <textarea id="bp-input" hidden></textarea>
@@ -209,19 +207,15 @@ export function mountBlueprintViewer(root: HTMLElement): () => void {
 
   // The library panel is docked (fixed left edge, positioned entirely by
   // CSS) rather than draggable like every other .gui-window, so it gets a
-  // minimal show/hide/bringToFront stand-in instead of makeFloatingWindow —
-  // that helper unconditionally takes over inline left/top/position for
-  // dragging, which would fight the docked CSS position on every drag-free
-  // panel too. bringToFront is a no-op: a docked panel has no z-order to
-  // fight since nothing else occupies its screen edge.
+  // minimal show/hide stand-in instead of makeFloatingWindow — that helper
+  // unconditionally takes over inline left/top/position for dragging, which
+  // would fight the docked CSS position.
   const libraryWindowEl = $<HTMLDivElement>("#library-window");
   const libraryWindow = {
     el: libraryWindowEl,
     show: () => { libraryWindowEl.hidden = false; },
     hide: () => { libraryWindowEl.hidden = true; },
     bringToFront: () => {},
-    setPosition: () => {},
-    destroy: () => {},
   };
 
   const intakeWindow = makeFloatingWindow($("#intake-window"), { x: 16, y: 66 });
@@ -402,7 +396,7 @@ export function mountBlueprintViewer(root: HTMLElement): () => void {
    *  entities list so a genuinely-empty in-progress edit never wipes a
    *  previous autosave) so a reload doesn't resurrect the blueprint just
    *  cleared. */
-  function startNew() {
+  function startNew(): void {
     blueprints = [];
     entities = [];
     nextEntityNumber = 1;
@@ -514,15 +508,6 @@ export function mountBlueprintViewer(root: HTMLElement): () => void {
         quality,
         modules: [],
         filterItems: [],
-        // Every underground-belt/loader tier needs a real undergroundType —
-        // the renderer's own resolveFrame branches on it being defined at
-        // all to pick entrance/exit structure art over plain belt art, so
-        // leaving it undefined here rendered a freshly-placed underground/
-        // loader as a half-cropped, misrotated belt tread. A fresh one is
-        // always the entrance/input half; it only becomes an output half by
-        // pairing with an existing entrance, which isn't this code path —
-        // there's no such upgrade-in-place flow here.
-        undergroundType: isUndergroundLike(name) ? "input" : undefined,
       };
       entities = [...entities, newEntity];
     });
@@ -610,14 +595,14 @@ export function mountBlueprintViewer(root: HTMLElement): () => void {
    *  entity IS in hand (picked from the palette, or via the 'q' pipette
    *  below): left-click places it. Right-click erases in either mode
    *  (wired once in render.ts, not here). */
-  function setMode(newMode: "idle" | { place: string; quality?: QualityName; direction?: number }) {
+  function setMode(newMode: "idle" | { place: string; quality?: QualityName }) {
     if (newMode === "idle") {
       paletteSelection = null;
       renderer.setInteractionMode({ kind: "idle" });
     } else {
       paletteSelection = newMode.place;
       paletteQuality = newMode.quality ?? "normal";
-      renderer.setInteractionMode({ kind: "place", entityName: newMode.place, direction: newMode.direction });
+      renderer.setInteractionMode({ kind: "place", entityName: newMode.place });
     }
     // The yellow inward-fading border is the at-a-glance "you have
     // something in hand" cue, matching the real game's own cursor-ghost
@@ -767,7 +752,7 @@ export function mountBlueprintViewer(root: HTMLElement): () => void {
     }
   }
 
-  const library = buildLibrarySidebar($<HTMLDivElement>("#library-body"), {
+  buildLibrarySidebar($<HTMLDivElement>("#library-body"), {
     onLoad(bpString) {
       input.value = bpString;
       load(bpString);
@@ -780,18 +765,18 @@ export function mountBlueprintViewer(root: HTMLElement): () => void {
     onNew: startNew,
   });
 
-  // Titlebar shortcut for collapsing/expanding every category at once —
-  // toggles between the two states rather than tracking "is everything
-  // currently expanded" (which book folders opened/closed individually
-  // would make ambiguous); the glyph/title just reflect what the next click
-  // will do.
-  let libraryAllExpanded = true;
-  const libraryCollapseAllButton = $<HTMLButtonElement>("#library-collapse-all");
-  libraryCollapseAllButton.addEventListener("click", () => {
-    libraryAllExpanded = !libraryAllExpanded;
-    library.setAllExpanded(libraryAllExpanded);
-    libraryCollapseAllButton.textContent = libraryAllExpanded ? "▾" : "▸";
-    libraryCollapseAllButton.title = libraryAllExpanded ? "Collapse all categories" : "Expand all categories";
+  // Titlebar button slides the whole docked sidebar out to a slim collapsed
+  // strip (not a category-collapse — that's the per-folder disclosure
+  // triangles inside the list, a separate concern) so the canvas gets more
+  // room without fully hiding the library the way the toolbar toggle does.
+  let libraryCollapsed = false;
+  const libraryWindowElForCollapse = $<HTMLDivElement>("#library-window");
+  const libraryCollapseToggle = $<HTMLButtonElement>("#library-collapse-toggle");
+  libraryCollapseToggle.addEventListener("click", () => {
+    libraryCollapsed = !libraryCollapsed;
+    libraryWindowElForCollapse.classList.toggle("is-collapsed", libraryCollapsed);
+    libraryCollapseToggle.textContent = libraryCollapsed ? "▸" : "◂";
+    libraryCollapseToggle.title = libraryCollapsed ? "Expand sidebar" : "Collapse sidebar";
   }, { signal });
 
   $("#import").addEventListener("click", async () => {
@@ -841,10 +826,6 @@ export function mountBlueprintViewer(root: HTMLElement): () => void {
   $("#debug-lab").addEventListener("click", () => {
     input.value = DEBUG_BLUEPRINT;
     load(DEBUG_BLUEPRINT);
-  }, { signal });
-  $("#bug-repro").addEventListener("click", () => {
-    input.value = BUG_REPRO_BLUEPRINT;
-    load(BUG_REPRO_BLUEPRINT);
   }, { signal });
   picker.addEventListener("change", () => selectBlueprint(Number(picker.value)), { signal });
 
@@ -905,11 +886,10 @@ export function mountBlueprintViewer(root: HTMLElement): () => void {
     e.preventDefault();
     const entity = hoveredEntityNumber !== undefined ? entities.find((en) => en.entityNumber === hoveredEntityNumber) : undefined;
     if (entity) {
-      // The pipette also picks up the hovered entity's own quality and
-      // facing, not just its type — matches the real game's own
-      // smart-pipette behavior (it copies the exact item stack you're
-      // pointing at, cursor rotation included).
-      setMode({ place: entity.name, quality: entity.quality, direction: entity.direction });
+      // The pipette also picks up the hovered entity's own quality, not
+      // just its type — matches the real game's own smart-pipette
+      // behavior (it copies the exact item stack you're pointing at).
+      setMode({ place: entity.name, quality: entity.quality });
       deselect();
     } else {
       setMode("idle");

@@ -243,6 +243,7 @@ button.ghost:hover, select:hover { border-color: var(--frame-light); }
 .docked-window {
   position: fixed;
   z-index: 900;
+  transition: width 0.15s ease, left 0.15s ease;
 }
 
 #library-window {
@@ -252,6 +253,22 @@ button.ghost:hover, select:hover { border-color: var(--frame-light); }
   bottom: 16px;
   display: flex;
   flex-direction: column;
+  overflow: hidden;
+}
+
+/* Collapsed state: slides down to a slim strip at the dock edge — only the
+   titlebar (with its toggle button) stays visible, matching "slide the
+   whole sidebar out" rather than hiding the window entirely (the toolbar
+   toggle already does that) or collapsing its internal category folders
+   (a separate, per-folder disclosure concern). */
+#library-window.is-collapsed {
+  width: 40px;
+  bottom: auto;
+}
+
+#library-window.is-collapsed .gui-body,
+#library-window.is-collapsed .gui-titlebar span:not(.library-collapse-toggle) {
+  display: none;
 }
 
 #library-window .gui-body {
@@ -262,6 +279,26 @@ button.ghost:hover, select:hover { border-color: var(--frame-light); }
   padding: 10px;
   overflow: hidden;
 }
+
+.library-collapse-toggle {
+  flex: none;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  line-height: 1;
+  color: var(--text-dim);
+  background: var(--panel-3);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  box-shadow: inset 0 1px 0 var(--bevel-light), inset 0 -1px 0 var(--bevel-dark);
+  cursor: pointer;
+}
+
+.library-collapse-toggle:hover { color: var(--text); border-color: var(--frame-light); }
 
 /* ---------- blueprint library ---------- */
 
@@ -274,24 +311,13 @@ button.ghost:hover, select:hover { border-color: var(--frame-light); }
 .library-save-row {
   display: flex;
   gap: 6px;
-  margin-bottom: 6px;
-}
-
-.library-debug-checkbox {
-  display: flex;
-  align-items: center;
-  gap: 6px;
   margin-bottom: 8px;
-  font-size: 11px;
-  color: var(--text-dim);
-  cursor: pointer;
 }
-
-.library-debug-checkbox input { margin: 0; cursor: pointer; }
 
 .library-save-input {
   flex: 1;
   min-width: 0;
+  color: var(--text);
   background: var(--panel-2);
   border: 1px solid var(--border);
   box-shadow: inset 0 1px 0 var(--bevel-dark);
@@ -319,7 +345,7 @@ button.ghost:hover, select:hover { border-color: var(--frame-light); }
   align-items: center;
   gap: 8px;
   width: 100%;
-  padding: 6px 6px;
+  padding: 7px 8px;
   font-family: var(--display);
   font-weight: 700;
   font-size: 13px;
@@ -366,10 +392,10 @@ button.ghost:hover, select:hover { border-color: var(--frame-light); }
   display: flex;
   align-items: center;
   gap: 4px;
+  padding: 2px 4px;
   border-radius: 2px;
 }
 
-.library-row:nth-child(even) { background: var(--row-alt); }
 .library-row:hover { background: var(--panel-3); }
 
 .library-row-label {
@@ -379,7 +405,7 @@ button.ghost:hover, select:hover { border-color: var(--frame-light); }
   text-overflow: ellipsis;
   white-space: nowrap;
   text-align: left;
-  padding: 5px 6px;
+  padding: 6px 6px;
   font-size: 13px;
   font-weight: 400;
   color: var(--text);
@@ -389,26 +415,73 @@ button.ghost:hover, select:hover { border-color: var(--frame-light); }
   border-radius: 2px;
 }
 
+.library-rename-input {
+  flex: 1;
+  min-width: 0;
+  padding: 5px 6px;
+  font-size: 13px;
+  color: var(--text);
+  background: var(--panel-2);
+  border: 1px solid var(--gold);
+  box-shadow: none;
+}
+
+/* Trash-can delete button, styled after the reference "Surfaces" panel's
+   own red delete control: a filled red square with a bright hover state,
+   only shown once a row is hovered so the list doesn't read as cluttered
+   with destructive controls at rest. */
 .library-row-delete {
   flex: none;
-  width: 20px;
-  height: 20px;
+  width: 26px;
+  height: 26px;
   padding: 0;
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 10px;
-  color: var(--text-dim);
-  background: transparent;
-  border: none;
-  box-shadow: none;
+  font-size: 13px;
+  line-height: 1;
+  color: #f4e0e0;
+  background: #b23b3b;
+  border: 1px solid #6e1f1f;
+  border-radius: 3px;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.15), inset 0 -1px 0 rgba(0, 0, 0, 0.35);
   visibility: hidden;
+  cursor: pointer;
 }
 
 .library-row:hover .library-row-delete { visibility: visible; }
-.library-row-delete:hover { color: var(--deficit); }
+.library-row-delete:hover { background: #d24a4a; border-color: #8a2828; }
 
 .library-empty { padding: 6px; }
+
+/* ---------- library row context menu ---------- */
+
+.library-context-menu {
+  position: fixed;
+  z-index: 5000;
+  display: flex;
+  flex-direction: column;
+  min-width: 140px;
+  padding: 4px;
+  background: var(--frame);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.5);
+}
+
+.library-context-item {
+  text-align: left;
+  padding: 7px 10px;
+  font-size: 13px;
+  font-weight: 400;
+  color: var(--text);
+  background: transparent;
+  border: none;
+  box-shadow: none;
+  border-radius: 2px;
+}
+
+.library-context-item:hover { background: var(--panel-3); color: var(--gold-strong); }
 
 /* ---------- floating windows ---------- */
 
@@ -472,26 +545,6 @@ button.ghost:hover, select:hover { border-color: var(--frame-light); }
 }
 
 .gui-close:hover { color: var(--text); background: var(--deficit); border-color: var(--deficit); }
-
-.library-collapse-all {
-  flex: none;
-  width: 20px;
-  height: 20px;
-  padding: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 11px;
-  line-height: 1;
-  color: var(--text-dim);
-  background: var(--panel-3);
-  border: 1px solid var(--border);
-  border-radius: 3px;
-  box-shadow: inset 0 1px 0 var(--bevel-light), inset 0 -1px 0 var(--bevel-dark);
-  cursor: pointer;
-}
-
-.library-collapse-all:hover { color: var(--text); border-color: var(--frame-light); }
 
 .gui-body {
   margin: 0 6px 6px;

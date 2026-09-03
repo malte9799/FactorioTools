@@ -78,10 +78,9 @@ export function saveToLibrary(bpString: string, label: string, category?: "debug
   return entries;
 }
 
-/** Duplicates an existing saved entry as a new, independent entry (same
- *  book membership if it belonged to one) with " copy" appended to its
- *  label — mirrors the real game's own "copy" convention on its own
- *  blueprint library. */
+/** Duplicates an existing saved entry as a new, independent entry with
+ *  " copy" appended to its label — mirrors the real game's own "copy"
+ *  convention in its own blueprint library. */
 export function duplicateInLibrary(id: string): SavedBlueprint[] {
   const entries = readAll();
   const source = entries.find((e) => e.id === id);

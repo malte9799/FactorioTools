@@ -1,5 +1,12 @@
-import { ROTATION_TEST_BLUEPRINT, DEBUG_BLUEPRINT, BUG_REPRO_BLUEPRINT } from "@factoriotools/engine";
-import { listSaved, saveToLibrary, deleteFromLibrary, type SavedBlueprint } from "./blueprint-library.js";
+import { ROTATION_TEST_BLUEPRINT, DEBUG_BLUEPRINT } from "@factoriotools/engine";
+import {
+  listSaved,
+  saveToLibrary,
+  deleteFromLibrary,
+  duplicateInLibrary,
+  renameInLibrary,
+  type SavedBlueprint,
+} from "./blueprint-library.js";
 
 export interface LibraryCallbacks {
   /** Load this blueprint string as the active one in the viewer. */
@@ -19,7 +26,6 @@ interface BuiltinEntry {
 const BUILTINS: BuiltinEntry[] = [
   { id: "builtin-rotation-test", label: "Rotation test", bpString: ROTATION_TEST_BLUEPRINT },
   { id: "builtin-debug-lab", label: "Debug lab", bpString: DEBUG_BLUEPRINT },
-  { id: "builtin-bug-repro", label: "Bug repro", bpString: BUG_REPRO_BLUEPRINT },
 ];
 
 /** Which categories are currently expanded — module-level so the sidebar
@@ -30,25 +36,9 @@ const BUILTINS: BuiltinEntry[] = [
  *  scannable at a glance. */
 const expanded = new Set<string>(["debug", "saved"]);
 
-/** Every category header currently on screen, keyed the same as `expanded`
- *  — repopulated at the start of each refresh() so "collapse/expand all"
- *  (see the titlebar button wired in index.ts) can act on exactly what's
- *  rendered right now, book folders included, without needing to walk the
- *  DOM back apart. */
-const liveHeaders = new Map<string, { header: HTMLButtonElement; body: HTMLElement }>();
-
 function toggleExpanded(key: string): void {
   if (expanded.has(key)) expanded.delete(key);
   else expanded.add(key);
-}
-
-function setAllExpanded(open: boolean): void {
-  for (const [key, { header, body }] of liveHeaders) {
-    if (open) expanded.add(key);
-    else expanded.delete(key);
-    header.classList.toggle("is-open", open);
-    body.hidden = !open;
-  }
 }
 
 function makeCategory(key: string, title: string): { section: HTMLElement; body: HTMLElement } {
@@ -73,12 +63,107 @@ function makeCategory(key: string, title: string): { section: HTMLElement; body:
     body.hidden = !nowOpen;
   });
 
-  liveHeaders.set(key, { header, body });
   section.append(header, body);
   return { section, body };
 }
 
-function makeRow(label: string, options: { onClick(): void; onDelete?: () => void; title?: string }): HTMLElement {
+/** Closes any open row context menu — module-level since only one can ever
+ *  be open at a time (matches native right-click menu behavior: opening a
+ *  new one, or clicking elsewhere, dismisses whatever was open). */
+let closeOpenMenu: (() => void) | null = null;
+
+function closeAnyOpenMenu(): void {
+  closeOpenMenu?.();
+  closeOpenMenu = null;
+}
+
+interface RowMenuAction {
+  label: string;
+  onClick(): void;
+}
+
+function showRowMenu(x: number, y: number, actions: RowMenuAction[]): void {
+  closeAnyOpenMenu();
+
+  const menu = document.createElement("div");
+  menu.className = "library-context-menu";
+  menu.style.left = `${x}px`;
+  menu.style.top = `${y}px`;
+
+  for (const action of actions) {
+    const item = document.createElement("button");
+    item.type = "button";
+    item.className = "library-context-item";
+    item.textContent = action.label;
+    item.addEventListener("click", () => {
+      closeAnyOpenMenu();
+      action.onClick();
+    });
+    menu.appendChild(item);
+  }
+
+  document.body.appendChild(menu);
+
+  const onOutside = (e: MouseEvent) => {
+    if (!menu.contains(e.target as Node)) close();
+  };
+  const onKey = (e: KeyboardEvent) => {
+    if (e.key === "Escape") close();
+  };
+  function close(): void {
+    menu.remove();
+    document.removeEventListener("mousedown", onOutside, true);
+    document.removeEventListener("keydown", onKey, true);
+  }
+  closeOpenMenu = close;
+  // Deferred so the click that opened the menu (a contextmenu event, but
+  // guard anyway) doesn't immediately trigger onOutside via bubbling.
+  setTimeout(() => {
+    document.addEventListener("mousedown", onOutside, true);
+    document.addEventListener("keydown", onKey, true);
+  }, 0);
+}
+
+/** A saved-blueprint row's rename mode: swaps the label button for a text
+ *  input, committing on Enter/blur and cancelling on Escape. */
+function startRename(row: HTMLElement, labelButton: HTMLButtonElement, id: string, currentLabel: string, refresh: () => void): void {
+  const input = document.createElement("input");
+  input.type = "text";
+  input.className = "library-rename-input";
+  input.value = currentLabel;
+  labelButton.replaceWith(input);
+  input.focus();
+  input.select();
+
+  let settled = false;
+  function commit(): void {
+    if (settled) return;
+    settled = true;
+    const next = input.value.trim();
+    if (next && next !== currentLabel) renameInLibrary(id, next);
+    refresh();
+  }
+  function cancel(): void {
+    if (settled) return;
+    settled = true;
+    refresh();
+  }
+  input.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") commit();
+    else if (e.key === "Escape") cancel();
+  });
+  input.addEventListener("blur", commit);
+}
+
+function makeRow(
+  label: string,
+  options: {
+    onClick(): void;
+    onDelete?: () => void;
+    onContextMenu?: (e: MouseEvent) => void;
+    title?: string;
+  },
+): HTMLElement {
   const row = document.createElement("div");
   row.className = "library-row";
 
@@ -90,13 +175,17 @@ function makeRow(label: string, options: { onClick(): void; onDelete?: () => voi
   button.addEventListener("click", options.onClick);
   row.appendChild(button);
 
+  if (options.onContextMenu) {
+    row.addEventListener("contextmenu", options.onContextMenu);
+  }
+
   if (options.onDelete) {
     const del = document.createElement("button");
     del.type = "button";
     del.className = "library-row-delete";
     del.setAttribute("aria-label", `Delete ${label}`);
     del.title = "Delete";
-    del.textContent = "✕";
+    del.textContent = "🗑";
     del.addEventListener("click", (e) => {
       e.stopPropagation();
       options.onDelete!();
@@ -110,7 +199,9 @@ function makeRow(label: string, options: { onClick(): void; onDelete?: () => voi
 /** Renders the folder/leaf structure shared by both the Debug and Saved
  *  sections: entries that share a `bookId` collapse into one nested,
  *  independently-collapsible folder named after the book, while entries
- *  with no `bookId` render as plain rows directly in the category body. */
+ *  with no `bookId` render as plain rows directly in the category body.
+ *  Only entries actually stored in the library (not the read-only built-in
+ *  fixtures) get the right-click Copy/Duplicate/Rename/Delete menu. */
 function renderEntries(
   body: HTMLElement,
   builtins: BuiltinEntry[],
@@ -133,30 +224,61 @@ function renderEntries(
     books.set(entry.bookId, book);
   }
 
+  function makeSavedRow(entry: SavedBlueprint): HTMLElement {
+    const row = makeRow(entry.label, {
+      onClick: () => callbacks.onLoad(entry.bpString),
+      onDelete: () => {
+        deleteFromLibrary(entry.id);
+        refresh();
+      },
+      onContextMenu: (e) => {
+        e.preventDefault();
+        showRowMenu(e.clientX, e.clientY, [
+          {
+            label: "Copy",
+            onClick: async () => {
+              try {
+                await navigator.clipboard.writeText(entry.bpString);
+              } catch {
+                /* clipboard unavailable — silently ignore, not worth surfacing here */
+              }
+            },
+          },
+          {
+            label: "Duplicate",
+            onClick: () => {
+              duplicateInLibrary(entry.id);
+              refresh();
+            },
+          },
+          {
+            label: "Rename",
+            onClick: () => {
+              const labelButton = row.querySelector<HTMLButtonElement>(".library-row-label");
+              if (labelButton) startRename(row, labelButton, entry.id, entry.label, refresh);
+            },
+          },
+          {
+            label: "Delete",
+            onClick: () => {
+              deleteFromLibrary(entry.id);
+              refresh();
+            },
+          },
+        ]);
+      },
+    });
+    return row;
+  }
+
   for (const entry of flat) {
-    body.appendChild(
-      makeRow(entry.label, {
-        onClick: () => callbacks.onLoad(entry.bpString),
-        onDelete: () => {
-          deleteFromLibrary(entry.id);
-          refresh();
-        },
-      }),
-    );
+    body.appendChild(makeSavedRow(entry));
   }
 
   for (const [bookId, book] of books) {
     const { section, body: bookBody } = makeCategory(`book-${bookId}`, `📘 ${book.label}`);
     for (const entry of book.entries) {
-      bookBody.appendChild(
-        makeRow(entry.label, {
-          onClick: () => callbacks.onLoad(entry.bpString),
-          onDelete: () => {
-            deleteFromLibrary(entry.id);
-            refresh();
-          },
-        }),
-      );
+      bookBody.appendChild(makeSavedRow(entry));
     }
     body.appendChild(section);
   }
@@ -172,15 +294,14 @@ function renderEntries(
 /** Builds the "Blueprint Library" sidebar into `container`: a docked
  *  collapsible-category list (Debug / Saved) mirroring the reference
  *  Surfaces-panel look — dark rows, gold section headers, click-to-load,
- *  a per-row delete button, and a save form for stashing whatever's
+ *  a per-row trash-can delete button, a right-click context menu
+ *  (Copy/Duplicate/Rename/Delete), and a save form for stashing whatever's
  *  currently on the canvas under a name. Re-renders its full row list on
- *  every mutation (save/delete) rather than patching the DOM — the list is
- *  small enough that this is simpler than diffing, matching this file's
- *  sibling edit-palette.ts's own rebuild-on-change style. */
-export function buildLibrarySidebar(
-  container: HTMLElement,
-  callbacks: LibraryCallbacks,
-): { refresh(): void; setAllExpanded(open: boolean): void } {
+ *  every mutation (save/delete/duplicate/rename) rather than patching the
+ *  DOM — the list is small enough that this is simpler than diffing,
+ *  matching this file's sibling edit-palette.ts's own rebuild-on-change
+ *  style. */
+export function buildLibrarySidebar(container: HTMLElement, callbacks: LibraryCallbacks): { refresh(): void } {
   container.replaceChildren();
 
   const newButton = document.createElement("button");
@@ -202,12 +323,6 @@ export function buildLibrarySidebar(
   saveButton.textContent = "Save current";
   saveRow.append(nameInput, saveButton);
 
-  const debugCheckboxRow = document.createElement("label");
-  debugCheckboxRow.className = "library-debug-checkbox";
-  const debugCheckbox = document.createElement("input");
-  debugCheckbox.type = "checkbox";
-  debugCheckboxRow.append(debugCheckbox, document.createTextNode(" Save under Debug"));
-
   const status = document.createElement("p");
   status.className = "sub library-status";
 
@@ -219,14 +334,6 @@ export function buildLibrarySidebar(
   list.append(debugSection, savedSection);
 
   function refresh(): void {
-    // Book folders are rebuilt from scratch every refresh (see
-    // renderEntries), so their liveHeaders entries from the previous render
-    // are stale — drop everything except the two fixed top-level categories
-    // before rebuilding, or collapse/expand-all would keep acting on
-    // book folders that no longer exist in the DOM.
-    for (const key of [...liveHeaders.keys()]) {
-      if (key !== "debug" && key !== "saved") liveHeaders.delete(key);
-    }
     const saved = listSaved();
     renderEntries(debugBody, BUILTINS, saved.filter((e) => e.category === "debug"), callbacks, refresh);
     renderEntries(savedBody, [], saved.filter((e) => e.category !== "debug"), callbacks, refresh);
@@ -241,9 +348,8 @@ export function buildLibrarySidebar(
     }
     const label = nameInput.value.trim() || "Untitled blueprint";
     try {
-      saveToLibrary(bpString, label, debugCheckbox.checked ? "debug" : undefined);
+      saveToLibrary(bpString, label);
       nameInput.value = "";
-      debugCheckbox.checked = false;
       status.textContent = `Saved “${label}”.`;
       status.dataset.kind = "info";
       refresh();
@@ -256,7 +362,7 @@ export function buildLibrarySidebar(
     if (e.key === "Enter") saveButton.click();
   });
 
-  container.append(newButton, saveRow, debugCheckboxRow, status, list);
+  container.append(newButton, saveRow, status, list);
   refresh();
-  return { refresh, setAllExpanded };
+  return { refresh };
 }
