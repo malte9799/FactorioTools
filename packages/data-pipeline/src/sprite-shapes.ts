@@ -69,7 +69,10 @@ export function unwrapAll(source: any): UnwrappedLayer[] {
   for (const layer of raw) {
     // Tint masks recolour the layer beneath by force, which this renderer
     // has no concept of; drawn plainly they cover it with a flat silhouette.
-    if (layer.apply_runtime_tint || layer.flags?.includes("mask")) continue;
+    // Glow/additive layers are near-black outside their lit pixels, meant
+    // for a blend mode this renderer doesn't implement — drawn with normal
+    // alpha compositing they paint a black box over whatever's beneath.
+    if (layer.apply_runtime_tint || layer.flags?.includes("mask") || layer.draw_as_glow || layer.blend_mode === "additive") continue;
     const sprite = toSprite(layer);
     if (!sprite) continue;
     out.push({

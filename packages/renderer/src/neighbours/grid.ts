@@ -77,16 +77,22 @@ export class NeighbourGrid {
 }
 
 /** A splitter straddles two tiles side by side, offset perpendicular to its
- *  facing, so it must be indexed under both or a belt feeding the far lane
- *  sees nothing there. */
-function cellsOf(e: PlacedEntity): { x: number; y: number }[] {
-  if (!e.name.includes("splitter")) return [{ x: Math.round(e.x), y: Math.round(e.y) }];
+ *  facing — its own two lane cells, in the same -side/+side order
+ *  splitterGraphics's lane(-1)/lane(1) shift the art by. Exported so the
+ *  belt classifier can run once per lane instead of once at the entity's
+ *  own (in-between, tile-less) centre. */
+export function splitterLaneCells(e: PlacedEntity): [{ x: number; y: number }, { x: number; y: number }] {
   const facing = toCardinal(e.direction);
   const [dx, dy] = facing === Dir.North || facing === Dir.South ? [0.5, 0] : [0, 0.5];
   return [
     { x: Math.round(e.x - dx), y: Math.round(e.y - dy) },
     { x: Math.round(e.x + dx), y: Math.round(e.y + dy) },
   ];
+}
+
+function cellsOf(e: PlacedEntity): { x: number; y: number }[] {
+  if (!e.name.includes("splitter")) return [{ x: Math.round(e.x), y: Math.round(e.y) }];
+  return splitterLaneCells(e);
 }
 
 export function buildGrid(entities: PlacedEntity[]): NeighbourGrid {

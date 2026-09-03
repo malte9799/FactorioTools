@@ -1,6 +1,6 @@
 import { Layer, type GraphicsLayer, type PlacedEntity, type Sprite } from "@factoriotools/engine";
 import type { ResolvedVisual } from "../entityLookup.js";
-import { dir4Name, dir8Name, toCardinal, opposite, type NeighbourGrid } from "../neighbours/grid.js";
+import { dir4Name, dir8Name, toCardinal, opposite, splitterLaneCells, type NeighbourGrid } from "../neighbours/grid.js";
 import { classifyPipe } from "../neighbours/pipe.js";
 import { classifyWall } from "../neighbours/wall.js";
 import { classifyBelt, type BeltCap } from "../neighbours/belt.js";
@@ -27,6 +27,11 @@ interface EntityFrame {
   connectionName: string;
   /** Start/end pieces closing off a belt run, each on an adjacent tile. */
   caps: BeltCap[];
+  /** A splitter straddles two tiles, so its two belt-lane layers each need
+   *  their own cap classification from their own lane's tile — [-side, +side],
+   *  matching splitterGraphics's lane(-1)/lane(1) layer order. Empty for
+   *  every other belt-connector entity, which has just the one `caps`. */
+  laneCaps: [BeltCap[], BeltCap[]];
   /** A cargo hub/bay draws several connection pieces at once — one per edge
    *  and corner — instead of picking a single shape like pipes and walls do. */
   platformShapes: string[];
@@ -42,6 +47,7 @@ function resolveFrame(entity: PlacedEntity, visual: ResolvedVisual, ctx: Collect
     connectionIndex: 0,
     connectionName: "",
     caps: [],
+    laneCaps: [[], []],
     platformShapes: [],
     animation: ctx.animationFrame,
     undergroundIn: entity.undergroundType !== "output",
@@ -55,9 +61,20 @@ function resolveFrame(entity: PlacedEntity, visual: ResolvedVisual, ctx: Collect
       frame.connectionName = classifyWall(x, y, ctx.grid, ctx.isWallLike);
       break;
     case "belt": {
-      const shape = classifyBelt(x, y, entity.direction, ctx.grid, ctx.isBeltLike);
-      frame.connectionIndex = shape.row;
-      frame.caps = shape.caps;
+      if (entity.name.includes("splitter")) {
+        // A splitter has no single tile of its own — each lane classifies
+        // from its own cell, or a belt feeding the far lane would look like
+        // it feeds nothing.
+        const [minus, plus] = splitterLaneCells(entity);
+        frame.laneCaps = [
+          classifyBelt(minus.x, minus.y, entity.direction, ctx.grid, ctx.isBeltLike).caps,
+          classifyBelt(plus.x, plus.y, entity.direction, ctx.grid, ctx.isBeltLike).caps,
+        ];
+      } else {
+        const shape = classifyBelt(x, y, entity.direction, ctx.grid, ctx.isBeltLike);
+        frame.connectionIndex = shape.row;
+        frame.caps = shape.caps;
+      }
       break;
     }
     case "platform": {
@@ -144,6 +161,8 @@ export function collectEntity(
   if (!graphics || graphics.layers.length === 0) return;
 
   const frame = resolveFrame(entity, visual, ctx);
+  const isSplitter = entity.name.includes("splitter");
+  let laneIndex = 0;
 
   graphics.layers.forEach((layer, order) => {
     // A cargo hub/bay draws several connection pieces at once — one per
@@ -163,9 +182,13 @@ export function collectEntity(
     const row = axisIndex(layer.row, frame);
     push(out, sprite, column, row, entity, layer.layer, order, alpha);
 
-    // Belt caps share the body's grid but sit on the adjacent tile.
+    // Belt caps share the body's grid, a different row, and a small nudge
+    // past the tile edge they close off. A splitter's two belt-lane layers
+    // each carry their own lane's caps, in the same order splitterGraphics
+    // declared them (lane(-1), lane(1)).
     if (layer.row?.by === "connection") {
-      for (const cap of frame.caps) {
+      const caps = isSplitter ? frame.laneCaps[laneIndex++] ?? [] : frame.caps;
+      for (const cap of caps) {
         push(out, sprite, column, cap.row, entity, layer.layer, order, alpha, cap.dx, cap.dy);
       }
     }

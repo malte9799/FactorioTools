@@ -165,7 +165,9 @@ function splitterGraphics(proto: any): EntityGraphics | undefined {
 /** A roboport's `base` is the body with its hatch opening left uncovered;
  *  the closed-hatch cap and the seam patch over it are separate fields,
  *  always drawn together at their animation's first (closed) frame since a
- *  blueprint shows an idle roboport. */
+ *  blueprint shows an idle roboport. The hatch is two leaves — up and down —
+ *  each sliding into place from its own side at frame 0; each field's own
+ *  shift already positions its half, no rotation needed. */
 function roboportGraphics(proto: any): EntityGraphics | undefined {
   const layers: GraphicsLayer[] = [];
   for (const l of unwrapAll(proto.base)) {
@@ -173,8 +175,10 @@ function roboportGraphics(proto: any): EntityGraphics | undefined {
   }
   const patch = toSprite(proto.base_patch);
   if (patch) layers.push({ layer: Layer.Object, sprites: patch });
-  const door = toSprite(proto.door_animation_down);
-  if (door) layers.push({ layer: Layer.Object, sprites: door });
+  for (const field of ["door_animation_up", "door_animation_down"]) {
+    const door = toSprite(proto[field]);
+    if (door) layers.push({ layer: Layer.Object, sprites: door });
+  }
   return layers.length > 0 ? { layers } : undefined;
 }
 
@@ -279,6 +283,7 @@ function variantStackGraphics(proto: any): EntityGraphics | undefined {
   const gs = proto.graphics_set;
   const layers: GraphicsLayer[] = [];
   for (const l of gs?.picture?.[0]?.layers ?? []) {
+    if (l.draw_as_glow || l.blend_mode === "additive") continue;
     const sprite = toSprite(l);
     if (sprite) layers.push({ layer: l.draw_as_shadow ? Layer.Shadow : Layer.Object, sprites: sprite });
   }
