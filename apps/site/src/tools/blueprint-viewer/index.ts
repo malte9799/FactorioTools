@@ -14,10 +14,11 @@ import {
   loadData,
   ROTATION_TEST_BLUEPRINT,
   DEBUG_BLUEPRINT,
+  BUG_REPRO_BLUEPRINT,
   TIMESCALE_FACTOR,
 } from "@factoriotools/engine";
 import type { CalculationResult, Timescale, Blueprint, PlacedEntity, QualityName, MachineGroup, ModuleStack, ThroughputContext, BottleneckSubgroup } from "@factoriotools/engine";
-import { mountRenderer, type BlueprintRenderer, type HighlightRole } from "@factoriotools/renderer";
+import { mountRenderer, isUndergroundLike, type BlueprintRenderer, type HighlightRole } from "@factoriotools/renderer";
 import { buildRecipeCard, renderResults, type ViewOptions } from "./legacy-view/panels.js";
 import { icon } from "./legacy-view/icons.js";
 import { makeFloatingWindow } from "../../window-manager.js";
@@ -45,6 +46,7 @@ const TEMPLATE = `
         <button id="demo" class="ghost" type="button">Load an example</button>
         <button id="rotation-test" class="ghost" type="button">Load rotation test</button>
         <button id="debug-lab" class="ghost" type="button">Load debug lab</button>
+        <button id="bug-repro" class="ghost" type="button">Load bug repro</button>
         <select id="bp-picker" hidden aria-label="Blueprint in book"></select>
       </div>
       <textarea id="bp-input" hidden></textarea>
@@ -453,6 +455,15 @@ export function mountBlueprintViewer(root: HTMLElement): () => void {
         quality,
         modules: [],
         filterItems: [],
+        // Every underground-belt/loader tier needs a real undergroundType —
+        // the renderer's own resolveFrame branches on it being defined at
+        // all to pick entrance/exit structure art over plain belt art, so
+        // leaving it undefined here rendered a freshly-placed underground/
+        // loader as a half-cropped, misrotated belt tread. A fresh one is
+        // always the entrance/input half; it only becomes an output half by
+        // pairing with an existing entrance, which isn't this code path —
+        // there's no such upgrade-in-place flow here.
+        undergroundType: isUndergroundLike(name) ? "input" : undefined,
       };
       entities = [...entities, newEntity];
     });
@@ -744,6 +755,10 @@ export function mountBlueprintViewer(root: HTMLElement): () => void {
   $("#debug-lab").addEventListener("click", () => {
     input.value = DEBUG_BLUEPRINT;
     load(DEBUG_BLUEPRINT);
+  }, { signal });
+  $("#bug-repro").addEventListener("click", () => {
+    input.value = BUG_REPRO_BLUEPRINT;
+    load(BUG_REPRO_BLUEPRINT);
   }, { signal });
   picker.addEventListener("change", () => selectBlueprint(Number(picker.value)), { signal });
 

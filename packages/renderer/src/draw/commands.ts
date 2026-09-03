@@ -24,6 +24,11 @@ export interface DrawCommand {
   /** Sort key within one entity, preserving its own layer order. */
   order: number;
   alpha: number;
+  /** CSS color washed over the sprite's own silhouette (source-atop, so only
+   *  pixels the sprite already painted are affected) — the placement
+   *  ghost's green/red valid/invalid tint. Undefined for every ordinary
+   *  entity, which paints untinted. */
+  tint?: string;
 }
 
 /** Global paint order: layer, then screen depth, then the entity's own layer

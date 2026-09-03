@@ -8,3 +8,4 @@ export * from "./calc/scale.js";
 export * from "./data/index.js";
 export * from "./data/rotation-test.js";
 export * from "./data/debug-lab.js";
+export * from "./data/bug-repro.js";

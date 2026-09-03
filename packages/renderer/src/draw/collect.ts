@@ -1,6 +1,6 @@
 import { Layer, type GraphicsLayer, type PlacedEntity, type Sprite } from "@factoriotools/engine";
 import type { ResolvedVisual } from "../entityLookup.js";
-import { dir4Name, dir8Name, toCardinal, opposite, splitterLaneCells, type NeighbourGrid } from "../neighbours/grid.js";
+import { dir4Name, dir8Name, toCardinal, opposite, splitterLaneCells, Dir, type Cardinal, type NeighbourGrid } from "../neighbours/grid.js";
 import { classifyPipe } from "../neighbours/pipe.js";
 import { classifyWall } from "../neighbours/wall.js";
 import { classifyBeltCell, undergroundSideLoaded, type BeltCap } from "../neighbours/beltGraph.js";
@@ -41,6 +41,13 @@ interface EntityFrame {
    *  side rather than straight on — swaps in the direction_*_side_loading
    *  sprite, which the plain mouth art doesn't otherwise account for. */
   sideLoaded: boolean;
+  /** Which cardinal half of an underground/loader's belt-lane frame to keep
+   *  (the sprite is a full 2-tile belt frame, built to overlap into a
+   *  neighbour the way a plain belt's own frame does — an underground has
+   *  no such neighbour on its open end, so without cropping, half the frame
+   *  visibly pokes out past the structure sprite that's meant to cover it).
+   *  Undefined for every non-underground entity, which needs no crop. */
+  laneKeepSide?: Cardinal;
 }
 
 function resolveFrame(entity: PlacedEntity, visual: ResolvedVisual, ctx: CollectContext): EntityFrame {
@@ -69,19 +76,48 @@ function resolveFrame(entity: PlacedEntity, visual: ResolvedVisual, ctx: Collect
       if (entity.name.includes("splitter")) {
         // A splitter has no single tile of its own — each lane classifies
         // from its own cell, or a belt feeding the far lane would look like
-        // it feeds nothing. A splitter's lanes never curve.
+        // it feeds nothing. A splitter's lanes never curve, so both lanes'
+        // rows are identical (classifyBeltCell's `row` only depends on
+        // `direction` and forceStraight, not the cell it's called from) —
+        // reading it off either one is enough. connectionIndex left at its
+        // 0 default (same bug as the underground/loader lane before it) is
+        // the sheet's East row, so every splitter rendered its lanes facing
+        // east regardless of its own actual facing.
         const [minus, plus] = splitterLaneCells(entity);
+        const minusShape = classifyBeltCell(minus.x, minus.y, entity.direction, ctx.grid, ctx.isBeltLike, true);
+        frame.connectionIndex = minusShape.row;
         frame.laneCaps = [
-          classifyBeltCell(minus.x, minus.y, entity.direction, ctx.grid, ctx.isBeltLike, true).caps,
+          minusShape.caps,
           classifyBeltCell(plus.x, plus.y, entity.direction, ctx.grid, ctx.isBeltLike, true).caps,
         ];
       } else if (entity.undergroundType !== undefined) {
         // An underground belt (or loader) never curves, and only ever
         // shows the one cap for its own open end — the entrance's start
-        // cap, or the exit's end cap — never both.
-        const shape = classifyBeltCell(x, y, entity.direction, ctx.grid, ctx.isBeltLike, true);
+        // cap, or the exit's end cap — never both. Its belt LANE layer
+        // (the moving, item-carrying strip under/over the structure sprite)
+        // still needs shape.row the same way a plain belt does — without
+        // it connectionIndex stayed at its 0 default, which happens to be
+        // the sheet's East row, so every underground/loader rendered its
+        // lane facing east regardless of the entity's real facing.
+        //
+        // An exit half stores its direction pointing back at the entrance
+        // (see the opposite() correction below, applied to frame.direction
+        // for the structure column) — the lane's own row needs that exact
+        // same correction, or an exit's chevrons would visually point
+        // backward into the entrance instead of onward, away from it.
+        const laneDirection = entity.undergroundType === "output" ? opposite(toCardinal(entity.direction)) : entity.direction;
+        const laneFacing = toCardinal(laneDirection);
+        const shape = classifyBeltCell(x, y, laneDirection, ctx.grid, ctx.isBeltLike, true);
+        frame.connectionIndex = shape.row;
         frame.caps = shape.caps.filter((cap) => cap.kind === (frame.undergroundIn ? "start" : "end"));
         frame.sideLoaded = undergroundSideLoaded(x, y, entity.direction, ctx.grid, ctx.isBeltLike);
+        // An entrance's belt still visibly runs on the surface BEHIND it
+        // (opposite its facing) before diving into the tunnel ahead; an
+        // exit's picks back up AHEAD of it (its own facing), having just
+        // come out of the tunnel behind. Either way, only the half toward
+        // the open surface run should show — the other half is where the
+        // structure sprite's own mouth art takes over.
+        frame.laneKeepSide = frame.undergroundIn ? opposite(laneFacing) : laneFacing;
       } else {
         const shape = classifyBeltCell(x, y, entity.direction, ctx.grid, ctx.isBeltLike);
         frame.connectionIndex = shape.row;
@@ -128,6 +164,17 @@ function spriteFor(layer: GraphicsLayer, entity: PlacedEntity, frame: EntityFram
   }
 }
 
+/** Nudges a cap's sort-y just enough to win a tie against whatever body
+ *  sprite already occupies the tile it lands on — e.g. a belt's end cap
+ *  landing on a curve tile one row over, both at the exact same world y.
+ *  Without this, ties fall back to array order (paint.ts's sort is stable),
+ *  which meant a cap's visibility depended on which of the two entities was
+ *  PLACED first rather than which visually belongs on top — a cap should
+ *  always win, regardless of placement order. Comfortably above float noise,
+ *  comfortably below the smallest real gap between two distinct rows (1
+ *  world tile). */
+const CAP_PRIORITY_EPSILON = 1e-4;
+
 function push(
   out: DrawCommand[],
   sprite: Sprite,
@@ -139,26 +186,99 @@ function push(
   alpha: number,
   offsetX = 0,
   offsetY = 0,
+  capPriority = false,
+  keepSide?: Cardinal,
+  laneRecenter = 0,
 ): void {
   const column = rawColumn % Math.max(sprite.columns ?? 1, 1);
   const scale = sprite.scale ?? 1;
-  const dw = (sprite.frameWidth * scale) / PIXELS_PER_TILE;
-  const dh = (sprite.frameHeight * scale) / PIXELS_PER_TILE;
+  let dw = (sprite.frameWidth * scale) / PIXELS_PER_TILE;
+  let dh = (sprite.frameHeight * scale) / PIXELS_PER_TILE;
   const [shiftX, shiftY] = sprite.shift ?? [0, 0];
+
+  let sx = (sprite.x ?? 0) + column * sprite.frameWidth;
+  let sy = (sprite.y ?? 0) + row * sprite.frameHeight;
+  let sw = sprite.frameWidth;
+  let sh = sprite.frameHeight;
+  let dx = entity.x + offsetX + shiftX - dw / 2;
+  let dy = entity.y + offsetY + shiftY - dh / 2;
+
+  // An underground/loader's belt-lane frame is a full 2-tile belt frame
+  // (built to overlap into a neighbouring tile the way a plain belt's own
+  // frame does), but there's no neighbour on its open end to cover that
+  // overlap — cropping both the source and destination rects to the half
+  // toward keepSide keeps only the surface-run half and drops the half
+  // that would otherwise poke out past the structure sprite covering it.
+  // Only the along-facing axis is cropped: the perpendicular axis is left
+  // full-height/width, same as a plain belt's own frame — it overlaps
+  // slightly past the entity's 1-tile-wide side, same as a plain belt does
+  // into its neighbours, and that's fine uncropped (confirmed against a
+  // live render): cropping it turned out to cut off real art (the frame's
+  // roller/undercarriage strip isn't centred in the frame), not excess.
+  if (keepSide !== undefined) {
+    const horizontal = keepSide === Dir.East || keepSide === Dir.West;
+    if (horizontal) {
+      sw /= 2;
+      dw /= 2;
+      if (keepSide === Dir.East) {
+        // East: keep the right half of both rects.
+        sx += sw;
+        dx += dw;
+      }
+    } else {
+      sh /= 2;
+      dh /= 2;
+      if (keepSide === Dir.South) {
+        // South: keep the bottom half of both rects.
+        sy += sh;
+        dy += dh;
+      }
+    }
+  }
+
+  // A loader's own box spans 2 tiles (unlike an underground-belt's 1), so
+  // its belt-connecting tile sits half a tile further out, toward the open
+  // end, than an underground's own already-correct placement — applies to
+  // both the lane (direction from keepSide) and its cap (direction from
+  // which way this particular push was offset, since caps don't crop and so
+  // never set keepSide). Destination-only: never resamples the source.
+  if (laneRecenter !== 0) {
+    const towardSide = keepSide ?? (offsetX > 0 ? Dir.East : offsetX < 0 ? Dir.West : offsetY > 0 ? Dir.South : Dir.North);
+    if (towardSide === Dir.East) dx += laneRecenter;
+    else if (towardSide === Dir.West) dx -= laneRecenter;
+    else if (towardSide === Dir.South) dy += laneRecenter;
+    else dy -= laneRecenter;
+  }
+
   out.push({
     sheet: sprite.sheet,
-    sx: (sprite.x ?? 0) + column * sprite.frameWidth,
-    sy: (sprite.y ?? 0) + row * sprite.frameHeight,
-    sw: sprite.frameWidth,
-    sh: sprite.frameHeight,
-    dx: entity.x + offsetX + shiftX - dw / 2,
-    dy: entity.y + offsetY + shiftY - dh / 2,
+    sx,
+    sy,
+    sw,
+    sh,
+    dx,
+    dy,
     dw,
     dh,
     layer,
-    // Sorted by the entity's own row, not the offset one, so a cap stays
-    // with the belt it belongs to.
-    y: entity.y,
+    // Sorted by where the piece actually lands, not its owner's tile — a cap
+    // offset onto a neighbour's tile must compete for paint order against
+    // whatever else occupies that tile (e.g. a belt row it visually overlaps
+    // at a T-junction), not against things near its owner instead. A
+    // splitter's two lanes are the same story: shiftY (not offsetY) is what
+    // actually separates them on an east/west-facing splitter, so it has to
+    // be in the sort key too, or the lower lane's shadow can lose to the
+    // upper lane's just because it comes first in the layer array. A plain
+    // belt's cap additionally gets a tiny epsilon bump (capPriority) so it
+    // wins an exact tie against a NEIGHBOURING entity's own body sprite
+    // (see CAP_PRIORITY_EPSILON) — but an underground/loader's own cap must
+    // NOT get that boost: its offset can land back on ITS OWN entity's
+    // oversized structure sprite (several tiles across, drawn with a baked-
+    // in shadow), which is deliberately ordered after the lane/cap so the
+    // structure's shadow paints over the cap, not under it. The epsilon
+    // would otherwise flip that specific ordering by winning the y-tie
+    // before `order` is even compared.
+    y: entity.y + offsetY + shiftY + (capPriority ? CAP_PRIORITY_EPSILON : 0),
     order,
     alpha,
   });
@@ -196,16 +316,33 @@ export function collectEntity(
     if (!sprite) return;
     const column = axisIndex(layer.column, frame);
     const row = axisIndex(layer.row, frame);
-    push(out, sprite, column, row, entity, layer.layer, order, alpha);
+    // Only an underground/loader's own lane layer needs half-cropping (see
+    // laneKeepSide's own doc comment) — a plain belt's identically-shaped
+    // "connection" row layer is its actual full body and must stay whole.
+    const isUndergroundLane = entity.undergroundType !== undefined && layer.row?.by === "connection";
+    // A loader's own box spans 2 tiles (unlike an underground-belt's 1), so
+    // its belt-connecting tile is a further tile out from centre than the
+    // half-crop's own midpoint lands by default — recentring only for a
+    // loader keeps an underground-belt's already-correct placement alone.
+    const laneRecenter = isUndergroundLane && entity.name.includes("loader") ? 0.5 : 0;
+    push(out, sprite, column, row, entity, layer.layer, order, alpha, 0, 0, false, isUndergroundLane ? frame.laneKeepSide : undefined, laneRecenter);
 
     // Belt caps share the body's grid but sit a tile off toward the
     // neighbour they cover. A splitter's two belt-lane layers each carry
     // their own lane's caps, in the same order splitterGraphics declared
-    // them (lane(-1), lane(1)).
+    // them (lane(-1), lane(1)). An underground/loader's structure sheet only
+    // has entrance/exit(/side-load) rows, no cap art of its own — the cap
+    // belongs to its separate belt-lane layer instead, which (like a plain
+    // belt) picks its row via "connection".
     if (layer.row?.by === "connection") {
       const caps = isSplitter ? frame.laneCaps[laneIndex++] ?? [] : frame.caps;
+      // Only a plain belt's cap gets the priority epsilon (see push's own
+      // comment) — an underground/loader's cap must stay ordered purely by
+      // `order`, so its own structure sprite's baked-in shadow (pushed
+      // after the lane) still paints over it.
+      const capPriority = entity.undergroundType === undefined;
       for (const cap of caps) {
-        push(out, sprite, column, cap.row, entity, layer.layer, order, alpha, cap.dx, cap.dy);
+        push(out, sprite, column, cap.row, entity, layer.layer, order, alpha, cap.dx, cap.dy, capPriority, undefined, laneRecenter);
       }
     }
   });

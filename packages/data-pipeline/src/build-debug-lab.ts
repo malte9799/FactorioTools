@@ -14,6 +14,7 @@ import type { Blueprint, EntityGraphics, GameData, PlacedEntity, RenderCatalog }
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const DEBUG_LAB_PATH = join(__dirname, "../../engine/src/data/debug-lab.ts");
+const BUG_REPRO_PATH = join(__dirname, "../../engine/src/data/bug-repro.ts");
 const DATA_DIR = join(__dirname, "../../../apps/site/public/data");
 
 const N = 0, E = 4, S = 8, W = 12;
@@ -38,6 +39,19 @@ function underground(x: number, y: number, direction: number, type: "input" | "o
 }
 function loader(x: number, y: number, direction: number, type: "input" | "output"): Spec {
   return { name: "loader", x, y, direction, undergroundType: type };
+}
+
+/** True for every underground-belt/loader tier — mirrors the renderer's own
+ *  isUndergroundLike (packages/renderer/src/entityLookup.ts), duplicated
+ *  rather than imported since data-pipeline doesn't otherwise depend on
+ *  renderer. The renderer's resolveFrame branches on a PlacedEntity's
+ *  undergroundType being defined at all to pick entrance/exit structure art
+ *  over plain belt row/cap art, so the catalogue's generic Spec builder
+ *  (which has no other reason to know about undergrounds) needs this to
+ *  avoid shipping a debug-lab fixture that reproduces the exact "half belt
+ *  tread, wrong rotation" bug it exists to catch. */
+function isUndergroundLike(name: string): boolean {
+  return name.endsWith("underground-belt") || name.includes("loader");
 }
 function splitter(x: number, y: number, direction: number): Spec {
   return { name: "splitter", x, y, direction };
@@ -198,37 +212,42 @@ function rotateDir(baseDir: number, dir: number): number {
   return (baseDir + dir) % 16;
 }
 
-/** Every belt-family neighbour-classification state, one column per
- *  facing, grouped in rows: transport-belt shapes, splitter lane feeds,
- *  underground mouths (plain/side-loaded/a real paired run), and loader
- *  input/output. Each state is built for North and rotated into place, so
- *  all four facings exercise the exact same relative geometry. */
-function beltStateSuite(): Block {
-  const dirs = [N, E, S, W];
+interface BeltState {
+  label: string;
+  height: number;
+  build: (specs: Spec[], cx: number, cy: number, dir: number) => void;
+}
 
-  /** Places `name` at `(cx,cy)` shifted by (dx,dy) rotated for `dir`, facing
-   *  `baseFacing` rotated the same way. */
-  const at = (
-    specs: Spec[],
-    name: "belt" | "underground-in" | "underground-out" | "splitter",
-    cx: number,
-    cy: number,
-    dx: number,
-    dy: number,
-    baseFacing: number,
-    dir: number,
-  ): void => {
-    const p = rotate(dx, dy, dir);
-    const facing = rotateDir(baseFacing, dir);
-    const x = cx + p.dx, y = cy + p.dy;
-    if (name === "belt") specs.push(belt(x, y, facing));
-    else if (name === "underground-in") specs.push(underground(x, y, facing, "input"));
-    else if (name === "underground-out") specs.push(underground(x, y, facing, "output"));
-    else specs.push(splitter(x, y, facing));
-  };
+/** Places `name` at `(cx,cy)` shifted by (dx,dy) rotated for `dir`, facing
+ *  `baseFacing` rotated the same way. Shared by every belt-family state
+ *  builder below (and the small bug-repro subset that reuses their `build`
+ *  functions directly). */
+function at(
+  specs: Spec[],
+  name: "belt" | "underground-in" | "underground-out" | "splitter",
+  cx: number,
+  cy: number,
+  dx: number,
+  dy: number,
+  baseFacing: number,
+  dir: number,
+): void {
+  const p = rotate(dx, dy, dir);
+  const facing = rotateDir(baseFacing, dir);
+  const x = cx + p.dx, y = cy + p.dy;
+  if (name === "belt") specs.push(belt(x, y, facing));
+  else if (name === "underground-in") specs.push(underground(x, y, facing, "input"));
+  else if (name === "underground-out") specs.push(underground(x, y, facing, "output"));
+  else specs.push(splitter(x, y, facing));
+}
 
-  // ---- transport-belt states (built for North, i.e. baseFacing N) ----
-  const beltStates: { label: string; height: number; build: (specs: Spec[], cx: number, cy: number, dir: number) => void }[] = [
+/** Every transport-belt neighbour-classification state, built for North
+ *  (baseFacing N) and rotated into place per-column by the caller. Exported
+ *  at module scope (not nested in beltStateSuite) so buildBugReproSpecs can
+ *  pick out just the regression-relevant ones by label instead of
+ *  duplicating their geometry. */
+function beltStates(): BeltState[] {
+  return [
     {
       label: "isolated",
       height: 3,
@@ -239,6 +258,33 @@ function beltStateSuite(): Block {
       height: 5,
       build: (specs, cx, cy, dir) => {
         for (let j = -1; j <= 1; j++) at(specs, "belt", cx, cy, 0, 1 + j, N, dir);
+      },
+    },
+    {
+      label: "back to back",
+      height: 3,
+      build: (specs, cx, cy, dir) => {
+        // Two belts facing AWAY from each other, adjacent, neither feeding
+        // nor fed by the other. Each belt's start cap (nothing behind it)
+        // used to render at the shared seam without being suppressed, since
+        // the old suppression check (feedsFrom) asks "does the neighbour
+        // face back into me" — false for both here — rather than the
+        // reference renderer's real question, "is the neighbour physically
+        // there at all" (occupiesConnection in beltGraph.ts).
+        at(specs, "belt", cx, cy, 0, 0, N, dir);
+        at(specs, "belt", cx, cy, 0, 1, S, dir);
+      },
+    },
+    {
+      label: "nose to nose",
+      height: 3,
+      build: (specs, cx, cy, dir) => {
+        // The mirror case: two belts facing TOWARD each other, adjacent,
+        // again neither actually feeding the other (a real merge needs the
+        // downstream belt to face the same way, not opposite). Each belt's
+        // end cap used to render at the shared seam the same way.
+        at(specs, "belt", cx, cy, 0, 0, S, dir);
+        at(specs, "belt", cx, cy, 0, 1, N, dir);
       },
     },
     {
@@ -288,10 +334,57 @@ function beltStateSuite(): Block {
         at(specs, "belt", cx, cy, 0, 0, S, dir);
       },
     },
+    {
+      label: "T-cross, cap over row",
+      height: 4,
+      build: (specs, cx, cy, dir) => {
+        // Same shape as "side-load only" plus one more tile of the feeder
+        // belt above it, so the feeder's own end cap — which lands a full
+        // tile past its own last belt, right on top of the row tile it
+        // drops onto — has to win its paint-order fight against that row
+        // tile instead of losing to it (the row tile sits closer to its own
+        // entity's y, the feeder's cap only wins if sorted by where it
+        // actually lands).
+        for (let j = -1; j <= 1; j++) at(specs, "belt", cx, cy, j, 1, E, dir);
+        at(specs, "belt", cx, cy, 0, 0, S, dir);
+        at(specs, "belt", cx, cy, 0, -1, S, dir);
+      },
+    },
+    {
+      label: "curve, fed left (curve placed last)",
+      height: 3,
+      build: (specs, cx, cy, dir) => {
+        // Same shape as "curve, fed left" but with the feeder pushed BEFORE
+        // the curve tile, so the curve has the higher entityNumber (later
+        // placement order) — regression check for a real bug: the feeder's
+        // end cap and the curve's own body sprite can land at the exact same
+        // sort-y, and without an explicit tie-breaker the stable sort falls
+        // back to array order, so the cap's visibility depended on which of
+        // the two was placed first instead of which visually belongs on top.
+        at(specs, "belt", cx, cy, -1, 1, E, dir); // feeder pushed first
+        at(specs, "belt", cx, cy, 0, 1, N, dir); // curve pushed last
+      },
+    },
+    {
+      label: "curve, fed straight from behind",
+      height: 4,
+      build: (specs, cx, cy, dir) => {
+        // A curve fed only from the side (genuinely bends) with a straight
+        // belt feeding the FEEDER, one tile further along the feeder's own
+        // input side — checks the feeder itself draws no spurious end cap
+        // where it runs straight into the curve's mouth.
+        at(specs, "belt", cx, cy, 0, 1, N, dir); // the curve
+        at(specs, "belt", cx, cy, 1, 1, W, dir); // feeds the curve from the east
+        at(specs, "belt", cx, cy, 2, 1, W, dir); // feeds the feeder, straight run
+      },
+    },
   ];
+}
 
-  // ---- splitter lane-feed states ----
-  const splitterStates: { label: string; height: number; build: (specs: Spec[], cx: number, cy: number, dir: number) => void }[] = [
+/** Splitter lane-feed states, same North-built/rotated-per-column
+ *  convention as beltStates. */
+function splitterStates(): BeltState[] {
+  return [
     {
       label: "splitter, open",
       height: 3,
@@ -317,9 +410,12 @@ function beltStateSuite(): Block {
       },
     },
   ];
+}
 
-  // ---- underground mouth states ----
-  const undergroundStates: { label: string; height: number; build: (specs: Spec[], cx: number, cy: number, dir: number) => void }[] = [
+/** Underground mouth states, same North-built/rotated-per-column
+ *  convention as beltStates. */
+function undergroundStates(): BeltState[] {
+  return [
     {
       label: "entrance, plain",
       height: 3,
@@ -355,9 +451,12 @@ function beltStateSuite(): Block {
       },
     },
   ];
+}
 
-  // ---- loader states ----
-  const loaderStates: { label: string; height: number; build: (specs: Spec[], cx: number, cy: number, dir: number) => void }[] = [
+/** Loader input/output states, same North-built/rotated-per-column
+ *  convention as beltStates. */
+function loaderStates(): BeltState[] {
+  return [
     {
       label: "loader, input",
       height: 3,
@@ -375,18 +474,24 @@ function beltStateSuite(): Block {
       },
     },
   ];
+}
 
-  const allStates = [...beltStates, ...splitterStates, ...undergroundStates, ...loaderStates];
+/** Lays a list of belt-family states out into a Block: one column per
+ *  facing, one row per state, each state built for North and rotated into
+ *  place per-column. Shared by beltStateSuite (the full matrix) and
+ *  buildBugReproSpecs (a small hand-picked subset). */
+function layoutBeltFamilyStates(states: BeltState[], label: string): Block {
+  const dirs = [N, E, S, W];
   const colWidth = 4;
-  const rowHeight = Math.max(...allStates.map((s) => s.height)) + 1;
+  const rowHeight = Math.max(...states.map((s) => s.height)) + 1;
 
   return {
-    label: "belt-family neighbour states",
+    label,
     width: dirs.length * colWidth,
-    height: allStates.length * rowHeight,
+    height: states.length * rowHeight,
     specs: (originX, originY) => {
       const specs: Spec[] = [];
-      allStates.forEach((state, row) => {
+      states.forEach((state, row) => {
         const cy = originY + row * rowHeight + 2;
         dirs.forEach((dir, col) => {
           const cx = originX + col * colWidth + 1;
@@ -396,6 +501,41 @@ function beltStateSuite(): Block {
       return specs;
     },
   };
+}
+
+/** Every belt-family neighbour-classification state, one column per
+ *  facing, grouped in rows: transport-belt shapes, splitter lane feeds,
+ *  underground mouths (plain/side-loaded/a real paired run), and loader
+ *  input/output. Each state is built for North and rotated into place, so
+ *  all four facings exercise the exact same relative geometry. */
+function beltStateSuite(): Block {
+  const allStates = [...beltStates(), ...splitterStates(), ...undergroundStates(), ...loaderStates()];
+  return layoutBeltFamilyStates(allStates, "belt-family neighbour states");
+}
+
+/** A small, quick-to-eyeball subset of beltStates — just the cases that were
+ *  once genuine renderer bugs (a spurious cap where a belt runs straight
+ *  into a curve, a cap losing a paint-order tie depending on placement
+ *  order) — for manually checking they're still fixed without wading
+ *  through the full belt-family matrix's ~130 rows. Picked by label so this
+ *  can't silently drift out of sync with beltStates' own geometry: labels
+ *  not found there are a hard error instead of a silently-empty repro. */
+function bugReproStates(): BeltState[] {
+  const labels = [
+    "back to back",
+    "nose to nose",
+    "curve, fed left",
+    "curve, fed right",
+    "curve, fed left (curve placed last)",
+    "curve, fed straight from behind",
+    "T-cross, cap over row",
+  ];
+  const byLabel = new Map(beltStates().map((s) => [s.label, s]));
+  return labels.map((label) => {
+    const state = byLabel.get(label);
+    if (!state) throw new Error(`bugReproStates: no beltStates entry labelled "${label}" (renamed or removed?)`);
+    return state;
+  });
 }
 /** Lays out a list of blocks left to right, `gap` tiles apart. */
 function layoutRow(blocks: Block[], startX: number, startY: number, gap: number): Spec[] {
@@ -542,6 +682,7 @@ function catalogueSpecs(rows: Entry[][], originX: number, originY: number): Spec
           x: snap(x + spanX / 2, spanX),
           y: snap(y + spanY / 2, spanY),
           direction,
+          undergroundType: isUndergroundLike(entry.name) ? "input" : undefined,
         });
         x += spanX + GAP;
         rowSpan = Math.max(rowSpan, spanY);
@@ -601,6 +742,34 @@ function main(): void {
     `Wrote ${DEBUG_LAB_PATH} — ${merged.length} entities: ` +
       `${shown} kinds in ${rows.length} rows, ${suites.length} in connection suites.`,
   );
+
+  // A small standalone blueprint with just the regression-worthy cases, so
+  // they can be eyeballed directly instead of hunting through the full
+  // debug lab's ~130-row belt-family matrix.
+  const reproSpecs = layoutBeltFamilyStates(bugReproStates(), "bug repro").specs(0, 0);
+  let reproNumber = 1;
+  const reproMerged: PlacedEntity[] = reproSpecs.map((e) => ({
+    entityNumber: reproNumber++,
+    name: e.name,
+    x: e.x,
+    y: e.y,
+    direction: e.direction ?? 0,
+    quality: "normal",
+    modules: [],
+    filterItems: [],
+    undergroundType: e.undergroundType,
+  }));
+  const reproBlueprint: Blueprint = {
+    item: "blueprint",
+    label: "Renderer bug repro",
+    version: 562949956632576,
+    entities: denormaliseEntities(reproMerged),
+  };
+  const reproSource = readFileSync(BUG_REPRO_PATH, "utf8");
+  const reproMatch = reproSource.match(/"(0eNq[^"]+)"/);
+  if (!reproMatch) throw new Error(`Couldn't find a blueprint string in ${BUG_REPRO_PATH}`);
+  writeFileSync(BUG_REPRO_PATH, reproSource.replace(reproMatch[0], `"${encodeBlueprintString({ blueprint: reproBlueprint })}"`));
+  console.log(`Wrote ${BUG_REPRO_PATH} — ${reproMerged.length} entities in ${bugReproStates().length} rows.`);
 }
 
 main();

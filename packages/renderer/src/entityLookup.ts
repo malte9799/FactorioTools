@@ -88,6 +88,20 @@ export function effectiveFootprint(visual: ResolvedVisual, direction: number): [
   return facing === Dir.East || facing === Dir.West ? [h, w] : [w, h];
 }
 
+/** True for every underground-belt/loader tier (all vanilla names end in
+ *  "underground-belt" or contain "loader" — loader-1x1, loader, *-loader).
+ *  These are the belt-connector entities whose PlacedEntity MUST carry a
+ *  real undergroundType ("input" unless a blueprint's own `type` field says
+ *  "output") — collect.ts's resolveFrame branches on undergroundType being
+ *  defined at all to pick the underground/loader structure art over plain
+ *  belt row/cap art, so any caller that builds one of these without setting
+ *  it (a freshly-placed entity, or the placement ghost) would otherwise
+ *  render as a half-cropped, misrotated belt tread instead of the real
+ *  entrance/exit structure. */
+export function isUndergroundLike(name: string): boolean {
+  return name.endsWith("underground-belt") || name.includes("loader");
+}
+
 /** Family predicates for the neighbour classifiers, derived from which
  *  connector an entity declares. */
 export function makeConnectorPredicates(lookup: Map<string, ResolvedVisual>) {

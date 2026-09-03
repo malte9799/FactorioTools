@@ -100,7 +100,16 @@ function wallGraphics(proto: any): EntityGraphics | undefined {
  *  and exit (and, for undergrounds only, their side-loading variants — a
  *  different mouth piece for when a belt feeds in from the side rather
  *  than straight on) as rows. A loader's structure has no side-loading
- *  fields or ground-seam patches, so those layers are simply absent. */
+ *  fields or ground-seam patches, so those layers are simply absent.
+ *
+ *  Both also carry their own belt_animation_set — the same transport-
+ *  belt.png sheet a plain belt uses — for the moving, item-carrying lane
+ *  under/behind the structure sprite. collect.ts's resolveFrame crops that
+ *  lane's frame to just its open-end half (laneKeepSide) — without that
+ *  crop this visibly overlapped/clipped through a loader's smaller box
+ *  icon, which is why the lane was dropped for loaders entirely at first;
+ *  the crop is what makes it safe to bring back, matching an underground-
+ *  belt's own half-belt look exactly. */
 function undergroundGraphics(proto: any): EntityGraphics | undefined {
   const struct = proto.structure;
   const out = struct?.direction_out?.sheet;
@@ -109,7 +118,18 @@ function undergroundGraphics(proto: any): EntityGraphics | undefined {
   if (!sprite) return undefined;
   const rowOf = (s: any): number | undefined => (s ? Math.round((s.y ?? 0) / s.height) : undefined);
 
+  const beltLane = toSprite(proto.belt_animation_set?.animation_set);
+
   const layers: GraphicsLayer[] = [];
+
+  // Pushed BEFORE the structure layers, so the mouth/box art (an
+  // underground-belt's several tiles across, a loader's own smaller icon)
+  // paints on top of the lane rather than the lane covering it — both are
+  // Layer.Object, so array order is what decides.
+  if (beltLane) {
+    layers.push({ layer: Layer.Object, sprites: beltLane, column: { by: "animation" }, row: { by: "connection" } });
+  }
+
   const backPatch = toSprite(struct?.back_patch?.sheet);
   if (backPatch) layers.push({ layer: Layer.Object, sprites: { ...backPatch, columns: 4 }, column: { by: "direction" } });
 
@@ -366,7 +386,23 @@ function platformGraphics(connections: any): GraphicsLayer[] | undefined {
   }));
 }
 
-const ROTATES_FOOTPRINT = new Set(["splitter", "fast-splitter", "express-splitter", "turbo-splitter"]);
+const ROTATES_FOOTPRINT = new Set([
+  "splitter",
+  "fast-splitter",
+  "express-splitter",
+  "turbo-splitter",
+  // A loader's real footprint (loader-1x1 is square and needs none of
+  // this) is 1x2 — confirmed via its own selection_box, [-0.5,-1] to
+  // [0.5,1] — so facing East/West needs the same width/height swap a
+  // splitter's non-square footprint does, or the grid-snap axes (picked
+  // by each dimension's own odd/even parity in render.ts's snapAxis) end
+  // up snapping the wrong axis to whole vs. half tiles, misaligning the
+  // ghost/placed box by half a tile whenever it's rotated sideways.
+  "loader",
+  "fast-loader",
+  "express-loader",
+  "turbo-loader",
+]);
 
 /** table -> how to pull graphics out of that table's prototypes. Kept as an
  *  explicit map (not inferred) so adding a new entity kind means adding one

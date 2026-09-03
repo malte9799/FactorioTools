@@ -86,12 +86,56 @@ function feedsFrom(
   return n !== undefined && canFeed(n, isBeltLike) && toCardinal(n.direction) === opposite(dir);
 }
 
-/** True when the neighbour in `dir` is belt-like AND takes our output —
- *  i.e. is facing away from us in a straight line, the only shape that
- *  continues a run. A curve or merge ahead is still `direction === dir`
- *  from directly ahead: it only bends around its OWN input, not around
- *  what's feeding INTO the tile ahead of us. */
-function feedsInto(
+/** The reference renderer's own `conn.from`/`conn.to`: the tile a belt-like
+ *  entity's cap-suppression check compares against, computed UNCONDITIONALLY
+ *  on that tile's own facing — "from" is whatever sits behind it (or, if it
+ *  curves, whatever sits on its actual input side instead), "to" is
+ *  whatever sits ahead of it. Deliberately not the same question feedsFrom
+ *  asks ("does it face back into me") — a belt's own start/end cap
+ *  is suppressed by ANY belt-like neighbour it would otherwise back into or
+ *  feed into, even one facing away from it entirely, because the reference
+ *  renderer's suppression check (getConnForPos in spriteDataBuilder.ts) only
+ *  ever looks at what's physically adjacent, not which way it faces. Two
+ *  belts placed back-to-back (or nose-to-nose) each suppress the other's
+ *  cap this way — there is no cap art at all for "a belt run of one with a
+ *  dead entity behind/ahead of it that never connects", only for a run with
+ *  open, empty space at that end. */
+function connectionPartners(
+  x: number,
+  y: number,
+  direction: number,
+  grid: NeighbourGrid,
+  isBeltLike: (name: string) => boolean,
+  forceStraight: boolean,
+): { from: { x: number; y: number } | undefined; to: { x: number; y: number } | undefined } {
+  const facing = toCardinal(direction);
+  const behind = opposite(facing);
+  const left = leftOf(facing);
+  const right = rightOf(facing);
+
+  const fromLeft = !forceStraight && feedsFrom(x, y, left, grid, isBeltLike);
+  const fromRight = !forceStraight && feedsFrom(x, y, right, grid, isBeltLike);
+  const fromBehind = feedsFrom(x, y, behind, grid, isBeltLike);
+  const curvesLeft = fromLeft && !fromRight && !fromBehind;
+  const curvesRight = fromRight && !fromLeft && !fromBehind;
+  const inputSide = curvesLeft ? left : curvesRight ? right : behind;
+
+  const at = (dir: Cardinal): { x: number; y: number } | undefined => {
+    const n = grid.towards(x, y, dir);
+    if (n === undefined || !isBeltLike(n.name)) return undefined;
+    const { dx, dy } = step(dir);
+    return { x: x + dx, y: y + dy };
+  };
+  return { from: at(inputSide), to: at(facing) };
+}
+
+/** True when the neighbour in `dir` is belt-like AND its own connection
+ *  graph (see connectionPartners) already accounts for `(x,y)` — as either
+ *  what it's fed from or what it feeds into — regardless of whether that
+ *  neighbour's facing agrees with ours. This is the actual cap-suppression
+ *  gate; feedsFrom (facing-agreement) is a stricter question used only for
+ *  deciding whether a run curves, not for whether a cap is drawn. */
+function occupiesConnection(
   x: number,
   y: number,
   dir: Cardinal,
@@ -99,7 +143,16 @@ function feedsInto(
   isBeltLike: (name: string) => boolean,
 ): boolean {
   const n = grid.towards(x, y, dir);
-  return n !== undefined && isBeltLike(n.name) && toCardinal(n.direction) === dir;
+  if (n === undefined || !isBeltLike(n.name)) return false;
+  const { dx, dy } = step(dir);
+  const nx = x + dx;
+  const ny = y + dy;
+  // Matches getConnForPos's own forceStraight gate: splitters and
+  // undergrounds never curve, so their connection partners are always
+  // straight behind/ahead, never a side neighbour.
+  const forceStraight = n.undergroundType !== undefined || n.name.includes("splitter");
+  const { from, to } = connectionPartners(nx, ny, n.direction, grid, isBeltLike, forceStraight);
+  return (from !== undefined && from.x === x && from.y === y) || (to !== undefined && to.x === x && to.y === y);
 }
 
 function offsetTowards(dir: Cardinal): { dx: number; dy: number } {
@@ -141,11 +194,23 @@ export function classifyBeltCell(
   // the belt's own behind/ahead — even for a curve's start cap, whose
   // input is to a side — so this matches that rather than shifting toward
   // inputSide, which only differs from `behind` on a curve.
+  //
+  // Suppression uses occupiesConnection, not feedsFrom/feedsInto: those ask
+  // "does the neighbour face back into me", which is the right question for
+  // deciding whether a run curves, but the WRONG one for whether a cap is
+  // drawn. Two belts placed back-to-back (or nose-to-nose), each facing
+  // away from/into the other without either actually connecting, still each
+  // suppress the other's cap in the real game — confirmed against the
+  // reference renderer's own getConnForPos, which only checks physical
+  // adjacency for this, never facing agreement. Using feedsFrom/feedsInto
+  // here drew both belts' caps stacked on top of each other at the shared
+  // seam, since neither belt considered itself fed by (or feeding into) the
+  // other, so neither cap was suppressed.
   const caps: BeltCap[] = [];
-  if (!feedsFrom(x, y, inputSide, grid, isBeltLike)) {
+  if (!occupiesConnection(x, y, inputSide, grid, isBeltLike)) {
     caps.push({ kind: "start", row: START_CAP[facing], ...offsetTowards(behind) });
   }
-  if (!feedsInto(x, y, facing, grid, isBeltLike)) {
+  if (!occupiesConnection(x, y, facing, grid, isBeltLike)) {
     caps.push({ kind: "end", row: END_CAP[facing], ...offsetTowards(facing) });
   }
 

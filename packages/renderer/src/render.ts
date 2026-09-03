@@ -2,7 +2,7 @@ import type { GameData, PlacedEntity, RenderCatalog } from "@factoriotools/engin
 import { Camera, PanMomentum } from "./camera.js";
 import { SpriteAtlas } from "./spriteAtlas.js";
 import { IconAtlas } from "./iconAtlas.js";
-import { buildVisualLookup, effectiveFootprint, makeConnectorPredicates, type ResolvedVisual } from "./entityLookup.js";
+import { buildVisualLookup, effectiveFootprint, isUndergroundLike, makeConnectorPredicates, type ResolvedVisual } from "./entityLookup.js";
 import { drawAltModeOverlay } from "./entityDraw.js";
 import { buildGrid, NeighbourGrid } from "./neighbours/grid.js";
 import type { PlatformBox } from "./neighbours/platform.js";
@@ -80,6 +80,11 @@ export interface BlueprintRenderer {
 
 const FALLBACK_FOOTPRINT: [number, number] = [1, 1];
 
+/** Placement-ghost valid/invalid tint — matches the real game's own
+ *  green-means-go, red-means-blocked cursor-item convention. */
+const GHOST_VALID_TINT = "#4caf50";
+const GHOST_INVALID_TINT = "#e53935";
+
 /** Mounts a self-contained Canvas2D blueprint renderer into `container`,
  *  wiring up Factorio-feel pan/zoom (see camera.ts) and hover hit-testing
  *  (spatialIndex.ts) without any external rendering library. */
@@ -88,7 +93,13 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
   canvas.style.display = "block";
   canvas.style.width = "100%";
   canvas.style.height = "100%";
-  canvas.style.cursor = "grab";
+  canvas.style.cursor = "default";
+  // Stops the browser's own native pan/pinch-zoom/double-tap-zoom gestures
+  // from firing alongside (and fighting) the pointer-event-driven pan/pinch
+  // handling below — without this, touch input on mobile double-zooms (once
+  // from the browser's own viewport zoom, once from our camera) or scrolls
+  // the page instead of panning the canvas.
+  canvas.style.touchAction = "none";
   // Stops the browser's own drag-select and drag-image from fighting the
   // pointer-capture pan.
   canvas.style.userSelect = "none";
@@ -119,6 +130,44 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
   let isPanning = false;
   let lastPointer = { x: 0, y: 0 };
   let destroyed = false;
+
+  // 'idle'-mode press-on-an-entity: the real game lets you drag the camera
+  // starting from on top of a building just as freely as from empty ground —
+  // only a press that never moves opens that building. downPointerId tracks
+  // which pointer started the current idle-mode press/pan gesture (so a
+  // second, unrelated pointer's move/up can't affect it); pendingSelect
+  // holds the entity that was under the cursor at press time, fired from
+  // onPointerUp only if the gesture stayed within CLICK_MOVE_THRESHOLD the
+  // whole time — otherwise it was a pan, and no entity opens.
+  let downPointerId: number | undefined;
+  let pendingSelect: number | undefined;
+  let pressMovedPastThreshold = false;
+  let downScreenPos = { x: 0, y: 0 };
+  const CLICK_MOVE_THRESHOLD = 5; // screen px, matches typical OS drag-start thresholds
+
+  // WASD keyboard pan: held keys accumulate here and are applied once per
+  // frame in tick() (not on keydown itself), so holding a key pans smoothly
+  // and continuously like the real game's own camera keys rather than
+  // stepping once per keystroke/repeat event.
+  const heldKeys = new Set<string>();
+  // Screen px/second, fed through the same panByScreenDelta a mouse drag
+  // uses — since that divides by pixelsPerTile, a fixed screen-px rate here
+  // covers a fixed fraction of the current view per second at any zoom,
+  // rather than crawling across a zoomed-out map or overshooting a
+  // zoomed-in one.
+  const KEYBOARD_PAN_SPEED = 600;
+
+  // Two-finger touch: pinch to zoom, drag the midpoint to pan. Tracks every
+  // currently-down touch pointer by id so the second finger landing can be
+  // detected regardless of arrival order, and the gesture cleanly falls back
+  // to a single-finger pan if one finger lifts while the other stays down.
+  // The distance/midpoint tracked here are the PREVIOUS move's, not the
+  // gesture-start values — each move zooms by the incremental ratio since
+  // last frame (mirroring onWheel's own per-tick factor), so it can reuse
+  // zoomAt's existing clamping and cursor-anchoring instead of duplicating
+  // either.
+  const activeTouches = new Map<number, { x: number; y: number }>();
+  let lastPinchDistance = 0;
   let mode: InteractionMode = { kind: "idle" };
   let ghostWorldPos: { x: number; y: number } | null = null;
   let ghostDirection = 0;
@@ -197,8 +246,76 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
       return lit ? 1 : 0.28;
     };
 
+    // A belt-family ghost needs to know about its own real neighbours to
+    // classify itself correctly (curve into an existing run, no spurious
+    // cap where it would connect) — previewGrid adds the ghost on top of
+    // the placed-only grid for exactly that. It's used ONLY for the ghost's
+    // own draw call below, deliberately not for the main collection pass
+    // just below this: an already-placed belt must keep looking exactly as
+    // placed, however the ghost hovering nearby would connect to it, right
+    // up until it's actually placed — only the ghost previews the
+    // hypothetical connected result.
+    let ghost: PlacedEntity | undefined;
+    let ghostCanPlace = true;
+    let previewGrid = grid;
+    if (mode.kind === "place" && ghostWorldPos) {
+      const ghostVisual = visualFor(mode.entityName);
+      if (ghostVisual) {
+        const [gfw, gfh] = effectiveFootprint(ghostVisual, ghostDirection);
+        const snapped = { x: snapAxis(ghostWorldPos.x, gfw), y: snapAxis(ghostWorldPos.y, gfh) };
+        ghost = {
+          entityNumber: -1,
+          name: mode.entityName,
+          x: snapped.x,
+          y: snapped.y,
+          direction: ghostDirection,
+          quality: "normal",
+          modules: [],
+          filterItems: [],
+          // Every underground-belt/loader tier MUST carry a real
+          // undergroundType — collect.ts's resolveFrame branches on it being
+          // defined at all to pick the entrance/exit structure art over
+          // plain belt row/cap art. A freshly-placed one (and this ghost,
+          // previewing exactly that) is always the entrance/input half; you
+          // only get an output half by placing a second one that pairs with
+          // an existing entrance, which the game (and placeEntity, in
+          // index.ts) handles by editing an already-placed entity's own
+          // type, not by constructing a fresh one as "output".
+          undergroundType: isUndergroundLike(mode.entityName) ? "input" : undefined,
+        };
+        if (connectors.isBeltLike(mode.entityName)) previewGrid = buildGrid([...entities, ghost]);
+
+        // Valid iff nothing else's footprint overlaps the ghost's own —
+        // queryRect already returns entityNumbers whose box overlaps a
+        // rect, which is exactly Factorio's own placement rule (no two
+        // colliding footprints), so no separate collision routine is
+        // needed. -1 (the ghost's own placeholder id, never in the real
+        // spatial index) never appears here, so nothing to exclude.
+        //
+        // queryRect's own edge comparisons are inclusive (>=/<=) by design —
+        // right for its original job, frustum culling, where an entity
+        // exactly on the viewport boundary must still be included so it
+        // doesn't pop in/out. That same inclusiveness is wrong here: two
+        // footprints that only TOUCH (e.g. a ghost placed directly beside an
+        // existing belt, sharing one edge with no actual overlap) would
+        // register as colliding and wrongly tint the ghost red. Insetting
+        // the query rect by a small epsilon excludes exact-edge touches
+        // while still catching any real overlap.
+        const epsilon = 0.01;
+        const left = snapped.x - gfw / 2 + epsilon;
+        const top = snapped.y - gfh / 2 + epsilon;
+        const right = snapped.x + gfw / 2 - epsilon;
+        const bottom = snapped.y + gfh / 2 - epsilon;
+        ghostCanPlace = spatialIndex.queryRect(left, top, right, bottom).size === 0;
+      }
+    }
+
     // Collect every sprite first, then paint them in one globally sorted
     // pass, so no entity's shadow can land on a neighbour drawn before it.
+    // Real entities always classify against the placed-only grid, never
+    // previewGrid — an already-placed belt must not change how it looks
+    // just because a ghost is hovering nearby; only the ghost itself (drawn
+    // separately below, against previewGrid) shows the connected preview.
     const collectCtx: CollectContext = { grid, ...connectors, platformBoxes, animationFrame };
     const commands: DrawCommand[] = [];
     const procedural: PlacedEntity[] = [];
@@ -250,31 +367,19 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
       }
     }
 
-    if (mode.kind === "place" && ghostWorldPos) {
-      const visual = visualFor(mode.entityName);
+    if (ghost) {
+      const visual = visualFor(ghost.name);
+      const ghostTint = ghostCanPlace ? GHOST_VALID_TINT : GHOST_INVALID_TINT;
       if (visual) {
-        const [fw, fh] = effectiveFootprint(visual, ghostDirection);
-        const snapped = {
-          x: snapAxis(ghostWorldPos.x, fw),
-          y: snapAxis(ghostWorldPos.y, fh),
-        };
-        const ghost: PlacedEntity = {
-          entityNumber: -1,
-          name: mode.entityName,
-          x: snapped.x,
-          y: snapped.y,
-          direction: ghostDirection,
-          quality: "normal",
-          modules: [],
-          filterItems: [],
-        };
         if (visual.inserterGraphics) {
-          ctx.globalAlpha = 0.5;
-          drawInserter(ctx, atlas, ghost, visual.inserterGraphics);
-          ctx.globalAlpha = 1;
+          // Full alpha — the green/red tint itself is what marks this as a
+          // ghost rather than a placed entity, so fading it out on top would
+          // just hide the texture detail the tint is supposed to sit over.
+          drawInserter(ctx, atlas, ghost, visual.inserterGraphics, ghostTint);
         } else if (visual.graphics) {
           const ghostCommands: DrawCommand[] = [];
-          collectEntity(ghostCommands, ghost, visual, { grid, ...connectors, platformBoxes, animationFrame }, 0.5);
+          collectEntity(ghostCommands, ghost, visual, { grid: previewGrid, ...connectors, platformBoxes, animationFrame }, 1);
+          for (const c of ghostCommands) c.tint = ghostTint;
           paint(ctx, atlas, ghostCommands);
         }
       }
@@ -285,11 +390,28 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
 
   let animationFrozen = false;
 
+  function applyKeyboardPan(dtMs: number): void {
+    if (heldKeys.size === 0) return;
+    let dx = 0;
+    let dy = 0;
+    if (heldKeys.has("a")) dx += 1;
+    if (heldKeys.has("d")) dx -= 1;
+    if (heldKeys.has("w")) dy += 1;
+    if (heldKeys.has("s")) dy -= 1;
+    if (dx === 0 && dy === 0) return;
+    // Diagonal movement (e.g. W+D) is normalized so it isn't faster than a
+    // single direction — matches the real game's own WASD camera feel.
+    const length = Math.hypot(dx, dy);
+    const distance = (KEYBOARD_PAN_SPEED * dtMs) / 1000;
+    camera.panByScreenDelta((dx / length) * distance, (dy / length) * distance);
+  }
+
   function tick(): void {
     if (destroyed) return;
     if (!animationFrozen) animationFrame = (animationFrame + 1) % 1_000_000;
     const step = momentum.step(16);
     if (step) camera.panByScreenDelta(step.dx, step.dy);
+    applyKeyboardPan(16);
     draw();
     rafHandle = requestAnimationFrame(tick);
   }
@@ -333,12 +455,40 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
     placeCallback?.(snapped.x, snapped.y, ghostDirection);
   }
 
+  /** Midpoint (screen px) and distance (screen px) between the two active
+   *  touches — undefined unless exactly two fingers are down. */
+  function pinchGeometry(): { mid: { x: number; y: number }; distance: number } | undefined {
+    if (activeTouches.size !== 2) return undefined;
+    const [a, b] = [...activeTouches.values()] as [{ x: number; y: number }, { x: number; y: number }];
+    return {
+      mid: { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 },
+      distance: Math.hypot(a.x - b.x, a.y - b.y),
+    };
+  }
+
   function onPointerDown(e: PointerEvent): void {
     // Stops the browser's own left-click text-selection drag from starting
     // alongside pointer-capture panning/placing/opening — confirmed by
     // spike this was the source of pan sometimes feeling like the native
     // browser gesture was still "coming through" underneath it.
     e.preventDefault();
+
+    if (e.pointerType === "touch") {
+      activeTouches.set(e.pointerId, { x: e.clientX, y: e.clientY });
+      if (activeTouches.size === 2) {
+        // A second finger landing starts a pinch — cancel whatever the first
+        // finger's own single-touch pan was doing so the two gestures don't
+        // fight (a pan delta computed from the wrong finger, momentum firing
+        // mid-pinch).
+        isPanning = false;
+        momentum.stop();
+        const geo = pinchGeometry()!;
+        lastPinchDistance = geo.distance;
+        lastPointer = geo.mid;
+        return;
+      }
+      if (activeTouches.size > 2) return; // ignore a third finger entirely
+    }
 
     if (e.button === 2) {
       // Right-click erase: fires immediately on press (no start delay —
@@ -361,24 +511,45 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
       return;
     }
 
-    // 'idle' mode: a click that lands on an entity opens it (matches the
-    // real game's "click a building to open it") instead of panning: only
-    // a click on empty space starts a pan/drag.
+    // 'idle' mode: always starts a pan, whether the press landed on an
+    // entity or empty ground — matches the real game, where you can grab
+    // the camera from on top of a building just as freely as from open
+    // space. Opening the building is deferred to onPointerUp: it only fires
+    // if the whole gesture stayed within CLICK_MOVE_THRESHOLD, i.e. it
+    // really was a click and not the start of a drag.
     const world = worldAtPointer(e);
-    const hit = spatialIndex.hitTest(world.x, world.y);
-    if (hit !== undefined) {
-      selectCallback?.(hit);
-      return;
-    }
+    pendingSelect = spatialIndex.hitTest(world.x, world.y);
+    downPointerId = e.pointerId;
+    pressMovedPastThreshold = false;
+    downScreenPos = { x: e.clientX, y: e.clientY };
 
     isPanning = true;
     momentum.stop();
     lastPointer = { x: e.clientX, y: e.clientY };
     canvas.setPointerCapture(e.pointerId);
-    canvas.style.cursor = "grabbing";
   }
 
   function onPointerMove(e: PointerEvent): void {
+    if (e.pointerType === "touch" && activeTouches.has(e.pointerId)) {
+      activeTouches.set(e.pointerId, { x: e.clientX, y: e.clientY });
+      if (activeTouches.size === 2) {
+        const geo = pinchGeometry()!;
+        const rect = canvas.getBoundingClientRect();
+        if (lastPinchDistance > 0) {
+          const factor = geo.distance / lastPinchDistance;
+          // zoomAt anchors on the pinch midpoint and clamps to the camera's
+          // own zoom limits — same call onWheel makes, just with a
+          // frame-to-frame factor instead of a wheel-tick one.
+          camera.zoomAt(factor, geo.mid.x - rect.left, geo.mid.y - rect.top, rect.width, rect.height);
+        }
+        // A genuine two-finger drag (the midpoint itself moving, not just
+        // the fingers spreading apart) pans on top of that.
+        camera.panByScreenDelta(geo.mid.x - lastPointer.x, geo.mid.y - lastPointer.y);
+        lastPinchDistance = geo.distance;
+        lastPointer = geo.mid;
+        return;
+      }
+    }
     if (isErasing) {
       eraseAtPointer(e);
     }
@@ -392,12 +563,32 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
       camera.panByScreenDelta(dx, dy);
       momentum.recordDelta(dx, dy, performance.now());
       lastPointer = { x: e.clientX, y: e.clientY };
+      if (e.pointerId === downPointerId && !pressMovedPastThreshold) {
+        const totalDx = e.clientX - downScreenPos.x;
+        const totalDy = e.clientY - downScreenPos.y;
+        if (Math.hypot(totalDx, totalDy) > CLICK_MOVE_THRESHOLD) pressMovedPastThreshold = true;
+      }
       return;
     }
     onHoverMove?.(e);
   }
 
   function onPointerUp(e: PointerEvent): void {
+    if (e.pointerType === "touch" && activeTouches.has(e.pointerId)) {
+      activeTouches.delete(e.pointerId);
+      if (activeTouches.size < 2) lastPinchDistance = 0;
+      if (activeTouches.size === 1) {
+        // One finger remains: resume a plain single-finger pan from here,
+        // not from wherever that finger started — otherwise the camera would
+        // jump by the gap between the pinch's last midpoint and this
+        // finger's current position.
+        const remaining = [...activeTouches.values()][0]!;
+        isPanning = true;
+        momentum.stop();
+        lastPointer = remaining;
+        return;
+      }
+    }
     if (e.button === 2) {
       isErasing = false;
       return;
@@ -405,8 +596,17 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
     isPlacingDrag = false;
     if (!isPanning) return;
     isPanning = false;
-    canvas.style.cursor = "grab";
     momentum.release(performance.now());
+    // The deferred idle-mode click-vs-drag decision (see onPointerDown):
+    // only open the entity that was under the cursor at press time if this
+    // exact gesture never moved past the threshold — a real drag, even one
+    // that started on a building and released back over it, must not pop
+    // the building's window open.
+    if (e.pointerId === downPointerId && !pressMovedPastThreshold && pendingSelect !== undefined) {
+      selectCallback?.(pendingSelect);
+    }
+    downPointerId = undefined;
+    pendingSelect = undefined;
     try {
       canvas.releasePointerCapture(e.pointerId);
     } catch {
@@ -436,6 +636,28 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
   // right-click context menu must never appear over the canvas.
   const onContextMenu = (e: MouseEvent) => e.preventDefault();
 
+  // WASD camera pan: listens on window (not the canvas) so it works the
+  // same way the app layer's own 'r'/'q'/'e' shortcuts do — no need to
+  // click/focus the canvas first — and is guarded the same way they are:
+  // ignored while a text input has focus, and while any modifier is held
+  // (so Cmd+D bookmark, Ctrl+W close-tab, etc. pass through untouched).
+  const isTypingTarget = () =>
+    document.activeElement instanceof HTMLInputElement || document.activeElement instanceof HTMLTextAreaElement;
+  const onKeyDown = (e: KeyboardEvent) => {
+    const key = e.key.toLowerCase();
+    if (key !== "w" && key !== "a" && key !== "s" && key !== "d") return;
+    if (e.metaKey || e.ctrlKey || e.altKey || isTypingTarget()) return;
+    e.preventDefault();
+    heldKeys.add(key);
+  };
+  const onKeyUp = (e: KeyboardEvent) => {
+    heldKeys.delete(e.key.toLowerCase());
+  };
+  // A key can go down, then the window loses focus (alt-tab, DevTools)
+  // before its keyup ever fires — without this the camera would pan forever
+  // in whatever direction was held at the moment focus was lost.
+  const onBlur = () => heldKeys.clear();
+
   canvas.addEventListener("wheel", onWheel, { passive: false });
   canvas.addEventListener("pointerdown", onPointerDown);
   canvas.addEventListener("pointermove", onPointerMove);
@@ -446,6 +668,9 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
   // fire from a stray mousedown sequence pointerdown doesn't always cover.
   canvas.addEventListener("dragstart", onDragStart);
   canvas.addEventListener("contextmenu", onContextMenu);
+  window.addEventListener("keydown", onKeyDown);
+  window.addEventListener("keyup", onKeyUp);
+  window.addEventListener("blur", onBlur);
 
   rafHandle = requestAnimationFrame(tick);
 
@@ -535,7 +760,6 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
       }
       mode = newMode;
       if (mode.kind !== "place") ghostWorldPos = null;
-      canvas.style.cursor = mode.kind === "place" ? "crosshair" : "grab";
     },
     rotateGhost() {
       // Quarter-turn in the 16-way scheme (step 4 of 16) — matches
@@ -576,6 +800,9 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
       canvas.removeEventListener("pointercancel", onPointerUp);
       canvas.removeEventListener("dragstart", onDragStart);
       canvas.removeEventListener("contextmenu", onContextMenu);
+      window.removeEventListener("keydown", onKeyDown);
+      window.removeEventListener("keyup", onKeyUp);
+      window.removeEventListener("blur", onBlur);
     },
   };
 }
