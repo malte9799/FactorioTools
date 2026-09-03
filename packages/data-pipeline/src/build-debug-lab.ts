@@ -36,6 +36,12 @@ function belt(x: number, y: number, direction: number): Spec {
 function underground(x: number, y: number, direction: number, type: "input" | "output"): Spec {
   return { name: "underground-belt", x, y, direction, undergroundType: type };
 }
+function loader(x: number, y: number, direction: number, type: "input" | "output"): Spec {
+  return { name: "loader", x, y, direction, undergroundType: type };
+}
+function splitter(x: number, y: number, direction: number): Spec {
+  return { name: "splitter", x, y, direction };
+}
 function pipe(x: number, y: number): Spec {
   return { name: "pipe", x, y };
 }
@@ -177,111 +183,215 @@ function undergroundPipeSuite(): Block {
   };
 }
 
-/** Per facing: a plain underground entrance, an entrance side-loaded by a
- *  belt (swaps to the direction_in_side_loading sprite), a plain exit, and
- *  an exit side-loaded the same way — checking both the plain mouth art and
- *  the side-loading swap on both ends. */
-function undergroundBeltSideLoadSuite(): Block {
-  const dirs = [N, E, S, W];
-  // Each facing's left side, as a {step, facing a belt sitting there needs
-  // to point back into the underground's mouth}.
-  const leftFeed: Record<number, { dx: number; dy: number; faces: number }> = {
-    [N]: { dx: -1, dy: 0, faces: E },
-    [E]: { dx: 0, dy: -1, faces: S },
-    [S]: { dx: 1, dy: 0, faces: W },
-    [W]: { dx: 0, dy: 1, faces: N },
-  };
-  const colWidth = 3;
-  return {
-    label: "underground belt side-loading",
-    width: dirs.length * colWidth,
-    height: 8,
-    specs: (originX, originY) => {
-      const specs: Spec[] = [];
-      dirs.forEach((dir, i) => {
-        const cx = originX + i * colWidth + 1;
-        const { dx, dy, faces } = leftFeed[dir]!;
-
-        // Plain entrance, nothing feeding its side.
-        specs.push(underground(cx, originY + 1, dir, "input"));
-
-        // Entrance side-loaded: a belt facing into it from its left.
-        const inY = originY + 3;
-        specs.push(underground(cx, inY, dir, "input"));
-        specs.push(belt(cx + dx, inY + dy, faces));
-
-        // Plain exit.
-        specs.push(underground(cx, originY + 5, dir, "output"));
-
-        // Exit side-loaded the same way.
-        const outY = originY + 7;
-        specs.push(underground(cx, outY, dir, "output"));
-        specs.push(belt(cx + dx, outY + dy, faces));
-      });
-      return specs;
-    },
-  };
+/** Rotates a relative (dx,dy) offset — expressed for a North-facing
+ *  reference case — to match `dir`, and the facing that goes with it (also
+ *  expressed for North, then rotated the same way). Lets every belt-state
+ *  block below be written once, for North, and reused for all four facings
+ *  instead of a hand-derived per-direction table. */
+function rotate(dx: number, dy: number, dir: number): { dx: number; dy: number } {
+  const turns = dir / 4; // 0..3 quarter-turns
+  let x = dx, y = dy;
+  for (let i = 0; i < turns; i++) [x, y] = [-y, x];
+  return { dx: x, dy: y };
+}
+function rotateDir(baseDir: number, dir: number): number {
+  return (baseDir + dir) % 16;
 }
 
-/** An isolated belt (both caps), a 3-tile run (a cap at each end only), a
- *  right-hand curve (start cap on its side input), a T-merge (a side feed
- *  into a straight run, which draws as straight with no extra cap), and a
- *  side-load (a belt dropping onto the middle of an unrelated run from a
- *  direction that row doesn't actually draw its input from — the dropping
- *  belt still needs its own end cap, since the row underneath it isn't
- *  really connected) — for two facings. */
-function beltCapSuite(): Block {
-  const dirs = [N, E];
-  const colWidth = 7;
+/** Every belt-family neighbour-classification state, one column per
+ *  facing, grouped in rows: transport-belt shapes, splitter lane feeds,
+ *  underground mouths (plain/side-loaded/a real paired run), and loader
+ *  input/output. Each state is built for North and rotated into place, so
+ *  all four facings exercise the exact same relative geometry. */
+function beltStateSuite(): Block {
+  const dirs = [N, E, S, W];
+
+  /** Places `name` at `(cx,cy)` shifted by (dx,dy) rotated for `dir`, facing
+   *  `baseFacing` rotated the same way. */
+  const at = (
+    specs: Spec[],
+    name: "belt" | "underground-in" | "underground-out" | "splitter",
+    cx: number,
+    cy: number,
+    dx: number,
+    dy: number,
+    baseFacing: number,
+    dir: number,
+  ): void => {
+    const p = rotate(dx, dy, dir);
+    const facing = rotateDir(baseFacing, dir);
+    const x = cx + p.dx, y = cy + p.dy;
+    if (name === "belt") specs.push(belt(x, y, facing));
+    else if (name === "underground-in") specs.push(underground(x, y, facing, "input"));
+    else if (name === "underground-out") specs.push(underground(x, y, facing, "output"));
+    else specs.push(splitter(x, y, facing));
+  };
+
+  // ---- transport-belt states (built for North, i.e. baseFacing N) ----
+  const beltStates: { label: string; height: number; build: (specs: Spec[], cx: number, cy: number, dir: number) => void }[] = [
+    {
+      label: "isolated",
+      height: 3,
+      build: (specs, cx, cy, dir) => at(specs, "belt", cx, cy, 0, 1, N, dir),
+    },
+    {
+      label: "straight run",
+      height: 5,
+      build: (specs, cx, cy, dir) => {
+        for (let j = -1; j <= 1; j++) at(specs, "belt", cx, cy, 0, 1 + j, N, dir);
+      },
+    },
+    {
+      label: "curve, fed left",
+      height: 3,
+      build: (specs, cx, cy, dir) => {
+        at(specs, "belt", cx, cy, 0, 1, N, dir); // the curve itself
+        at(specs, "belt", cx, cy, -1, 1, E, dir); // west neighbour, facing east into it
+      },
+    },
+    {
+      label: "curve, fed right",
+      height: 3,
+      build: (specs, cx, cy, dir) => {
+        at(specs, "belt", cx, cy, 0, 1, N, dir);
+        at(specs, "belt", cx, cy, 1, 1, W, dir); // east neighbour, facing west into it
+      },
+    },
+    {
+      label: "curve, continues",
+      height: 3,
+      build: (specs, cx, cy, dir) => {
+        // A right-hand curve feeding a straight belt ahead of it — checks
+        // the curve's own end draws no cap once something continues past
+        // it, the same as a straight run's own interior tiles don't.
+        at(specs, "belt", cx, cy, 0, 1, N, dir);
+        at(specs, "belt", cx, cy, 1, 1, W, dir);
+        at(specs, "belt", cx, cy, 0, -1, N, dir);
+      },
+    },
+    {
+      label: "T-merge",
+      height: 5,
+      build: (specs, cx, cy, dir) => {
+        for (let j = -1; j <= 1; j++) at(specs, "belt", cx, cy, 0, 1 + j, N, dir);
+        at(specs, "belt", cx, cy, -1, 1, E, dir); // side feed into the middle tile
+      },
+    },
+    {
+      label: "side-load only",
+      height: 3,
+      build: (specs, cx, cy, dir) => {
+        // A 3-belt row (facing = baseFacing rotated + right-angle, drawn as
+        // West for North's own reference case) with a belt dropping onto
+        // its centre from the side that row doesn't actually feed from.
+        for (let j = -1; j <= 1; j++) at(specs, "belt", cx, cy, j, 1, E, dir);
+        at(specs, "belt", cx, cy, 0, 0, S, dir);
+      },
+    },
+  ];
+
+  // ---- splitter lane-feed states ----
+  const splitterStates: { label: string; height: number; build: (specs: Spec[], cx: number, cy: number, dir: number) => void }[] = [
+    {
+      label: "splitter, open",
+      height: 3,
+      build: (specs, cx, cy, dir) => at(specs, "splitter", cx, cy, 0, 1, N, dir),
+    },
+    {
+      label: "splitter, both fed",
+      height: 3,
+      build: (specs, cx, cy, dir) => {
+        // Splitter faces North (exits north), so its input side — and the
+        // lane feeds' own position — is behind it, one tile further south.
+        at(specs, "splitter", cx, cy, 0, 1, N, dir);
+        at(specs, "belt", cx, cy, -0.5, 2, N, dir);
+        at(specs, "belt", cx, cy, 0.5, 2, N, dir);
+      },
+    },
+    {
+      label: "splitter, one lane fed",
+      height: 3,
+      build: (specs, cx, cy, dir) => {
+        at(specs, "splitter", cx, cy, 0, 1, N, dir);
+        at(specs, "belt", cx, cy, -0.5, 2, N, dir);
+      },
+    },
+  ];
+
+  // ---- underground mouth states ----
+  const undergroundStates: { label: string; height: number; build: (specs: Spec[], cx: number, cy: number, dir: number) => void }[] = [
+    {
+      label: "entrance, plain",
+      height: 3,
+      build: (specs, cx, cy, dir) => at(specs, "underground-in", cx, cy, 0, 1, N, dir),
+    },
+    {
+      label: "exit, plain",
+      height: 3,
+      build: (specs, cx, cy, dir) => at(specs, "underground-out", cx, cy, 0, 1, N, dir),
+    },
+    {
+      label: "entrance, side-loaded",
+      height: 3,
+      build: (specs, cx, cy, dir) => {
+        at(specs, "underground-in", cx, cy, 0, 1, N, dir);
+        at(specs, "belt", cx, cy, -1, 1, E, dir);
+      },
+    },
+    {
+      label: "exit, side-loaded",
+      height: 3,
+      build: (specs, cx, cy, dir) => {
+        at(specs, "underground-out", cx, cy, 0, 1, N, dir);
+        at(specs, "belt", cx, cy, -1, 1, E, dir);
+      },
+    },
+    {
+      label: "paired run",
+      height: 5,
+      build: (specs, cx, cy, dir) => {
+        at(specs, "underground-in", cx, cy, 0, 2, N, dir);
+        at(specs, "underground-out", cx, cy, 0, 0, N, dir);
+      },
+    },
+  ];
+
+  // ---- loader states ----
+  const loaderStates: { label: string; height: number; build: (specs: Spec[], cx: number, cy: number, dir: number) => void }[] = [
+    {
+      label: "loader, input",
+      height: 3,
+      build: (specs, cx, cy, dir) => {
+        const p = rotate(0, 1, dir);
+        specs.push(loader(cx + p.dx, cy + p.dy, rotateDir(N, dir), "input"));
+      },
+    },
+    {
+      label: "loader, output",
+      height: 3,
+      build: (specs, cx, cy, dir) => {
+        const p = rotate(0, 1, dir);
+        specs.push(loader(cx + p.dx, cy + p.dy, rotateDir(N, dir), "output"));
+      },
+    },
+  ];
+
+  const allStates = [...beltStates, ...splitterStates, ...undergroundStates, ...loaderStates];
+  const colWidth = 4;
+  const rowHeight = Math.max(...allStates.map((s) => s.height)) + 1;
+
   return {
-    label: "belt start/end caps",
+    label: "belt-family neighbour states",
     width: dirs.length * colWidth,
-    height: 6,
+    height: allStates.length * rowHeight,
     specs: (originX, originY) => {
       const specs: Spec[] = [];
-      dirs.forEach((dir, i) => {
-        const cx = originX + i * colWidth;
-        specs.push(belt(cx, originY + 1, dir));
-        for (let j = 0; j < 3; j++) {
-          specs.push(dir === N ? belt(cx, originY + 3 + j, dir) : belt(cx + j, originY + 3, dir));
-        }
-        // A right-hand curve: fed from its right (a belt one tile that way,
-        // facing back into the curve tile — not just sitting adjacent to
-        // it), bending to exit the way `dir` points.
-        const curveX = cx + 2;
-        if (dir === N) {
-          specs.push(belt(curveX, originY, N));
-          specs.push(belt(curveX + 1, originY, W)); // east of the curve, facing west into it
-        } else {
-          specs.push(belt(curveX, originY + 2, E));
-          specs.push(belt(curveX, originY + 3, N)); // south of the curve, facing north into it
-        }
-        // A real T-merge: a straight feed from behind AND a side feed join
-        // one tile, which continues straight with no extra cap at the
-        // merge — and the segment above it, fed correctly from behind, gets
-        // no cap either.
-        const mergeX = cx + 4;
-        if (dir === N) {
-          specs.push(belt(mergeX, originY + 3, N));
-          specs.push(belt(mergeX, originY + 2, N));
-          specs.push(belt(mergeX, originY + 1, N));
-          specs.push(belt(mergeX - 1, originY + 2, E));
-        } else {
-          specs.push(belt(mergeX - 3, originY + 5, E));
-          specs.push(belt(mergeX - 2, originY + 5, E));
-          specs.push(belt(mergeX - 1, originY + 5, E));
-          specs.push(belt(mergeX - 2, originY + 4, S));
-        }
-        // A side-load: a 3-belt west-facing row, with a south-facing belt
-        // dropping onto the centre tile from above. The row's own input
-        // side is behind it (east), not north, so this isn't a real
-        // connection — the dropping belt still needs its own end cap.
-        const loadX = cx + 6;
-        specs.push(belt(loadX, originY + 2, W));
-        specs.push(belt(loadX - 1, originY + 2, W));
-        specs.push(belt(loadX - 2, originY + 2, W));
-        specs.push(belt(loadX - 1, originY, S));
-        specs.push(belt(loadX - 1, originY + 1, S));
+      allStates.forEach((state, row) => {
+        const cy = originY + row * rowHeight + 2;
+        dirs.forEach((dir, col) => {
+          const cx = originX + col * colWidth + 1;
+          state.build(specs, cx, cy, dir);
+        });
       });
       return specs;
     },
@@ -294,6 +404,27 @@ function layoutRow(blocks: Block[], startX: number, startY: number, gap: number)
   for (const block of blocks) {
     specs.push(...block.specs(x, startY));
     x += block.width + gap;
+  }
+  return specs;
+}
+
+/** Lays out blocks left to right, wrapping onto a new row once `maxWidth`
+ *  would be exceeded — for a suite with more blocks than comfortably fit
+ *  in one line. Each row's height is its tallest block. */
+function layoutGrid(blocks: Block[], startX: number, startY: number, gap: number, maxWidth: number): Spec[] {
+  const specs: Spec[] = [];
+  let x = startX;
+  let y = startY;
+  let rowHeight = 0;
+  for (const block of blocks) {
+    if (x !== startX && x + block.width > startX + maxWidth) {
+      x = startX;
+      y += rowHeight + gap;
+      rowHeight = 0;
+    }
+    specs.push(...block.specs(x, y));
+    x += block.width + gap;
+    rowHeight = Math.max(rowHeight, block.height);
   }
   return specs;
 }
@@ -431,12 +562,14 @@ function main(): void {
 
   // Connection suites sit below the catalogue, clear of its tallest row.
   const suitesY = Math.max(...catalogue.map((s) => s.y)) + 8;
-  const suites = layoutRow(
-    [wallConnectionSuite(), pipeConnectionSuite(), undergroundPipeSuite(), beltCapSuite(), undergroundBeltSideLoadSuite()],
+  const smallSuites = layoutRow(
+    [wallConnectionSuite(), pipeConnectionSuite(), undergroundPipeSuite()],
     0,
     suitesY,
     6,
   );
+  const beltSuiteY = Math.max(...smallSuites.map((s) => s.y)) + 8;
+  const suites = [...smallSuites, ...layoutGrid([beltStateSuite()], 0, beltSuiteY, 6, 400)];
 
   let nextNumber = 1;
   const merged: PlacedEntity[] = [...catalogue, ...suites].map((e) => ({
