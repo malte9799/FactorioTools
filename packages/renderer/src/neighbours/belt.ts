@@ -1,4 +1,4 @@
-import { leftOf, opposite, rightOf, step, toCardinal, type Cardinal, type NeighbourGrid } from "./grid.js";
+import { leftOf, opposite, rightOf, toCardinal, type Cardinal, type NeighbourGrid } from "./grid.js";
 import { Dir } from "./grid.js";
 
 /** Row indices into a belt_animation_set sheet's 20 rows. */
@@ -38,13 +38,10 @@ const END_CAP: Record<Cardinal, number> = {
 };
 
 /** A cap piece closing off one end of a belt run — its row's own art already
- *  sits toward the matching edge of the frame, and a small extra push the
- *  same way makes it read as poking past the tile edge instead of stopping
- *  flush at it. */
+ *  sits toward the matching edge of the frame, so it's drawn straight onto
+ *  the belt's own tile. */
 export interface BeltCap {
   row: number;
-  dx: number;
-  dy: number;
 }
 
 export interface BeltShape {
@@ -87,23 +84,15 @@ export function classifyBelt(
   const inputSide = curvesLeft ? left : curvesRight ? right : behind;
   const row = curvesLeft ? CURVE[facing].left : curvesRight ? CURVE[facing].right : STRAIGHT[facing];
 
-  // A cap closes an end nothing continues onto.
+  // A cap closes an end nothing continues onto. Its own art already sits at
+  // the matching edge of its frame (see the comment on START_CAP/END_CAP
+  // above), so it's drawn layered directly onto the belt's own tile, on top
+  // of the body — no extra offset toward the neighbour.
   const caps: BeltCap[] = [];
-  if (!occupied(inputSide)) caps.push({ row: START_CAP[facing], ...offsetTowards(inputSide) });
-  if (!occupied(facing)) caps.push({ row: END_CAP[facing], ...offsetTowards(facing) });
+  if (!occupied(inputSide)) caps.push({ row: START_CAP[facing] });
+  if (!occupied(facing)) caps.push({ row: END_CAP[facing] });
 
   return { row, caps };
 }
-
-/** A small nudge past the tile's own edge, toward the neighbour the cap
- *  faces — enough to read as poking out, not so much it overshoots onto a
- *  second cap's own art (the row's content already sits near that edge of
- *  its frame; see the comment on START_CAP/END_CAP above). */
-function offsetTowards(dir: Cardinal): { dx: number; dy: number } {
-  const { dx, dy } = step(dir);
-  return { dx: dx * CAP_OFFSET, dy: dy * CAP_OFFSET };
-}
-
-const CAP_OFFSET = 0.2;
 
 export { STRAIGHT as STRAIGHT_ROW };

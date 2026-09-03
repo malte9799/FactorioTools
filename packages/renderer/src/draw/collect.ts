@@ -182,14 +182,14 @@ export function collectEntity(
     const row = axisIndex(layer.row, frame);
     push(out, sprite, column, row, entity, layer.layer, order, alpha);
 
-    // Belt caps share the body's grid, a different row, and a small nudge
-    // past the tile edge they close off. A splitter's two belt-lane layers
-    // each carry their own lane's caps, in the same order splitterGraphics
-    // declared them (lane(-1), lane(1)).
+    // Belt caps share the body's own tile and grid, drawn after it so they
+    // layer on top. A splitter's two belt-lane layers each carry their own
+    // lane's caps, in the same order splitterGraphics declared them
+    // (lane(-1), lane(1)).
     if (layer.row?.by === "connection") {
       const caps = isSplitter ? frame.laneCaps[laneIndex++] ?? [] : frame.caps;
       for (const cap of caps) {
-        push(out, sprite, column, cap.row, entity, layer.layer, order, alpha, cap.dx, cap.dy);
+        push(out, sprite, column, cap.row, entity, layer.layer, order, alpha);
       }
     }
   });
