@@ -25,10 +25,20 @@ import { makeFloatingWindow } from "../../window-manager.js";
 import { buildPalette } from "./edit-palette.js";
 import { appendQualityOptions } from "./quality-options.js";
 import { buildPropertiesPanel } from "./edit-properties.js";
+import { buildLibrarySidebar } from "./library-sidebar.js";
 
 const TEMPLATE = `
   <div id="schematic" class="schematic-frame"></div>
   <div id="machine-tooltip" class="machine-tooltip gui-window" hidden></div>
+
+  <div id="library-window" class="gui-window docked-window" hidden>
+    <div class="gui-titlebar">
+      <span>Blueprint Library</span>
+      <span class="grip" aria-hidden="true"></span>
+      <button type="button" id="library-collapse-all" class="library-collapse-all" title="Collapse all categories">▸</button>
+    </div>
+    <div class="gui-body" id="library-body"></div>
+  </div>
 
   <div id="intake-window" class="gui-window floating-window" hidden>
     <div class="gui-titlebar">
@@ -145,6 +155,7 @@ const TEMPLATE = `
   </div>
 
   <div id="window-toolbar">
+    <button type="button" data-toggle="library-window">Library</button>
     <button type="button" data-toggle="intake-window">Blueprint Viewer</button>
     <button type="button" data-toggle="results-window">Rate Calculator</button>
     <button type="button" data-toggle="palette-window">Build</button>
@@ -196,6 +207,23 @@ export function mountBlueprintViewer(root: HTMLElement): () => void {
   const summary = $<HTMLDivElement>("#summary");
   const tooltip = $<HTMLDivElement>("#machine-tooltip");
 
+  // The library panel is docked (fixed left edge, positioned entirely by
+  // CSS) rather than draggable like every other .gui-window, so it gets a
+  // minimal show/hide/bringToFront stand-in instead of makeFloatingWindow —
+  // that helper unconditionally takes over inline left/top/position for
+  // dragging, which would fight the docked CSS position on every drag-free
+  // panel too. bringToFront is a no-op: a docked panel has no z-order to
+  // fight since nothing else occupies its screen edge.
+  const libraryWindowEl = $<HTMLDivElement>("#library-window");
+  const libraryWindow = {
+    el: libraryWindowEl,
+    show: () => { libraryWindowEl.hidden = false; },
+    hide: () => { libraryWindowEl.hidden = true; },
+    bringToFront: () => {},
+    setPosition: () => {},
+    destroy: () => {},
+  };
+
   const intakeWindow = makeFloatingWindow($("#intake-window"), { x: 16, y: 66 });
   const resultsWindow = makeFloatingWindow(resultsWindowEl, { x: Math.max(16, window.innerWidth - 460), y: 66 });
   const aboutWindow = makeFloatingWindow($("#about-window"), { x: 16, y: window.innerHeight - 120 });
@@ -213,7 +241,8 @@ export function mountBlueprintViewer(root: HTMLElement): () => void {
   // wireEditCallbacks' onSelect) and closes via its own close button, 'e',
   // or Escape, matching the real game's own "click a building to open its
   // GUI" convention rather than a manually-toggled panel.
-  const allWindows: Record<string, ReturnType<typeof makeFloatingWindow>> = {
+  const allWindows: Record<string, { el: HTMLElement; show(): void; hide(): void; bringToFront(): void }> = {
+    "library-window": libraryWindow,
     "intake-window": intakeWindow,
     "results-window": resultsWindow,
     "about-window": aboutWindow,
@@ -221,6 +250,10 @@ export function mountBlueprintViewer(root: HTMLElement): () => void {
   };
   for (const w of Object.values(allWindows)) w.hide();
   propertiesWindow.hide();
+  // The library starts open (unlike the others) — it's the entry point for
+  // picking a blueprint to work on, matching the reference Surfaces panel
+  // being a persistent, always-visible sidebar rather than a popup.
+  libraryWindow.show();
 
   const controller = new AbortController();
   const { signal } = controller;
@@ -361,6 +394,32 @@ export function mountBlueprintViewer(root: HTMLElement): () => void {
     renderer.loadBlueprint(entities);
     recalculate();
     persistEntities();
+  }
+
+  /** Clears the canvas to an empty blueprint — the Library sidebar's "+ New
+   *  blueprint" button. Clears the autosave slot directly (rather than
+   *  relying on persistEntities, which deliberately no-ops on an empty
+   *  entities list so a genuinely-empty in-progress edit never wipes a
+   *  previous autosave) so a reload doesn't resurrect the blueprint just
+   *  cleared. */
+  function startNew() {
+    blueprints = [];
+    entities = [];
+    nextEntityNumber = 1;
+    undoStack = [];
+    redoStack = [];
+    deselect();
+    renderer.loadBlueprint(entities);
+    recalculate();
+    picker.replaceChildren();
+    picker.hidden = true;
+    input.value = "";
+    setStatus("Started a new, empty blueprint.");
+    try {
+      localStorage.removeItem(AUTOSAVE_KEY);
+    } catch {
+      /* storage unavailable — not worth surfacing here */
+    }
   }
 
   // ---------- editing ----------
@@ -707,6 +766,33 @@ export function mountBlueprintViewer(root: HTMLElement): () => void {
       );
     }
   }
+
+  const library = buildLibrarySidebar($<HTMLDivElement>("#library-body"), {
+    onLoad(bpString) {
+      input.value = bpString;
+      load(bpString);
+    },
+    getCurrentBpString() {
+      if (!entities.length) return null;
+      const template = blueprints[0] ?? { item: "blueprint" as const, label: undefined, version: undefined };
+      return encodeBlueprintString({ blueprint: toBlueprint(entities, template) });
+    },
+    onNew: startNew,
+  });
+
+  // Titlebar shortcut for collapsing/expanding every category at once —
+  // toggles between the two states rather than tracking "is everything
+  // currently expanded" (which book folders opened/closed individually
+  // would make ambiguous); the glyph/title just reflect what the next click
+  // will do.
+  let libraryAllExpanded = true;
+  const libraryCollapseAllButton = $<HTMLButtonElement>("#library-collapse-all");
+  libraryCollapseAllButton.addEventListener("click", () => {
+    libraryAllExpanded = !libraryAllExpanded;
+    library.setAllExpanded(libraryAllExpanded);
+    libraryCollapseAllButton.textContent = libraryAllExpanded ? "▾" : "▸";
+    libraryCollapseAllButton.title = libraryAllExpanded ? "Collapse all categories" : "Expand all categories";
+  }, { signal });
 
   $("#import").addEventListener("click", async () => {
     try {
