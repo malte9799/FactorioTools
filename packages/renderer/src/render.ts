@@ -1,8 +1,8 @@
 import type { GameData, PlacedEntity, RenderCatalog } from "@factoriotools/engine";
-import { Camera, PanMomentum } from "./camera.js";
-import { SpriteAtlas } from "./spriteAtlas.js";
-import { IconAtlas } from "./iconAtlas.js";
-import { buildVisualLookup, effectiveFootprint, isUndergroundLike, makeConnectorPredicates, type ResolvedVisual } from "./entityLookup.js";
+import { Camera } from "./camera.js";
+import { getSharedSpriteAtlas } from "./spriteAtlas.js";
+import { getSharedIconAtlas } from "./iconAtlas.js";
+import { buildVisualLookup, effectiveFootprint, isPoleLike, isUndergroundLike, makeConnectorPredicates, type ResolvedVisual } from "./entityLookup.js";
 import { drawAltModeOverlay } from "./entityDraw.js";
 import { buildGrid, NeighbourGrid } from "./neighbours/grid.js";
 import type { PlatformBox } from "./neighbours/platform.js";
@@ -110,15 +110,15 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
   const ctx = canvas.getContext("2d")!;
   ctx.imageSmoothingEnabled = false; // crisp pixel art, matching the game's own look at high zoom
 
-  const atlas = new SpriteAtlas();
-  const iconAtlas = new IconAtlas();
+  const atlas = getSharedSpriteAtlas();
+  const iconAtlas = getSharedIconAtlas();
   const visualLookup = buildVisualLookup(data, catalog);
   const camera = new Camera({ x: 0, y: 0, pixelsPerTile: 32 });
-  const momentum = new PanMomentum();
 
   const connectors = makeConnectorPredicates(visualLookup);
 
   let entities: PlacedEntity[] = [];
+  let entityById = new Map<number, PlacedEntity>();
   let grid = new NeighbourGrid();
   let spatialIndex = new SpatialIndex([]);
   let platformBoxes: PlatformBox[] = [];
@@ -155,7 +155,7 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
   // covers a fixed fraction of the current view per second at any zoom,
   // rather than crawling across a zoomed-out map or overshooting a
   // zoomed-in one.
-  const KEYBOARD_PAN_SPEED = 600;
+  const KEYBOARD_PAN_SPEED = 900;
 
   // Two-finger touch: pinch to zoom, drag the midpoint to pan. Tracks every
   // currently-down touch pointer by id so the second finger landing can be
@@ -236,7 +236,11 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
       viewBottomRight.x + CULL_PADDING,
       viewBottomRight.y + CULL_PADDING,
     );
-    const visibleEntities = entities.filter((e) => visibleIds.has(e.entityNumber));
+    const visibleEntities: PlacedEntity[] = [];
+    for (const id of visibleIds) {
+      const e = entityById.get(id);
+      if (e) visibleEntities.push(e);
+    }
 
     const hasHighlight = highlight !== null;
     const alphaFor = (entity: PlacedEntity): number => {
@@ -409,8 +413,6 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
   function tick(): void {
     if (destroyed) return;
     if (!animationFrozen) animationFrame = (animationFrame + 1) % 1_000_000;
-    const step = momentum.step(16);
-    if (step) camera.panByScreenDelta(step.dx, step.dy);
     applyKeyboardPan(16);
     draw();
     rafHandle = requestAnimationFrame(tick);
@@ -478,10 +480,8 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
       if (activeTouches.size === 2) {
         // A second finger landing starts a pinch — cancel whatever the first
         // finger's own single-touch pan was doing so the two gestures don't
-        // fight (a pan delta computed from the wrong finger, momentum firing
-        // mid-pinch).
+        // fight (a pan delta computed from the wrong finger).
         isPanning = false;
-        momentum.stop();
         const geo = pinchGeometry()!;
         lastPinchDistance = geo.distance;
         lastPointer = geo.mid;
@@ -524,7 +524,6 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
     downScreenPos = { x: e.clientX, y: e.clientY };
 
     isPanning = true;
-    momentum.stop();
     lastPointer = { x: e.clientX, y: e.clientY };
     canvas.setPointerCapture(e.pointerId);
   }
@@ -561,7 +560,6 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
       const dx = e.clientX - lastPointer.x;
       const dy = e.clientY - lastPointer.y;
       camera.panByScreenDelta(dx, dy);
-      momentum.recordDelta(dx, dy, performance.now());
       lastPointer = { x: e.clientX, y: e.clientY };
       if (e.pointerId === downPointerId && !pressMovedPastThreshold) {
         const totalDx = e.clientX - downScreenPos.x;
@@ -584,7 +582,6 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
         // finger's current position.
         const remaining = [...activeTouches.values()][0]!;
         isPanning = true;
-        momentum.stop();
         lastPointer = remaining;
         return;
       }
@@ -596,7 +593,6 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
     isPlacingDrag = false;
     if (!isPanning) return;
     isPanning = false;
-    momentum.release(performance.now());
     // The deferred idle-mode click-vs-drag decision (see onPointerDown):
     // only open the entity that was under the cursor at press time if this
     // exact gesture never moved past the threshold — a real drag, even one
@@ -678,6 +674,7 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
    *  the camera alone, so edits never jump the view. */
   function rebuildIndices(newEntities: PlacedEntity[]): void {
     entities = newEntities;
+    entityById = new Map(entities.map((e) => [e.entityNumber, e]));
     grid = buildGrid(entities);
 
     const boxes: IndexedBox[] = [];
@@ -769,7 +766,7 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
       // use. A previous 8-way step here (+2 of 8) was inconsistent with
       // that and silently produced directions toCardinal() would then
       // misinterpret.
-      if (mode.kind !== "place") return;
+      if (mode.kind !== "place" || isPoleLike(mode.entityName)) return;
       ghostDirection = (ghostDirection + 4) % 16;
     },
     hitTest(clientX, clientY) {

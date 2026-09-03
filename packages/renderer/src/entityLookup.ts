@@ -102,6 +102,15 @@ export function isUndergroundLike(name: string): boolean {
   return name.endsWith("underground-belt") || name.includes("loader");
 }
 
+/** True for every electric-pole tier (small/medium/big-electric-pole,
+ *  substation). Poles must never be player-rotated: their facing is
+ *  meaningless today and will later be derived automatically from the wires
+ *  connected to them, so exposing a manual rotate would just be undone by
+ *  that future auto-orientation. */
+export function isPoleLike(name: string): boolean {
+  return name.endsWith("electric-pole") || name === "substation";
+}
+
 /** Family predicates for the neighbour classifiers, derived from which
  *  connector an entity declares. */
 export function makeConnectorPredicates(lookup: Map<string, ResolvedVisual>) {

@@ -17,7 +17,7 @@ import {
   TIMESCALE_FACTOR,
 } from "@factoriotools/engine";
 import type { CalculationResult, Timescale, Blueprint, PlacedEntity, QualityName, MachineGroup, ModuleStack, ThroughputContext, BottleneckSubgroup } from "@factoriotools/engine";
-import { mountRenderer, type BlueprintRenderer, type HighlightRole } from "@factoriotools/renderer";
+import { mountRenderer, isPoleLike, type BlueprintRenderer, type HighlightRole } from "@factoriotools/renderer";
 import { buildRecipeCard, renderResults, type ViewOptions } from "./legacy-view/panels.js";
 import { icon } from "./legacy-view/icons.js";
 import { makeFloatingWindow } from "../../window-manager.js";
@@ -577,6 +577,7 @@ export function mountBlueprintViewer(root: HTMLElement): () => void {
    *  Rotate button and the 'r' keyboard shortcut so both rotate a selected
    *  entity identically. */
   function rotateSelected() {
+    if (selectedEntity && isPoleLike(selectedEntity.name)) return;
     updateSelectedEntity((e) => {
       e.direction = (e.direction + 4) % 16;
     });

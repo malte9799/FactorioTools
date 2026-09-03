@@ -1,6 +1,7 @@
 /** Camera state: world-space center + a zoom expressed as screen pixels per
  *  world tile. Matches Factorio's own feel: smooth continuous zoom (not
- *  discrete levels), zoom-to-cursor, drag-to-pan with light momentum. */
+ *  discrete levels), zoom-to-cursor, drag-to-pan with no momentum — panning
+ *  stops the instant the pointer is released. */
 export interface CameraState {
   /** World-space (tile) coordinates the viewport is centered on. */
   x: number;
@@ -86,53 +87,3 @@ export class Camera {
   }
 }
 
-/** Rolling-average velocity from recent pointer samples, decayed each frame
- *  after release — a cheap "momentum scroll" that reads as game-like without
- *  a physics library. Velocity is in screen pixels/ms. */
-export class PanMomentum {
-  private samples: { t: number; dx: number; dy: number }[] = [];
-  private velocity = { x: 0, y: 0 };
-  private readonly sampleWindowMs = 100;
-  private readonly decayPerSecond = 0.92 ** 60; // matches the plan's "0.92 per frame at 60fps" feel
-
-  recordDelta(dx: number, dy: number, now: number): void {
-    this.samples.push({ t: now, dx, dy });
-    const cutoff = now - this.sampleWindowMs;
-    while (this.samples.length && this.samples[0]!.t < cutoff) this.samples.shift();
-  }
-
-  /** Call on pointerup: derive a launch velocity from the recent samples. */
-  release(now: number): void {
-    const cutoff = now - this.sampleWindowMs;
-    let dx = 0;
-    let dy = 0;
-    let span = 0;
-    for (const s of this.samples) {
-      if (s.t < cutoff) continue;
-      dx += s.dx;
-      dy += s.dy;
-    }
-    span = Math.max(1, (this.samples.at(-1)?.t ?? now) - (this.samples[0]?.t ?? now));
-    this.velocity = { x: dx / span, y: dy / span };
-    this.samples = [];
-  }
-
-  /** Advance momentum by `dtMs`, returning the screen-space delta to apply
-   *  this frame. Stops (returns null) once velocity decays below a
-   *  negligible threshold. */
-  step(dtMs: number): { dx: number; dy: number } | null {
-    const speed = Math.hypot(this.velocity.x, this.velocity.y);
-    if (speed < 0.01) return null;
-    const dx = this.velocity.x * dtMs;
-    const dy = this.velocity.y * dtMs;
-    const decay = Math.pow(this.decayPerSecond, dtMs / 1000);
-    this.velocity.x *= decay;
-    this.velocity.y *= decay;
-    return { dx, dy };
-  }
-
-  stop(): void {
-    this.velocity = { x: 0, y: 0 };
-    this.samples = [];
-  }
-}
