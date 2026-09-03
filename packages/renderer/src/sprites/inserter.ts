@@ -38,7 +38,11 @@ export function drawInserter(
 
   ctx.save();
   ctx.translate(entity.x, entity.y);
-  ctx.rotate((cardinal / 16) * 2 * Math.PI);
+  // The hand's own art extends downward (south) from the pivot at rotation
+  // 0, but an inserter's `direction` names the way it FACES — the drop
+  // side — so a north-facing (0) inserter needs its unrotated, south-
+  // pointing art turned a half turn to point north instead.
+  ctx.rotate(((cardinal + 8) / 16) * 2 * Math.PI);
 
   const baseW = tiles(g.handBase.frameWidth, g.handBase.scale);
   const baseSpan = Math.max(tiles(g.handBase.frameHeight, g.handBase.scale), REACH);
