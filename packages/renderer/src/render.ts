@@ -27,7 +27,7 @@ export interface HighlightRole {
  *  logic): it removes whatever's under the cursor after a short press-and-
  *  hold, then erases anything the cursor drags across immediately, exactly
  *  like the real game's mine-by-right-click. */
-export type InteractionMode = { kind: "idle" } | { kind: "place"; entityName: string };
+export type InteractionMode = { kind: "idle" } | { kind: "place"; entityName: string; direction?: number };
 
 export interface BlueprintRenderer {
   canvas: HTMLCanvasElement;
@@ -523,9 +523,15 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
       altMode = enabled;
     },
     setInteractionMode(newMode) {
-      // Entering place mode, or switching entity, resets the facing.
-      if (newMode.kind === "place" && (mode.kind !== "place" || mode.entityName !== newMode.entityName)) {
-        ghostDirection = 0;
+      if (newMode.kind === "place") {
+        // An explicit direction (the 'q' pipette carrying over the picked
+        // entity's own facing) always wins; otherwise entering place mode,
+        // or switching entity, resets the facing.
+        if (newMode.direction !== undefined) {
+          ghostDirection = newMode.direction;
+        } else if (mode.kind !== "place" || mode.entityName !== newMode.entityName) {
+          ghostDirection = 0;
+        }
       }
       mode = newMode;
       if (mode.kind !== "place") ghostWorldPos = null;

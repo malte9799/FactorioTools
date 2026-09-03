@@ -540,14 +540,14 @@ export function mountBlueprintViewer(root: HTMLElement): () => void {
    *  entity IS in hand (picked from the palette, or via the 'q' pipette
    *  below): left-click places it. Right-click erases in either mode
    *  (wired once in render.ts, not here). */
-  function setMode(newMode: "idle" | { place: string; quality?: QualityName }) {
+  function setMode(newMode: "idle" | { place: string; quality?: QualityName; direction?: number }) {
     if (newMode === "idle") {
       paletteSelection = null;
       renderer.setInteractionMode({ kind: "idle" });
     } else {
       paletteSelection = newMode.place;
       paletteQuality = newMode.quality ?? "normal";
-      renderer.setInteractionMode({ kind: "place", entityName: newMode.place });
+      renderer.setInteractionMode({ kind: "place", entityName: newMode.place, direction: newMode.direction });
     }
     // The yellow inward-fading border is the at-a-glance "you have
     // something in hand" cue, matching the real game's own cursor-ghost
@@ -804,10 +804,11 @@ export function mountBlueprintViewer(root: HTMLElement): () => void {
     e.preventDefault();
     const entity = hoveredEntityNumber !== undefined ? entities.find((en) => en.entityNumber === hoveredEntityNumber) : undefined;
     if (entity) {
-      // The pipette also picks up the hovered entity's own quality, not
-      // just its type — matches the real game's own smart-pipette
-      // behavior (it copies the exact item stack you're pointing at).
-      setMode({ place: entity.name, quality: entity.quality });
+      // The pipette also picks up the hovered entity's own quality and
+      // facing, not just its type — matches the real game's own
+      // smart-pipette behavior (it copies the exact item stack you're
+      // pointing at, cursor rotation included).
+      setMode({ place: entity.name, quality: entity.quality, direction: entity.direction });
       deselect();
     } else {
       setMode("idle");
