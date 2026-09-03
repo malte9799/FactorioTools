@@ -174,12 +174,15 @@ function undergroundPipeSuite(): Block {
 }
 
 /** An isolated belt (both caps), a 3-tile run (a cap at each end only), a
- *  right-hand curve (start cap on its side input), and a T-merge (a side
- *  feed into a straight run, which draws as straight with no extra cap) —
- *  for two facings. */
+ *  right-hand curve (start cap on its side input), a T-merge (a side feed
+ *  into a straight run, which draws as straight with no extra cap), and a
+ *  side-load (a belt dropping onto the middle of an unrelated run from a
+ *  direction that row doesn't actually draw its input from — the dropping
+ *  belt still needs its own end cap, since the row underneath it isn't
+ *  really connected) — for two facings. */
 function beltCapSuite(): Block {
   const dirs = [N, E];
-  const colWidth = 5;
+  const colWidth = 7;
   return {
     label: "belt start/end caps",
     width: dirs.length * colWidth,
@@ -192,28 +195,43 @@ function beltCapSuite(): Block {
         for (let j = 0; j < 3; j++) {
           specs.push(dir === N ? belt(cx, originY + 3 + j, dir) : belt(cx + j, originY + 3, dir));
         }
-        // A right-hand curve: fed from its right (east for a north-facing
-        // belt), bending to exit the way `dir` points.
+        // A right-hand curve: fed from its right (a belt one tile that way,
+        // facing back into the curve tile — not just sitting adjacent to
+        // it), bending to exit the way `dir` points.
         const curveX = cx + 2;
         if (dir === N) {
-          specs.push(belt(curveX, originY + 1, E));
           specs.push(belt(curveX, originY, N));
+          specs.push(belt(curveX + 1, originY, W)); // east of the curve, facing west into it
         } else {
-          specs.push(belt(curveX, originY + 2, N));
-          specs.push(belt(curveX + 1, originY + 2, E));
+          specs.push(belt(curveX, originY + 2, E));
+          specs.push(belt(curveX, originY + 3, N)); // south of the curve, facing north into it
         }
-        // A T-merge: a straight run with a side feed joining it — draws as
-        // plain straight, no extra cap where the side belt joins.
+        // A real T-merge: a straight feed from behind AND a side feed join
+        // one tile, which continues straight with no extra cap at the
+        // merge — and the segment above it, fed correctly from behind, gets
+        // no cap either.
         const mergeX = cx + 4;
         if (dir === N) {
+          specs.push(belt(mergeX, originY + 3, N));
           specs.push(belt(mergeX, originY + 2, N));
           specs.push(belt(mergeX, originY + 1, N));
           specs.push(belt(mergeX - 1, originY + 2, E));
         } else {
+          specs.push(belt(mergeX - 3, originY + 5, E));
           specs.push(belt(mergeX - 2, originY + 5, E));
           specs.push(belt(mergeX - 1, originY + 5, E));
           specs.push(belt(mergeX - 2, originY + 4, S));
         }
+        // A side-load: a 3-belt west-facing row, with a south-facing belt
+        // dropping onto the centre tile from above. The row's own input
+        // side is behind it (east), not north, so this isn't a real
+        // connection — the dropping belt still needs its own end cap.
+        const loadX = cx + 6;
+        specs.push(belt(loadX, originY + 2, W));
+        specs.push(belt(loadX - 1, originY + 2, W));
+        specs.push(belt(loadX - 2, originY + 2, W));
+        specs.push(belt(loadX - 1, originY, S));
+        specs.push(belt(loadX - 1, originY + 1, S));
       });
       return specs;
     },

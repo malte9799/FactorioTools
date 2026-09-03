@@ -65,13 +65,16 @@ export function classifyBelt(
   const left = leftOf(facing);
   const right = rightOf(facing);
 
+  // True when the neighbour in `dir` is belt-like AND actually faces back
+  // into this tile — not just that something sits there. A belt pointing
+  // some other way isn't a real connection (e.g. a south-facing belt
+  // dropping onto the middle of an unrelated west-facing row from the
+  // side: the row doesn't face back north, so the south-facing belt still
+  // needs its own end cap there, and the row draws as an unbroken straight
+  // run with no merge art of its own).
   const feedsFrom = (dir: Cardinal): boolean => {
     const n = grid.towards(x, y, dir);
     return n !== undefined && isBeltLike(n.name) && toCardinal(n.direction) === opposite(dir);
-  };
-  const occupied = (dir: Cardinal): boolean => {
-    const n = grid.towards(x, y, dir);
-    return n !== undefined && isBeltLike(n.name);
   };
 
   const fromLeft = feedsFrom(left);
@@ -86,14 +89,25 @@ export function classifyBelt(
   const inputSide = curvesLeft ? left : curvesRight ? right : behind;
   const row = curvesLeft ? CURVE[facing].left : curvesRight ? CURVE[facing].right : STRAIGHT[facing];
 
+  // Does the tile ahead of us actually take our output — i.e. is IT facing
+  // away from us in a straight line, the only shape that continues a run
+  // (a belt merely pointed some other way isn't fed by us, even sitting
+  // right there). Belt-like curves and drops in are all still `direction
+  // === facing` from directly ahead, since a curve or merge only bends
+  // around its OWN input, not around what's feeding INTO the tile ahead.
+  const feedsInto = (dir: Cardinal): boolean => {
+    const n = grid.towards(x, y, dir);
+    return n !== undefined && isBeltLike(n.name) && toCardinal(n.direction) === dir;
+  };
+
   // A cap closes an end nothing continues onto, shifted a full tile toward
   // the neighbour it covers. The reference renderer always shifts toward
   // the belt's own behind/ahead — even for a curve's start cap, whose input
   // is to a side — so this matches that rather than shifting toward
   // inputSide, which only differs from `behind` on a curve.
   const caps: BeltCap[] = [];
-  if (!occupied(inputSide)) caps.push({ row: START_CAP[facing], ...offsetTowards(behind) });
-  if (!occupied(facing)) caps.push({ row: END_CAP[facing], ...offsetTowards(facing) });
+  if (!feedsFrom(inputSide)) caps.push({ row: START_CAP[facing], ...offsetTowards(behind) });
+  if (!feedsInto(facing)) caps.push({ row: END_CAP[facing], ...offsetTowards(facing) });
 
   return { row, caps };
 }
