@@ -24,10 +24,20 @@ import { makeFloatingWindow } from "../../window-manager.js";
 import { buildPalette } from "./edit-palette.js";
 import { appendQualityOptions } from "./quality-options.js";
 import { buildPropertiesPanel } from "./edit-properties.js";
+import { buildLibrarySidebar } from "./library-sidebar.js";
 
 const TEMPLATE = `
   <div id="schematic" class="schematic-frame"></div>
   <div id="machine-tooltip" class="machine-tooltip gui-window" hidden></div>
+
+  <div id="library-window" class="gui-window docked-window" hidden>
+    <div class="gui-titlebar">
+      <span>Blueprint Library</span>
+      <span class="grip" aria-hidden="true"></span>
+      <button type="button" id="library-collapse-toggle" class="library-collapse-toggle" title="Collapse sidebar">◂</button>
+    </div>
+    <div class="gui-body" id="library-body"></div>
+  </div>
 
   <div id="intake-window" class="gui-window floating-window" hidden>
     <div class="gui-titlebar">
@@ -143,6 +153,7 @@ const TEMPLATE = `
   </div>
 
   <div id="window-toolbar">
+    <button type="button" data-toggle="library-window">Library</button>
     <button type="button" data-toggle="intake-window">Blueprint Viewer</button>
     <button type="button" data-toggle="results-window">Rate Calculator</button>
     <button type="button" data-toggle="palette-window">Build</button>
@@ -194,6 +205,19 @@ export function mountBlueprintViewer(root: HTMLElement): () => void {
   const summary = $<HTMLDivElement>("#summary");
   const tooltip = $<HTMLDivElement>("#machine-tooltip");
 
+  // The library panel is docked (fixed left edge, positioned entirely by
+  // CSS) rather than draggable like every other .gui-window, so it gets a
+  // minimal show/hide stand-in instead of makeFloatingWindow — that helper
+  // unconditionally takes over inline left/top/position for dragging, which
+  // would fight the docked CSS position.
+  const libraryWindowEl = $<HTMLDivElement>("#library-window");
+  const libraryWindow = {
+    el: libraryWindowEl,
+    show: () => { libraryWindowEl.hidden = false; },
+    hide: () => { libraryWindowEl.hidden = true; },
+    bringToFront: () => {},
+  };
+
   const intakeWindow = makeFloatingWindow($("#intake-window"), { x: 16, y: 66 });
   const resultsWindow = makeFloatingWindow(resultsWindowEl, { x: Math.max(16, window.innerWidth - 460), y: 66 });
   const aboutWindow = makeFloatingWindow($("#about-window"), { x: 16, y: window.innerHeight - 120 });
@@ -211,7 +235,8 @@ export function mountBlueprintViewer(root: HTMLElement): () => void {
   // wireEditCallbacks' onSelect) and closes via its own close button, 'e',
   // or Escape, matching the real game's own "click a building to open its
   // GUI" convention rather than a manually-toggled panel.
-  const allWindows: Record<string, ReturnType<typeof makeFloatingWindow>> = {
+  const allWindows: Record<string, { el: HTMLElement; show(): void; hide(): void; bringToFront(): void }> = {
+    "library-window": libraryWindow,
     "intake-window": intakeWindow,
     "results-window": resultsWindow,
     "about-window": aboutWindow,
@@ -219,6 +244,10 @@ export function mountBlueprintViewer(root: HTMLElement): () => void {
   };
   for (const w of Object.values(allWindows)) w.hide();
   propertiesWindow.hide();
+  // The library starts open (unlike the others) — it's the entry point for
+  // picking a blueprint to work on, matching the reference Surfaces panel
+  // being a persistent, always-visible sidebar rather than a popup.
+  libraryWindow.show();
 
   const controller = new AbortController();
   const { signal } = controller;
@@ -359,6 +388,32 @@ export function mountBlueprintViewer(root: HTMLElement): () => void {
     renderer.loadBlueprint(entities);
     recalculate();
     persistEntities();
+  }
+
+  /** Clears the canvas to an empty blueprint — the Library sidebar's "+ New
+   *  blueprint" button. Clears the autosave slot directly (rather than
+   *  relying on persistEntities, which deliberately no-ops on an empty
+   *  entities list so a genuinely-empty in-progress edit never wipes a
+   *  previous autosave) so a reload doesn't resurrect the blueprint just
+   *  cleared. */
+  function startNew(): void {
+    blueprints = [];
+    entities = [];
+    nextEntityNumber = 1;
+    undoStack = [];
+    redoStack = [];
+    deselect();
+    renderer.loadBlueprint(entities);
+    recalculate();
+    picker.replaceChildren();
+    picker.hidden = true;
+    input.value = "";
+    setStatus("Started a new, empty blueprint.");
+    try {
+      localStorage.removeItem(AUTOSAVE_KEY);
+    } catch {
+      /* storage unavailable — not worth surfacing here */
+    }
   }
 
   // ---------- editing ----------
@@ -696,6 +751,33 @@ export function mountBlueprintViewer(root: HTMLElement): () => void {
       );
     }
   }
+
+  buildLibrarySidebar($<HTMLDivElement>("#library-body"), {
+    onLoad(bpString) {
+      input.value = bpString;
+      load(bpString);
+    },
+    getCurrentBpString() {
+      if (!entities.length) return null;
+      const template = blueprints[0] ?? { item: "blueprint" as const, label: undefined, version: undefined };
+      return encodeBlueprintString({ blueprint: toBlueprint(entities, template) });
+    },
+    onNew: startNew,
+  });
+
+  // Titlebar button slides the whole docked sidebar out to a slim collapsed
+  // strip (not a category-collapse — that's the per-folder disclosure
+  // triangles inside the list, a separate concern) so the canvas gets more
+  // room without fully hiding the library the way the toolbar toggle does.
+  let libraryCollapsed = false;
+  const libraryWindowElForCollapse = $<HTMLDivElement>("#library-window");
+  const libraryCollapseToggle = $<HTMLButtonElement>("#library-collapse-toggle");
+  libraryCollapseToggle.addEventListener("click", () => {
+    libraryCollapsed = !libraryCollapsed;
+    libraryWindowElForCollapse.classList.toggle("is-collapsed", libraryCollapsed);
+    libraryCollapseToggle.textContent = libraryCollapsed ? "▸" : "◂";
+    libraryCollapseToggle.title = libraryCollapsed ? "Expand sidebar" : "Collapse sidebar";
+  }, { signal });
 
   $("#import").addEventListener("click", async () => {
     try {
