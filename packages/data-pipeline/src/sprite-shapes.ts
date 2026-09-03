@@ -110,13 +110,18 @@ const DIR4 = ["north", "east", "south", "west"] as const;
 
 /** Finds the {north,east,south,west} wrapper holding a whole sprite per
  *  facing, which may sit a level or two inside the field an entity names —
- *  an asteroid collector's is under graphics_set.animation. */
+ *  an asteroid collector's is under graphics_set.animation, a turret's own
+ *  rotating base under graphics_set.base_visualisation.animation. */
 function perDirectionSource(source: any): any {
   if (!source || typeof source !== "object") return undefined;
   if (DIR4.every((d) => source[d] !== undefined)) return source;
   for (const key of ["animation", "idle_animation", "picture", "pictures", "structure"]) {
     const found = perDirectionSource(source[key]);
     if (found) return found;
+  }
+  if (source.base_visualisation) {
+    const bv = Array.isArray(source.base_visualisation) ? source.base_visualisation[0] : source.base_visualisation;
+    return perDirectionSource(bv?.animation);
   }
   return undefined;
 }
