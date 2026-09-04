@@ -94,7 +94,12 @@ function resolveFrame(entity: PlacedEntity, visual: ResolvedVisual, ctx: Collect
       .filter((p) => entity.entityNumber === -1 || !ctx.fluidNetwork.isConnected(p))
       .map((p) => {
         const { dx, dy } = step(p.direction);
-        return { offsetX: p.x - x + dx, offsetY: p.y - y + dy, direction: p.direction };
+        // p.offsetX/Y is the point's own unrounded local offset from this
+        // entity's centre — using p.x/p.y (the rounded world tile) minus
+        // this entity's own independently-rounded x/y would drift whenever
+        // the two roundings don't land the same way (e.g. a south-facing
+        // pump's socket at entity.y + 0.5).
+        return { offsetX: p.offsetX + dx, offsetY: p.offsetY + dy, direction: p.direction };
       }),
   };
 
@@ -381,8 +386,16 @@ export function collectEntity(
 
     const sprite = spriteFor(layer, entity, frame);
     if (!sprite) return;
-    const column = axisIndex(layer.column, frame);
+    let column = axisIndex(layer.column, frame);
     const row = axisIndex(layer.row, frame);
+    // Turbo belt only: alternate tiles run their animation a half-cycle out
+    // of phase (matches the real game's own look at that speed — every
+    // frame in lockstep reads as a single strobing flicker instead of items
+    // visibly advancing). Every other belt tier keeps one shared phase.
+    if (entity.name === "turbo-transport-belt" && layer.column?.by === "animation") {
+      const parity = (Math.round(entity.x) + Math.round(entity.y)) % 2;
+      if (parity !== 0) column += Math.floor((sprite.columns ?? 1) / 2);
+    }
     // Only an underground/loader's own lane layer needs half-cropping (see
     // laneKeepSide's own doc comment) — a plain belt's identically-shaped
     // "connection" row layer is its actual full body and must stay whole.

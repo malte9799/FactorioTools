@@ -495,64 +495,94 @@ button.ghost:hover, select:hover { border-color: var(--frame-light); }
 }
 
 /* ---------- the game-panel chrome, shared by every floating window ---------- */
+/* Matches the real game's own GUI frame (confirmed against the user's own
+   reference screenshots of "Set ghost cursor" / "Select a recipe" /
+   entity-details windows): a thick raised tan-brown frame around a dark
+   inset body, a distinctly embossed titlebar strip, and square bevelled
+   icon buttons in the top-right rather than a bare text "X". */
 
 .gui-window {
-  border-radius: 4px;
+  border-radius: 6px;
   background: var(--frame);
-  border: 1px solid var(--border);
-  box-shadow: 0 1px 0 var(--bevel-light) inset, 0 8px 24px rgba(0, 0, 0, 0.45);
+  border: 2px solid var(--frame-dark);
+  box-shadow:
+    inset 0 1px 0 var(--bevel-light),
+    inset 0 0 12px 5px rgba(0, 0, 0, 0.35),
+    0 14px 32px rgba(0, 0, 0, 0.55),
+    0 4px 10px rgba(0, 0, 0, 0.35);
 }
 
 .gui-titlebar {
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 8px 10px;
+  padding: 10px 8px 10px 14px;
+  margin: 4px 4px 0;
   color: var(--gold-strong);
   font-family: var(--display);
-  font-weight: 600;
-  font-size: 13px;
-  letter-spacing: 0.02em;
+  font-weight: 700;
+  font-size: 17px;
+  letter-spacing: 0.01em;
+  background: linear-gradient(180deg, var(--frame-light) 0%, var(--frame) 60%);
+  border-radius: 2px;
+  box-shadow: 0 1px 0 var(--bevel-light) inset, 0 -1px 0 var(--bevel-dark) inset;
 }
 
 .gui-titlebar .grip {
   flex: 1;
-  height: 14px;
+  align-self: stretch;
+  margin: 2px 0;
   background-image: repeating-linear-gradient(
     90deg,
-    var(--bevel-light) 0 2px,
-    transparent 2px 5px
+    var(--bevel-dark) 0 2px,
+    var(--bevel-light) 2px 4px
   );
-  opacity: 0.5;
+  border-radius: 1px;
+  box-shadow: 0 1px 0 var(--bevel-light) inset, inset 0 1px 2px var(--bevel-dark);
+  opacity: 0.9;
 }
 
+.gui-header-button,
 .gui-close {
   flex: none;
-  width: 20px;
-  height: 20px;
+  width: 30px;
+  height: 30px;
   padding: 0;
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 11px;
+  font-size: 13px;
   line-height: 1;
-  color: var(--text-dim);
-  background: var(--panel-3);
-  border: 1px solid var(--border);
-  border-radius: 3px;
-  box-shadow: inset 0 1px 0 var(--bevel-light), inset 0 -1px 0 var(--bevel-dark);
+  color: var(--frame-dark);
+  background: var(--text-dim);
+  border: none;
+  border-radius: 2px;
+  box-shadow:
+    inset 0 2px 0 rgba(255, 255, 255, 0.3),
+    inset 0 -3px 5px rgba(0, 0, 0, 0.3),
+    inset 0 0 0 1px rgba(0, 0, 0, 0.35);
   cursor: pointer;
 }
 
-.gui-close:hover { color: var(--text); background: var(--deficit); border-color: var(--deficit); }
+.gui-header-button:hover { background: var(--text); }
+.gui-close {
+  color: var(--frame-dark);
+  background: var(--deficit);
+  box-shadow:
+    inset 0 0 0 2px #a8402b,
+    inset 0 2px 0 rgba(255, 255, 255, 0.22),
+    inset 0 -3px 5px rgba(0, 0, 0, 0.16);
+}
+.gui-close:hover { background: #ea9585; }
+.gui-close:active, .gui-header-button:active { box-shadow: inset 0 3px 6px rgba(0, 0, 0, 0.45); }
 
 .gui-body {
-  margin: 0 6px 6px;
+  margin: 6px;
   background: var(--panel);
-  border: 1px solid var(--border);
-  box-shadow: inset 0 1px 0 var(--bevel-dark), inset 0 0 0 1px rgba(255, 255, 255, 0.02);
+  border: 1px solid var(--frame-dark);
+  box-shadow: inset 0 2px 4px var(--bevel-dark), inset 0 0 0 1px rgba(255, 255, 255, 0.02);
   border-radius: 2px;
-  padding: 12px;
+  padding: 14px;
 }
 
 /* ---------- the drawing ---------- */
@@ -586,6 +616,21 @@ button.ghost:hover, select:hover { border-color: var(--frame-light); }
   box-shadow:
     inset 0 0 60px 10px rgba(255, 196, 64, 0.35),
     inset 0 0 140px 40px rgba(255, 196, 64, 0.12);
+}
+
+/* Follows the cursor while it's over the Build window with something
+   picked (place mode) — the canvas's own building ghost preview only makes
+   sense over the canvas itself, so this stands in for it while hovering
+   the palette, matching the real game's own cursor-stack icon. Positioned
+   via left/top in index.ts's pointermove handler, not transform, so the
+   small +offset reads as "next to" the cursor rather than jittering under
+   it. z-index above the floating windows (see makeFloatingWindow's own
+   zCounter, which starts at 1000) so it's never covered by the palette
+   itself. */
+.palette-cursor-icon {
+  position: fixed;
+  z-index: 2000;
+  pointer-events: none;
 }
 
 .machine-tooltip {
@@ -870,21 +915,26 @@ button.ghost:hover, select:hover { border-color: var(--frame-light); }
 .palette-tabs {
   display: flex;
   flex-wrap: wrap;
-  gap: 2px;
-  padding: 4px;
-  margin-bottom: 6px;
+  gap: 3px;
+  padding: 6px;
+  margin-bottom: 8px;
   background: var(--panel-2);
-  border: 1px solid var(--border);
+  border: 1px solid var(--frame-dark);
   border-radius: 3px;
-  box-shadow: inset 0 1px 2px var(--bevel-dark);
+  box-shadow: inset 0 2px 4px var(--bevel-dark);
 }
 
 .palette-tab {
-  padding: 3px;
-  border-radius: 3px;
-  border: 1px solid transparent;
-  background: transparent;
-  box-shadow: none;
+  width: 52px;
+  height: 52px;
+  padding: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 2px;
+  border: 1px solid var(--frame-dark);
+  background: var(--panel);
+  box-shadow: inset 0 1px 0 var(--bevel-light), inset 0 -2px 0 var(--bevel-dark);
   cursor: pointer;
 }
 
@@ -892,8 +942,8 @@ button.ghost:hover, select:hover { border-color: var(--frame-light); }
 
 .palette-tab.is-active {
   background: var(--panel-3);
-  border-color: var(--frame-light);
-  box-shadow: inset 0 1px 2px var(--bevel-dark);
+  border-color: var(--gold);
+  box-shadow: inset 0 2px 4px var(--bevel-dark), 0 0 0 1px rgba(255, 204, 128, 0.25);
 }
 
 .palette-tab .icon { pointer-events: none; }
@@ -917,60 +967,86 @@ button.ghost:hover, select:hover { border-color: var(--frame-light); }
   flex: 1;
   min-height: 0;
   display: grid;
-  grid-template-columns: repeat(var(--palette-columns, 10), 40px);
-  gap: 3px;
+  grid-template-columns: repeat(var(--palette-columns, 10), 42px);
+  gap: 2px;
   align-content: start;
-  padding: 2px;
+  padding: 6px;
+  background: var(--panel-2);
+  border: 1px solid var(--frame-dark);
+  border-radius: 2px;
+  box-shadow: inset 0 2px 4px var(--bevel-dark);
 }
 
 .palette-cell {
-  width: 40px;
-  height: 40px;
+  width: 42px;
+  height: 42px;
   padding: 2px;
   display: flex;
   align-items: center;
   justify-content: center;
+  background: var(--panel);
+  border: 1px solid var(--frame-dark);
+  border-radius: 1px;
+  box-shadow: inset 0 1px 3px var(--bevel-dark);
   cursor: pointer;
 }
 
+.palette-cell:hover { background: var(--panel-3); border-color: var(--frame-light); }
 .palette-cell:focus-visible { outline: 2px solid var(--gold); outline-offset: -2px; }
-.palette-cell .icon { --icon-size: 32px; pointer-events: none; }
+.palette-cell .icon { --icon-size: 34px; pointer-events: none; }
+
+/* Row-break spacer between subgroups (see edit-palette.ts's renderGrid) —
+   same footprint as a real slot so it pads the grid's auto-flow onto a new
+   row, styled as a plain empty slot (dimmed) rather than fully invisible,
+   matching how the real game's own build menu shows unused grid cells. */
+.palette-cell-filler {
+  width: 42px;
+  height: 42px;
+  background: var(--panel);
+  border: 1px solid var(--frame-dark);
+  border-radius: 1px;
+  box-shadow: inset 0 1px 3px var(--bevel-dark);
+  opacity: 0.35;
+}
 
 .palette-grid .empty { grid-column: 1 / -1; }
 
-/* Invisible row-break spacer between subgroups (see edit-palette.ts's
-   renderGrid) — same footprint as a real cell so it pads the grid's
-   auto-flow onto a new row without leaving a visible gap or border. */
-.palette-cell-filler {
-  width: 40px;
-  height: 40px;
-}
-
 /* Quality strip at the bottom of the build palette — matches the real
-   game's own 5-circle quality selector (normal through legendary).
-   Selects which quality newly-placed entities carry; building over an
-   existing entity with a different quality selected upgrades it in place
-   (see index.ts's placeEntity) instead of adding a duplicate. */
+   game's own 5-slot quality selector (normal through legendary), each a
+   small bevelled square slot holding a colour swatch, confirmed against the
+   user's own reference screenshots of "Set ghost cursor" / "Select a
+   recipe". Selects which quality newly-placed entities carry; building over
+   an existing entity with a different quality selected upgrades it in
+   place (see index.ts's placeEntity) instead of adding a duplicate. */
 .palette-quality-strip {
   display: flex;
-  gap: 6px;
-  padding-top: 8px;
+  gap: 4px;
+  padding-top: 10px;
   margin-top: 8px;
-  border-top: 1px solid var(--border);
+  border-top: 1px solid var(--frame-dark);
 }
 
 .quality-dot {
-  width: 22px;
-  height: 22px;
-  border-radius: 50%;
-  padding: 0;
-  border: 2px solid var(--border);
-  background: var(--panel-2);
-  box-shadow: inset 0 1px 2px var(--bevel-dark);
+  width: 28px;
+  height: 28px;
+  border-radius: 2px;
+  padding: 5px;
+  display: flex;
+  border: 1px solid var(--frame-dark);
+  background: var(--panel);
+  box-shadow: inset 0 1px 3px var(--bevel-dark);
   cursor: pointer;
 }
 
-.quality-dot.is-active { border-color: var(--gold-strong); box-shadow: 0 0 0 2px rgba(255, 214, 130, 0.35); }
+.quality-dot::before {
+  content: "";
+  width: 100%;
+  height: 100%;
+  border-radius: 50%;
+  background: inherit;
+}
+
+.quality-dot.is-active { border-color: var(--gold-strong); box-shadow: inset 0 1px 3px var(--bevel-dark), 0 0 0 1px rgba(255, 214, 130, 0.5); }
 
 .quality-normal { background: #8a8a8a; }
 .quality-uncommon { background: #4fd15a; }

@@ -27,9 +27,17 @@ function rotatePoint(point: PipeConnectionPoint, entityDirection: number): { x: 
 
 export interface WorldPipeConnection {
   entityNumber: number;
-  /** World tile the point sits on (entity centre + rotated local offset). */
+  /** World tile the point sits on (entity centre + rotated local offset,
+   *  rounded) — used for tile-for-tile connectivity matching. */
   x: number;
   y: number;
+  /** The rotated local offset itself, unrounded — entity.x/y is often a
+   *  half-integer (any even-width/height footprint) and offsetX/offsetY is
+   *  meant to be added straight back onto it for drawing, so rounding this
+   *  independently of that would drift a cover sprite off by up to a tile
+   *  whenever the two roundings don't land the same way. */
+  offsetX: number;
+  offsetY: number;
   /** Cardinal the connection stub points outward, after rotation. */
   direction: Cardinal;
 }
@@ -47,10 +55,16 @@ export class FluidNetwork {
   add(entity: PlacedEntity, connections: PipeConnectionPoint[]): void {
     for (const c of connections) {
       const rotated = rotatePoint(c, entity.direction);
+      // entity.x/y themselves may already be a half-integer (any
+      // even-width/height footprint, e.g. a pump facing east) — rounding
+      // them before adding the rotated offset would silently shift the
+      // point half a tile off, so round only the final sum for the tile key.
       const point: WorldPipeConnection = {
         entityNumber: entity.entityNumber,
-        x: Math.round(entity.x) + rotated.x,
-        y: Math.round(entity.y) + rotated.y,
+        x: Math.round(entity.x + rotated.x),
+        y: Math.round(entity.y + rotated.y),
+        offsetX: rotated.x,
+        offsetY: rotated.y,
         direction: rotated.direction,
       };
       this.points.push(point);

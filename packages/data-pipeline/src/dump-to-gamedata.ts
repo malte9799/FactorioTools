@@ -164,7 +164,20 @@ function machineAnimation(proto: any): any {
   for (const key of MACHINE_ANIMATION_KEYS) {
     if (gs?.[key]) return gs[key];
   }
-  return proto.on_animation ?? proto.horizontal_animation;
+  if (proto.on_animation) return proto.on_animation;
+  // Generators (steam-engine/steam-turbine) key their art by physical
+  // orientation instead of cardinal direction: horizontal_animation covers
+  // both east/west (the game mirrors it for west) and vertical_animation
+  // covers both north/south — neither is itself a {north,east,south,west}
+  // object, so without this, directionColumnGraphics's perDirectionSource
+  // never recognizes it as per-direction art and the whole entity renders
+  // one fixed (horizontal) pose regardless of its actual facing.
+  if (proto.horizontal_animation || proto.vertical_animation) {
+    const h = proto.horizontal_animation;
+    const v = proto.vertical_animation ?? h;
+    return { north: v, south: v, east: h, west: h };
+  }
+  return undefined;
 }
 
 const TRANSIENT_EFFECT_FILENAME = /scorchmark|scorch-mark|particles?\.png$/i;

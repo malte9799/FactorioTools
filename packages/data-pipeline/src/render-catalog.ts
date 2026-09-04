@@ -270,12 +270,20 @@ function artilleryTurretGraphics(proto: any): EntityGraphics | undefined {
   for (const l of unwrapAll(proto.base_picture)) {
     layers.push({ layer: l.shadow ? Layer.Shadow : Layer.Object, sprites: l.sprite });
   }
+  // cannon_base_shift's 3rd component is the cannon's own z-height above the
+  // turret's base platform (raised on its mount) — not baked into either
+  // sprite's own `shift`, unlike every other entity here. Without
+  // subtracting it from shift.y (z-up = screen-up = negative y), the
+  // cannon base/barrel draw a full tile too low, sitting on the ground
+  // instead of raised on the platform.
+  const zLift = proto.cannon_base_shift?.[2] ?? 0;
   for (const field of ["cannon_base_pictures", "cannon_barrel_pictures"]) {
     for (const l of unwrapAll(proto[field])) {
       const lineLength = l.sprite.columns ?? 1;
+      const [sx, sy] = l.sprite.shift ?? [0, 0];
       layers.push({
         layer: l.shadow ? Layer.Shadow : Layer.AboveObject,
-        sprites: l.sprite,
+        sprites: { ...l.sprite, shift: [sx, sy - zLift] },
         column: { by: "direction256", axis: "column", lineLength },
         row: { by: "direction256", axis: "row", lineLength },
       });
@@ -464,6 +472,16 @@ const ROTATES_FOOTPRINT = new Set([
   "fast-loader",
   "express-loader",
   "turbo-loader",
+  // pump is 1x2 (selection_box [-0.5,-1] to [0.5,1]), same non-square
+  // footprint issue as loader above.
+  "pump",
+  // boiler/heat-exchanger are 3x2 (selection_box [-1.5,-1] to [1.5,1]),
+  // same non-square footprint issue as loader/pump above.
+  "boiler",
+  "heat-exchanger",
+  // offshore-pump is ~1.2x1.98 (selection_box [-0.6,-1.49] to [0.6,0.49]),
+  // same non-square footprint issue as pump above.
+  "offshore-pump",
 ]);
 
 /** table -> how to pull graphics out of that table's prototypes. Kept as an

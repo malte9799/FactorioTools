@@ -252,16 +252,19 @@ export function mountBlueprintViewer(root: HTMLElement): () => void {
   const controller = new AbortController();
   const { signal } = controller;
 
+  function toggleWindow(target: { el: HTMLElement; show(): void; hide(): void; bringToFront(): void }): void {
+    if (target.el.hidden) {
+      target.show();
+      target.bringToFront();
+    } else {
+      target.hide();
+    }
+  }
+
   for (const button of root.querySelectorAll<HTMLButtonElement>("[data-toggle]")) {
     button.addEventListener("click", () => {
       const target = allWindows[button.dataset.toggle!];
-      if (!target) return;
-      if (target.el.hidden) {
-        target.show();
-        target.bringToFront();
-      } else {
-        target.hide();
-      }
+      if (target) toggleWindow(target);
     }, { signal });
   }
 
@@ -574,13 +577,20 @@ export function mountBlueprintViewer(root: HTMLElement): () => void {
    *  comment in packages/renderer/src/beltGraph.ts): every direction value
    *  this app produces or reads is 16-way, since that's the only scheme
    *  Factorio 2.0 blueprint exports use. Shared by the properties panel's
-   *  Rotate button and the 'r' keyboard shortcut so both rotate a selected
-   *  entity identically. */
-  function rotateSelected() {
-    if (selectedEntity && isPoleLike(selectedEntity.name)) return;
-    updateSelectedEntity((e) => {
-      e.direction = (e.direction + 4) % 16;
+   *  Rotate button and the 'r'/Shift+R keyboard shortcut (both the
+   *  currently-selected AND the merely-hovered-under-cursor path) so every
+   *  trigger rotates identically. `reverse` turns counter-clockwise
+   *  (Shift+R) instead of the default clockwise (r). */
+  function rotateEntity(target: PlacedEntity, reverse = false) {
+    if (isPoleLike(target.name)) return;
+    mutateEntity(target, (e) => {
+      e.direction = (e.direction + (reverse ? -4 : 4) + 16) % 16;
     });
+  }
+
+  function rotateSelected(reverse = false) {
+    if (!selectedEntity) return;
+    rotateEntity(selectedEntity, reverse);
   }
 
   let paletteSelection: string | null = null;
@@ -596,14 +606,14 @@ export function mountBlueprintViewer(root: HTMLElement): () => void {
    *  entity IS in hand (picked from the palette, or via the 'q' pipette
    *  below): left-click places it. Right-click erases in either mode
    *  (wired once in render.ts, not here). */
-  function setMode(newMode: "idle" | { place: string; quality?: QualityName }) {
+  function setMode(newMode: "idle" | { place: string; quality?: QualityName; direction?: number }) {
     if (newMode === "idle") {
       paletteSelection = null;
       renderer.setInteractionMode({ kind: "idle" });
     } else {
       paletteSelection = newMode.place;
       paletteQuality = newMode.quality ?? "normal";
-      renderer.setInteractionMode({ kind: "place", entityName: newMode.place });
+      renderer.setInteractionMode({ kind: "place", entityName: newMode.place, direction: newMode.direction });
     }
     // The yellow inward-fading border is the at-a-glance "you have
     // something in hand" cue, matching the real game's own cursor-ghost
@@ -635,13 +645,59 @@ export function mountBlueprintViewer(root: HTMLElement): () => void {
   wireEditCallbacks();
 
   const paletteBody = $<HTMLDivElement>("#palette-body");
+  let lastPalettePointer = { x: 0, y: 0 };
 
   function refreshPalette() {
     buildPalette(paletteBody, getData(), getRenderCatalog(), (entityName, quality) => {
       setMode({ place: entityName, quality });
       deselect();
+      // Picking a cell changes paletteSelection without the pointer itself
+      // moving — pointermove won't refire on its own, so the cursor icon
+      // needs this explicit nudge to pick up the newly-picked item/swap
+      // away from a stale one.
+      updateCursorIcon(lastPalettePointer.x, lastPalettePointer.y);
     });
   }
+
+  // Follows the cursor while it's over the Build window with something
+  // picked (place mode) — the canvas's own ghost preview only makes sense
+  // over the canvas itself, so this stands in for it while hovering the
+  // palette instead, matching the real game's own cursor-stack icon.
+  // Rebuilt on every pointermove entry into the window rather than kept
+  // live update-in-place, since paletteSelection can change while hovering
+  // (clicking a different cell) and the icon must follow suit.
+  const cursorIcon = document.createElement("div");
+  cursorIcon.className = "palette-cursor-icon";
+  cursorIcon.hidden = true;
+  document.body.appendChild(cursorIcon);
+  let cursorIconFor: string | null = null;
+
+  function updateCursorIcon(clientX: number, clientY: number): void {
+    if (!paletteSelection) {
+      cursorIcon.hidden = true;
+      cursorIconFor = null;
+      return;
+    }
+    if (cursorIconFor !== paletteSelection) {
+      cursorIcon.replaceChildren(icon(paletteSelection, paletteSelection, 28));
+      cursorIconFor = paletteSelection;
+    }
+    cursorIcon.hidden = false;
+    // Offset down-right of the cursor (matches the reference screenshot),
+    // not centred under it — a cursor-anchored icon centred on the pointer
+    // itself would obscure exactly what's being pointed at.
+    cursorIcon.style.left = `${clientX + 12}px`;
+    cursorIcon.style.top = `${clientY + 12}px`;
+  }
+
+  paletteWindow.el.addEventListener("pointermove", (e) => {
+    lastPalettePointer = { x: e.clientX, y: e.clientY };
+    updateCursorIcon(e.clientX, e.clientY);
+  }, { signal });
+  paletteWindow.el.addEventListener("pointerleave", () => {
+    cursorIcon.hidden = true;
+    cursorIconFor = null;
+  }, { signal });
 
   function renderPropertiesPanel() {
     if (!selectedEntity) {
@@ -841,35 +897,82 @@ export function mountBlueprintViewer(root: HTMLElement): () => void {
     else undo();
   }, { signal });
 
+  // Cmd/Ctrl+V anywhere on the tool pastes a blueprint string straight in,
+  // matching the real game's own "paste a blueprint to import it" gesture —
+  // no need to focus the textarea and click Import first. Guarded against
+  // firing while focus is in a text input so a normal paste there (the
+  // blueprint-string textarea itself included, or any future text field)
+  // keeps its native behavior instead of being hijacked. Uses the native
+  // paste event's own clipboardData rather than navigator.clipboard.readText
+  // — the latter needs a permission prompt the first time, the former
+  // doesn't (it's already a user-initiated paste gesture).
+  window.addEventListener("paste", (e) => {
+    if (document.activeElement instanceof HTMLInputElement || document.activeElement instanceof HTMLTextAreaElement) return;
+    const text = e.clipboardData?.getData("text/plain");
+    if (!text?.trim()) return;
+    e.preventDefault();
+    input.value = text;
+    load(text);
+  }, { signal });
+
   // 'r' rotates whatever you're currently "holding" — matches Factorio's
   // own convention. In place mode that's the not-yet-placed ghost (rotates
   // in the renderer, no edit/undo entry — nothing's been placed yet);
-  // otherwise, if a click has opened an entity's properties panel, that
-  // selected entity itself (goes through rotateSelected -> applyEdit, so
-  // it's undoable).
+  // otherwise a click-opened entity's own selection rotates (undoable, via
+  // rotateSelected); otherwise, matching the real game, whatever building is
+  // merely under the cursor right now rotates in place too, with no click
+  // needed first. Shift+R reverses the turn to counter-clockwise.
   window.addEventListener("keydown", (e) => {
     if (e.key.toLowerCase() !== "r" || e.metaKey || e.ctrlKey || e.altKey) return;
     if (document.activeElement instanceof HTMLInputElement || document.activeElement instanceof HTMLTextAreaElement) return;
+    // No preventDefault here — 'r' isn't a key the browser does anything
+    // with by default (no scroll/shortcut to suppress), and calling it
+    // anyway was making the OS-level "hide pointer while typing" cursor
+    // heuristic (macOS Trackpad/Mouse setting) trigger on every rotate,
+    // leaving the system cursor invisible until the next mousemove.
     if (paletteSelection) {
-      e.preventDefault();
-      renderer.rotateGhost();
+      renderer.rotateGhost(e.shiftKey);
     } else if (selectedEntity) {
-      e.preventDefault();
-      rotateSelected();
+      rotateSelected(e.shiftKey);
+    } else {
+      const hovered = hoveredEntityNumber !== undefined ? entities.find((en) => en.entityNumber === hoveredEntityNumber) : undefined;
+      if (hovered) rotateEntity(hovered, e.shiftKey);
     }
   }, { signal });
 
-  // 'e' and Escape both close the entity GUI, matching the real game's own
-  // "e opens/closes the currently-hovered/open entity" and Escape's general
-  // "back out of whatever's open" conventions. No-op when nothing's
-  // selected (there's nothing to close), and guarded against firing while
-  // focus is in a text input the same way every other shortcut here is.
+  // Escape closes the entity GUI, matching the real game's own "back out of
+  // whatever's open" convention. No-op when nothing's selected (there's
+  // nothing to close), and guarded against firing while focus is in a text
+  // input the same way every other shortcut here is.
   window.addEventListener("keydown", (e) => {
-    if (e.key !== "Escape" && e.key.toLowerCase() !== "e") return;
+    if (e.key !== "Escape") return;
     if (document.activeElement instanceof HTMLInputElement || document.activeElement instanceof HTMLTextAreaElement) return;
     if (!selectedEntity) return;
     e.preventDefault();
     deselect();
+  }, { signal });
+
+  // 'e' opens/closes the Build menu, matching the real game's own "e opens
+  // your inventory/crafting screen" convention — repurposed here for the
+  // build palette, this app's equivalent. Opens centered on screen each
+  // time (rather than remembering wherever it was last dragged to), since
+  // that's the one window meant to pop up front-and-center on demand
+  // instead of staying docked/positioned like the others.
+  window.addEventListener("keydown", (e) => {
+    if (e.key.toLowerCase() !== "e" || e.metaKey || e.ctrlKey || e.altKey) return;
+    if (document.activeElement instanceof HTMLInputElement || document.activeElement instanceof HTMLTextAreaElement) return;
+    e.preventDefault();
+    if (paletteWindow.el.hidden) {
+      // Measuring needs the element actually laid out — show() first
+      // (display:none has zero size), then centre using its real
+      // rendered dimensions, then bring to front.
+      paletteWindow.show();
+      const rect = paletteWindow.el.getBoundingClientRect();
+      paletteWindow.setPosition((window.innerWidth - rect.width) / 2, (window.innerHeight - rect.height) / 2);
+      paletteWindow.bringToFront();
+    } else {
+      paletteWindow.hide();
+    }
   }, { signal });
 
   // 'q' is the smart pipette AND the "clear cursor" gesture, matching the
@@ -880,17 +983,38 @@ export function mountBlueprintViewer(root: HTMLElement): () => void {
   // correction — Factorio itself overloads 'q' for both, it doesn't use
   // Escape for this). Reads hoveredEntityNumber (kept live by
   // onSchematicHover regardless of mode) rather than needing its own
-  // pointer tracking.
+  // pointer tracking. Also works over a hovered Build-menu cell — picks
+  // that entity the same way clicking it would — checked first since a
+  // palette cell under the cursor always takes priority over whatever's
+  // hovered on the canvas underneath the (possibly overlapping) window.
   window.addEventListener("keydown", (e) => {
     if (e.key.toLowerCase() !== "q" || e.metaKey || e.ctrlKey || e.altKey) return;
     if (document.activeElement instanceof HTMLInputElement || document.activeElement instanceof HTMLTextAreaElement) return;
-    e.preventDefault();
+    // No preventDefault — same reasoning as 'r': nothing browser-default to
+    // suppress, and calling it was triggering macOS's own "hide pointer
+    // while typing" heuristic, leaving the system cursor invisible until
+    // the next mousemove.
+    const hoveredCell = !paletteWindow.el.hidden
+      ? document.elementFromPoint(lastPalettePointer.x, lastPalettePointer.y)?.closest<HTMLElement>(".palette-cell")
+      : null;
+    if (hoveredCell?.dataset.entityName) {
+      setMode({ place: hoveredCell.dataset.entityName, quality: paletteQuality });
+      deselect();
+      updateCursorIcon(lastPalettePointer.x, lastPalettePointer.y);
+      return;
+    }
     const entity = hoveredEntityNumber !== undefined ? entities.find((en) => en.entityNumber === hoveredEntityNumber) : undefined;
-    if (entity) {
-      // The pipette also picks up the hovered entity's own quality, not
-      // just its type — matches the real game's own smart-pipette
-      // behavior (it copies the exact item stack you're pointing at).
-      setMode({ place: entity.name, quality: entity.quality });
+    if (entity && entity.name === paletteSelection) {
+      // Pipetting the same building the ghost is already set to is a
+      // second press on the same spot — toggle back to idle instead of
+      // re-picking the identical thing, so 'q' twice on one spot clears it.
+      setMode("idle");
+    } else if (entity) {
+      // The pipette also picks up the hovered entity's own quality and
+      // facing, not just its type — matches the real game's own
+      // smart-pipette behavior (it copies the exact item stack you're
+      // pointing at, ghost already facing the same way it was placed).
+      setMode({ place: entity.name, quality: entity.quality, direction: entity.direction });
       deselect();
     } else {
       setMode("idle");
@@ -1161,5 +1285,6 @@ export function mountBlueprintViewer(root: HTMLElement): () => void {
     aboutWindow.destroy();
     paletteWindow.destroy();
     propertiesWindow.destroy();
+    cursorIcon.remove();
   };
 }

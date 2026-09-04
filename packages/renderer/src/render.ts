@@ -50,11 +50,13 @@ export interface BlueprintRenderer {
    *  machines, module icons on machines/beacons that have any equipped. */
   setAltMode(enabled: boolean): void;
   /** Quarter-turns the ghost's facing while in 'place' mode (no-op
-   *  otherwise) — what the 'r' keyboard shortcut calls, mirroring
+   *  otherwise) — what the 'r'/Shift+R keyboard shortcut calls, mirroring
    *  Factorio's own "rotate what you're holding" convention. Uses the
    *  8-way scheme (step 2 of a full turn of 8), matching every other
-   *  direction value this renderer produces for freshly-placed entities. */
-  rotateGhost(): void;
+   *  direction value this renderer produces for freshly-placed entities.
+   *  `reverse` turns counter-clockwise (Shift+R) instead of the default
+   *  clockwise (R). */
+  rotateGhost(reverse?: boolean): void;
   hitTest(clientX: number, clientY: number): number | undefined;
   /** Fires on pointermove while not panning, with the entity under the
    *  cursor (or undefined). */
@@ -577,6 +579,11 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
       }
       return;
     }
+    // Only reached on a plain hover move (no pan/pinch in progress, which
+    // already track lastPointer themselves for their own delta math) —
+    // setMode's own "show the ghost immediately at the cursor" needs the
+    // actual live mouse position even when nothing else here touches it.
+    lastPointer = { x: e.clientX, y: e.clientY };
     onHoverMove?.(e);
   }
 
@@ -766,9 +773,19 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
         }
       }
       mode = newMode;
-      if (mode.kind !== "place") ghostWorldPos = null;
+      if (mode.kind !== "place") {
+        ghostWorldPos = null;
+      } else {
+        // Entering place mode (e.g. the 'q' pipette, which fires on a
+        // keypress rather than a pointer move) needs the ghost to draw at
+        // the cursor's current position right away — otherwise it stays
+        // invisible until the next actual mousemove recomputes
+        // ghostWorldPos, since that's normally the only place this gets set.
+        const rect = canvas.getBoundingClientRect();
+        ghostWorldPos = camera.screenToWorld(lastPointer.x - rect.left, lastPointer.y - rect.top, rect.width, rect.height);
+      }
     },
-    rotateGhost() {
+    rotateGhost(reverse) {
       // Quarter-turn in the 16-way scheme (step 4 of 16) — matches
       // toCardinal()'s own commitment to 16-way-only (see its doc comment
       // in beltGraph.ts): every direction value this renderer produces is
@@ -777,7 +794,7 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
       // that and silently produced directions toCardinal() would then
       // misinterpret.
       if (mode.kind !== "place" || isPoleLike(mode.entityName)) return;
-      ghostDirection = (ghostDirection + 4) % 16;
+      ghostDirection = (ghostDirection + (reverse ? -4 : 4) + 16) % 16;
     },
     hitTest(clientX, clientY) {
       const rect = canvas.getBoundingClientRect();

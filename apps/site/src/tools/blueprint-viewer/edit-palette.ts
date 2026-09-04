@@ -181,6 +181,11 @@ export function buildPalette(
       cell.className = "palette-cell";
       cell.title = entry.localised;
       cell.setAttribute("aria-label", entry.localised);
+      // Read by index.ts's 'q' pipette shortcut (elementFromPoint under the
+      // cursor -> closest .palette-cell -> this) to pick a hovered cell the
+      // same way clicking it would, without needing its own hover-tracking
+      // state duplicating what CSS :hover already knows.
+      cell.dataset.entityName = entry.name;
       cell.appendChild(icon(entry.name, entry.localised, 36));
       cell.addEventListener("click", () => onPick(entry.name, selectedQuality));
       grid.appendChild(cell);
@@ -198,7 +203,7 @@ export function buildPalette(
       tab.setAttribute("aria-label", group.localised);
       tab.setAttribute("role", "tab");
       tab.setAttribute("aria-selected", String(i === activeGroupIndex));
-      tab.appendChild(groupTabIcon(group, 32));
+      tab.appendChild(groupTabIcon(group, 42));
       tab.addEventListener("click", () => {
         activeGroupIndex = i;
         filterInput.value = "";

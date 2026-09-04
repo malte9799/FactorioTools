@@ -301,6 +301,12 @@ function fluidBoxesOf(proto: any): any[] {
   const boxes: any[] = [];
   if (proto.fluid_box) boxes.push(proto.fluid_box);
   if (Array.isArray(proto.fluid_boxes)) boxes.push(...proto.fluid_boxes.filter((b: any) => b && typeof b === "object"));
+  // boiler/heat-exchanger split their water input and steam output into two
+  // separate named boxes instead of one shared fluid_box/fluid_boxes — the
+  // output socket (boiler's north-facing steam connection) is otherwise
+  // silently dropped, leaving its pipe-cover patch permanently undrawn.
+  if (proto.input_fluid_box) boxes.push(proto.input_fluid_box);
+  if (proto.output_fluid_box) boxes.push(proto.output_fluid_box);
   return boxes;
 }
 
