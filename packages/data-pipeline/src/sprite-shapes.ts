@@ -1,10 +1,16 @@
 /** Reading Factorio's sprite declarations, which come in a handful of
  *  historically-grown shapes, into this project's flat Sprite type. */
-import { Layer, type EntityGraphics, type GraphicsLayer, type Sprite } from "@factoriotools/engine";
+import { Layer, type Dir4Name, type EntityGraphics, type GraphicsLayer, type PipeConnectionPoint, type Sprite } from "@factoriotools/engine";
 
 /** A leaf sprite declaration: {filename,width,height,...}. Some use a single
  *  square `size` instead of width/height, some split a long frame strip over
- *  `filenames` (only file 0 holds frame 0, which is all this pipeline draws). */
+ *  `filenames` — file 0 alone (holding frame 0) is enough for every caller
+ *  that only ever draws the idle/frame-0 pose, but a caller indexing deeper
+ *  into the grid (artillery-turret's 256-direction aiming sheet, split
+ *  `lines_per_file` rows per file, needs frames from every file, not just
+ *  the first) gets the full sheets/rowsPerSheet split instead — see
+ *  Sprite's own doc comment and collect.ts's push(), which picks the right
+ *  file from a row index at draw time. */
 export function toSprite(raw: any): Sprite | undefined {
   const filename = raw?.filename ?? raw?.filenames?.[0];
   if (!filename) return undefined;
@@ -22,6 +28,7 @@ export function toSprite(raw: any): Sprite | undefined {
     raw.variation_count ??
     raw.direction_count ??
     1;
+  const multiFile = Array.isArray(raw.filenames) && raw.filenames.length > 1 && typeof raw.lines_per_file === "number";
   return {
     sheet: filename,
     frameWidth: w,
@@ -31,6 +38,8 @@ export function toSprite(raw: any): Sprite | undefined {
     y: raw.y || undefined,
     shift: raw.shift,
     scale: raw.scale ?? 1,
+    sheets: multiFile ? raw.filenames : undefined,
+    rowsPerSheet: multiFile ? raw.lines_per_file : undefined,
   };
 }
 
@@ -128,13 +137,31 @@ function perDirectionSource(source: any): any {
 
 /** Stacks several art sources bottom to top, for entities whose pieces live
  *  under separate fields — a turret's base and its gun, a train stop's rail
- *  overlay, post and sign. */
-export function stackSources(sources: any[]): EntityGraphics | undefined {
+ *  overlay, post and sign.
+ *
+ *  Declaration order alone doesn't actually guarantee that stacking: the
+ *  renderer's paint order is layer tier first, then each sprite's own
+ *  y-shift, and only THEN array position (compareDrawCommands in
+ *  draw/commands.ts), so a later source can still lose to an earlier one at
+ *  the same Object tier if its shift happens to be smaller — confirmed by
+ *  hand in the layer-order debug tool (#/layer-debug): gun-turret's base
+ *  was covering its own raising gun piece. `promoteLaterSources` opts a
+ *  caller into guaranteeing the intended order: every non-shadow layer from
+ *  the second source onward is promoted to Layer.AboveObject. Off by
+ *  default (train-stop/artillery-turret's own multi-source stacking hasn't
+ *  been confirmed to need it) — turned on for the ammo/electric/fluid-
+ *  turret family, whose folded_animation gun piece must always sit above
+ *  its graphics_set base. */
+export function stackSources(sources: any[], promoteLaterSources = false): EntityGraphics | undefined {
   const layers: GraphicsLayer[] = [];
-  for (const source of sources) {
+  sources.forEach((source, i) => {
     const part = directionColumnGraphics(source);
-    if (part) layers.push(...part.layers);
-  }
+    if (!part) return;
+    for (const layer of part.layers) {
+      if (promoteLaterSources && i > 0 && layer.layer !== Layer.Shadow) layers.push({ ...layer, layer: Layer.AboveObject });
+      else layers.push(layer);
+    }
+  });
   return layers.length > 0 ? { layers } : undefined;
 }
 
@@ -264,12 +291,90 @@ export function beltGraphics(animationSet: any): EntityGraphics | undefined {
   };
 }
 
-/** Every sheet an entity's graphics reference, for the sprite extractor. */
+const DIR4_BY_VALUE: Record<number, Dir4Name> = { 0: "north", 4: "east", 8: "south", 12: "west" };
+
+/** Every fluid box a prototype declares, single or several (a chemical plant
+ *  has one `fluid_box`; a barrel-filling machine or turret can have several
+ *  under `fluid_boxes`) — flattened together since rendering never needs to
+ *  know which box a connection point belongs to. */
+function fluidBoxesOf(proto: any): any[] {
+  const boxes: any[] = [];
+  if (proto.fluid_box) boxes.push(proto.fluid_box);
+  if (Array.isArray(proto.fluid_boxes)) boxes.push(...proto.fluid_boxes.filter((b: any) => b && typeof b === "object"));
+  return boxes;
+}
+
+/** Every fluid-box connection point a prototype declares, in its own
+ *  unrotated (north-facing) local frame — straight off Factorio's own
+ *  `pipe_connections` position/direction pairs, which is exactly the frame
+ *  the fluid network graph's own rotation-by-placement-direction expects. */
+export function pipeConnectionsOf(proto: any): PipeConnectionPoint[] {
+  const out: PipeConnectionPoint[] = [];
+  for (const box of fluidBoxesOf(proto)) {
+    for (const c of box.pipe_connections ?? []) {
+      // A pipe-to-ground's second entry is its underground link to the
+      // paired piece, not a normal surface socket — it has no matching
+      // world-space neighbour to ever connect to and no cover art of its
+      // own, so counting it here would leave it permanently "unconnected"
+      // for no visual reason. Matches the reference renderer's own filter
+      // (only undefined/'normal' connection_type counts).
+      if (c.connection_type !== undefined && c.connection_type !== "normal") continue;
+      const direction = DIR4_BY_VALUE[c.direction ?? 0];
+      if (!direction || !Array.isArray(c.position)) continue;
+      out.push({ x: c.position[0], y: c.position[1], direction: c.direction });
+    }
+  }
+  return out;
+}
+
+/** `per: "pipe-covers"` layers from a fluid box's own `pipe_covers` field —
+ *  the small end-cap Factorio draws over a fluid connection point that isn't
+ *  actually plugged into anything, so an unconnected pipe socket doesn't
+ *  show as a bare hole. One sprite per cardinal facing per layer, reused at
+ *  every unconnected point sharing that facing (collect.ts draws one copy
+ *  per point, not per layer) — shadow and main split into their own layers
+ *  the same way every other multi-layer piece in this file is, so the
+ *  shadow still paints in its own Shadow-tier pass. Every fluid-box-bearing
+ *  prototype in the dump ships the same four
+ *  `pipe_covers.{north,east,south,west}` shape, so this takes the first box
+ *  that has one rather than merging across boxes. */
+const NEVER_COVERED = new Set(["pipe", "infinity-pipe"]);
+
+export function pipeCoversLayers(proto: any): GraphicsLayer[] {
+  // A plain pipe's own ending_up/ending_down/etc. variant sprite (picked by
+  // classifyPipe from its neighbours) already draws a closed, capped end —
+  // confirmed against the reference renderer's own generateCovers, which
+  // explicitly skips 'pipe' and 'infinity-pipe' for exactly this reason.
+  // Attaching the generic cover here too would double-cap every open end,
+  // including ends that already look correct, and — since a plain pipe's
+  // own connection points sit at local (0,0) rather than offset toward each
+  // side — would draw a cover on literally every side of every pipe tile
+  // regardless of neighbours.
+  if (NEVER_COVERED.has(proto.name)) return [];
+  const covers = fluidBoxesOf(proto).find((b) => b.pipe_covers)?.pipe_covers;
+  if (!covers) return [];
+  const sprites: Partial<Record<Dir4Name, Sprite>> = {};
+  const shadowSprites: Partial<Record<Dir4Name, Sprite>> = {};
+  for (const dir of ["north", "east", "south", "west"] as const) {
+    const { main, shadow } = unwrap(covers[dir]);
+    if (main) sprites[dir] = main;
+    if (shadow) shadowSprites[dir] = shadow;
+  }
+  const layers: GraphicsLayer[] = [];
+  if (Object.keys(shadowSprites).length > 0) layers.push({ layer: Layer.Shadow, sprites: shadowSprites, per: "pipe-covers" });
+  if (Object.keys(sprites).length > 0) layers.push({ layer: Layer.Object, sprites, per: "pipe-covers" });
+  return layers;
+}
+
+/** Every sheet an entity's graphics reference, for the sprite extractor —
+ *  every file in Sprite.sheets too, for a sprite split across several (see
+ *  toSprite's own doc comment), not just its fallback single `sheet`. */
 export function sheetsOf(graphics: EntityGraphics | undefined): string[] {
   const out: string[] = [];
+  const collect = (s: Sprite) => (s.sheets ? out.push(...s.sheets) : out.push(s.sheet));
   for (const layer of graphics?.layers ?? []) {
-    if ("per" in layer) out.push(...Object.values(layer.sprites).map((s) => s.sheet));
-    else out.push(layer.sprites.sheet);
+    if ("per" in layer) Object.values(layer.sprites).forEach(collect);
+    else collect(layer.sprites);
   }
   return out;
 }

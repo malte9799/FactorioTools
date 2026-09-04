@@ -1,14 +1,16 @@
 import { Layer, type GraphicsLayer, type PlacedEntity, type Sprite } from "@factoriotools/engine";
 import type { ResolvedVisual } from "../entityLookup.js";
-import { dir4Name, dir8Name, toCardinal, opposite, splitterLaneCells, Dir, type Cardinal, type NeighbourGrid } from "../neighbours/grid.js";
+import { dir4Name, dir8Name, toCardinal, opposite, splitterLaneCells, step, Dir, type Cardinal, type NeighbourGrid } from "../neighbours/grid.js";
 import { classifyPipe } from "../neighbours/pipe.js";
 import { classifyWall } from "../neighbours/wall.js";
 import { classifyBeltCell, undergroundSideLoaded, type BeltCap } from "../neighbours/beltGraph.js";
 import { classifyPlatform, type PlatformBox } from "../neighbours/platform.js";
+import type { FluidNetwork } from "../neighbours/fluid.js";
 import { PIXELS_PER_TILE, type DrawCommand } from "./commands.js";
 
 export interface CollectContext {
   grid: NeighbourGrid;
+  fluidNetwork: FluidNetwork;
   isPipeLike: (name: string) => boolean;
   isWallLike: (name: string) => boolean;
   isBeltLike: (name: string) => boolean;
@@ -22,6 +24,9 @@ export interface CollectContext {
 interface EntityFrame {
   /** 0..3, cardinal facing. */
   direction: number;
+  /** entity.direction unmodified (0..15) — for a layer keyed by more than
+   *  4-way facing, e.g. artillery-turret's direction256 axis. */
+  rawDirection: number;
   /** Belt connection row, or a pipe/wall variant name. */
   connectionIndex: number;
   connectionName: string;
@@ -48,6 +53,12 @@ interface EntityFrame {
    *  visibly pokes out past the structure sprite that's meant to cover it).
    *  Undefined for every non-underground entity, which needs no crop. */
   laneKeepSide?: Cardinal;
+  /** Every fluid-box connection point this entity has that the real fluid
+   *  network graph found no neighbour for — each drawn with its own
+   *  pipe-covers sprite, offset from entity centre by the point's own
+   *  rotated local position (world tile minus entity's own rounded centre,
+   *  matching push()'s existing offsetX/offsetY convention). */
+  unconnectedPipeCovers: { offsetX: number; offsetY: number; direction: Cardinal }[];
 }
 
 function resolveFrame(entity: PlacedEntity, visual: ResolvedVisual, ctx: CollectContext): EntityFrame {
@@ -55,6 +66,7 @@ function resolveFrame(entity: PlacedEntity, visual: ResolvedVisual, ctx: Collect
   const y = Math.round(entity.y);
   const frame: EntityFrame = {
     direction: Math.round(toCardinal(entity.direction) / 4) % 4,
+    rawDirection: entity.direction,
     connectionIndex: 0,
     connectionName: "",
     caps: [],
@@ -63,11 +75,32 @@ function resolveFrame(entity: PlacedEntity, visual: ResolvedVisual, ctx: Collect
     animation: ctx.animationFrame,
     undergroundIn: entity.undergroundType !== "output",
     sideLoaded: false,
+    // A cover sprite draws one full tile further out than the connection
+    // point itself, in the direction the connection faces — confirmed
+    // against the reference renderer's own pipe-cover logic
+    // (spriteDataBuilder.ts's generateFluidBoxConnections: offset2 =
+    // rotatePointBasedOnDir([0,-1], dir), added to the connection's own
+    // position). Without it the cover would sit centred on the socket
+    // itself instead of capping the stub that pokes out past it.
+    //
+    // A ghost (entityNumber -1, the placeholder id placeEntity/render.ts's
+    // own ghost object always uses) always shows every one of its own
+    // covers, connected or not — it isn't actually built yet, so there's no
+    // real pipe run to visually join into, and suppressing a cover next to
+    // an existing pipe would wrongly suggest the ghost is already plumbed
+    // in before the player has placed it.
+    unconnectedPipeCovers: ctx.fluidNetwork
+      .pointsFor(entity.entityNumber)
+      .filter((p) => entity.entityNumber === -1 || !ctx.fluidNetwork.isConnected(p))
+      .map((p) => {
+        const { dx, dy } = step(p.direction);
+        return { offsetX: p.x - x + dx, offsetY: p.y - y + dy, direction: p.direction };
+      }),
   };
 
   switch (visual.graphics?.connector) {
     case "pipe":
-      frame.connectionName = classifyPipe(x, y, ctx.grid, ctx.isPipeLike);
+      frame.connectionName = classifyPipe(x, y, ctx.grid, ctx.isPipeLike, ctx.fluidNetwork);
       break;
     case "wall":
       frame.connectionName = classifyWall(x, y, ctx.grid, ctx.isWallLike);
@@ -152,6 +185,15 @@ function axisIndex(axis: GraphicsLayer["column"], frame: EntityFrame): number {
       if (frame.sideLoaded && sideLoadIndex !== undefined) return sideLoadIndex;
       return frame.undergroundIn ? axis.inIndex : axis.outIndex;
     }
+    case "direction256": {
+      // entity.direction is 0..15 (16 placement facings); the sheet packs
+      // 256 frames (fine in-combat traverse, irrelevant for a blueprint's
+      // static pose) at lineLength per row — scale the placement facing
+      // onto that range and pick its nearest frame, then split into this
+      // row/column pair.
+      const frameIndex = Math.round((frame.rawDirection / 16) * 256) % 256;
+      return axis.axis === "column" ? frameIndex % axis.lineLength : Math.floor(frameIndex / axis.lineLength);
+    }
   }
 }
 
@@ -189,6 +231,7 @@ function push(
   capPriority = false,
   keepSide?: Cardinal,
   laneRecenter = 0,
+  yBias = 0,
 ): void {
   const column = rawColumn % Math.max(sprite.columns ?? 1, 1);
   const scale = sprite.scale ?? 1;
@@ -197,7 +240,18 @@ function push(
   const [shiftX, shiftY] = sprite.shift ?? [0, 0];
 
   let sx = (sprite.x ?? 0) + column * sprite.frameWidth;
-  let sy = (sprite.y ?? 0) + row * sprite.frameHeight;
+  // A grid split across several same-sized files (Sprite.sheets) picks its
+  // file from the row, then continues indexing within that file with the
+  // row made relative to it — sy itself never spans past one file's own
+  // height.
+  let sheet = sprite.sheet;
+  let sheetRow = row;
+  if (sprite.sheets && sprite.rowsPerSheet) {
+    const fileIndex = Math.floor(row / sprite.rowsPerSheet);
+    sheet = sprite.sheets[fileIndex] ?? sprite.sheets[sprite.sheets.length - 1]!;
+    sheetRow = row % sprite.rowsPerSheet;
+  }
+  let sy = (sprite.y ?? 0) + sheetRow * sprite.frameHeight;
   let sw = sprite.frameWidth;
   let sh = sprite.frameHeight;
   let dx = entity.x + offsetX + shiftX - dw / 2;
@@ -251,7 +305,7 @@ function push(
   }
 
   out.push({
-    sheet: sprite.sheet,
+    sheet,
     sx,
     sy,
     sw,
@@ -278,7 +332,7 @@ function push(
     // structure's shadow paints over the cap, not under it. The epsilon
     // would otherwise flip that specific ordering by winning the y-tie
     // before `order` is even compared.
-    y: entity.y + offsetY + shiftY + (capPriority ? CAP_PRIORITY_EPSILON : 0),
+    y: entity.y + offsetY + shiftY + (capPriority ? CAP_PRIORITY_EPSILON : 0) + yBias,
     order,
     alpha,
   });
@@ -312,6 +366,19 @@ export function collectEntity(
       return;
     }
 
+    // A pipe-cover patch draws once per unconnected fluid-box connection
+    // point, each at that point's own offset from entity centre — unlike
+    // every other `per` variant, which picks a single sprite for the whole
+    // entity, a storage tank can need up to 4 of these at once (one per
+    // corner the fluid network graph found no neighbour for).
+    if ("per" in layer && layer.per === "pipe-covers") {
+      for (const point of frame.unconnectedPipeCovers) {
+        const sprite = layer.sprites[dir4Name(point.direction)];
+        if (sprite) push(out, sprite, 0, 0, entity, layer.layer, order, alpha, point.offsetX, point.offsetY);
+      }
+      return;
+    }
+
     const sprite = spriteFor(layer, entity, frame);
     if (!sprite) return;
     const column = axisIndex(layer.column, frame);
@@ -325,7 +392,7 @@ export function collectEntity(
     // half-crop's own midpoint lands by default — recentring only for a
     // loader keeps an underground-belt's already-correct placement alone.
     const laneRecenter = isUndergroundLane && entity.name.includes("loader") ? 0.5 : 0;
-    push(out, sprite, column, row, entity, layer.layer, order, alpha, 0, 0, false, isUndergroundLane ? frame.laneKeepSide : undefined, laneRecenter);
+    push(out, sprite, column, row, entity, layer.layer, order, alpha, 0, 0, false, isUndergroundLane ? frame.laneKeepSide : undefined, laneRecenter, layer.ySortBias ?? 0);
 
     // Belt caps share the body's grid but sit a tile off toward the
     // neighbour they cover. A splitter's two belt-lane layers each carry

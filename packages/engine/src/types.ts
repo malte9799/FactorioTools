@@ -74,6 +74,15 @@ export interface Sprite {
   shift?: [number, number];
   /** On-screen tile size = pixel size * scale / 32. */
   scale?: number;
+  /** A grid too tall for one file, split across several same-sized files
+   *  (Factorio's own `filenames` + `lines_per_file`, e.g. artillery-
+   *  turret's 256-direction aiming sheet: 8 files of 8 rows each rather
+   *  than one 64-row image) — `sheet` is ignored and `sheets[Math.floor(row
+   *  / rowsPerSheet)]` used instead, with `row` itself taken mod
+   *  rowsPerSheet for the in-file offset. Undefined for every ordinary
+   *  single-file sprite, which uses plain `sheet`. */
+  sheets?: string[];
+  rowsPerSheet?: number;
 }
 
 /** Which paint pass a sprite belongs to. Every sprite in the world is sorted
@@ -114,7 +123,14 @@ export type FrameAxis =
   /** Advances with the renderer's clock. */
   | { by: "animation" }
   /** A neighbour-derived index, from the entity's `connector`. */
-  | { by: "connection" };
+  | { by: "connection" }
+  /** Artillery-turret's cannon rotates through a 256-entry aiming sheet
+   *  (packed `lineLength` frames per row) meant for fine in-combat traverse
+   *  — a blueprint only ever shows one of the 16 placement facings, so this
+   *  picks the single frame nearest that facing rather than animating
+   *  through the sheet: entity.direction (0..15) scaled onto 0..255, then
+   *  split into this row/column pair. */
+  | { by: "direction256"; axis: "column" | "row"; lineLength: number };
 
 /** One drawable piece of an entity.
  *
@@ -125,6 +141,20 @@ export type GraphicsLayer = {
   layer: Layer;
   column?: FrameAxis;
   row?: FrameAxis;
+  /** Nudges this layer's paint-order sort key within its own Layer tier,
+   *  for two pieces that must always order a specific way relative to each
+   *  other regardless of their individual sprite shifts — paint order sorts
+   *  by layer tier, then each sprite's own y-shift, and only THEN array
+   *  declaration order (compareDrawCommands in draw/commands.ts), so two
+   *  pieces sharing a tier order by whichever happens to have the larger
+   *  shiftY, not by which was declared first. Comfortably above float
+   *  noise, comfortably below the smallest real gap between two distinct
+   *  rows (1 world tile) — the same convention collect.ts's own
+   *  CAP_PRIORITY_EPSILON already uses for belt caps, generalised here for
+   *  reuse outside that one case (confirmed needed by spike:
+   *  big-mining-drill's top-nozzle.png must always draw under top.png
+   *  despite having the less-negative, "wins by default" shift). */
+  ySortBias?: number;
 } & (
   | { sprites: Sprite }
   /** Partial: some Factorio entities (e.g. electric-mining-drill's small
@@ -137,6 +167,14 @@ export type GraphicsLayer = {
   | { sprites: Partial<Record<Dir8Name, Sprite>>; per: "dir8" }
   /** Keyed by a connector's variant name (pipe/wall connection shapes). */
   | { sprites: Record<string, Sprite>; per: "connection" }
+  /** One cover sprite per cardinal facing, drawn once per unconnected
+   *  fluid-box connection point rather than baked into a single per-entity
+   *  shift — a storage tank's own 4 corner points each need their own world
+   *  offset, unlike every other `per` variant, whose sprites already carry
+   *  (or don't need) their own shift. Only the points the fluid network
+   *  graph finds unconnected are drawn; keyed by Dir4Name to match
+   *  `PipeConnectionPoint.direction`. */
+  | { sprites: Partial<Record<Dir4Name, Sprite>>; per: "pipe-covers" }
 );
 
 /** How an entity is drawn: a flat list of layers, drawn in array order within
@@ -178,6 +216,11 @@ export interface MachineProto {
   /** Rocket parts needed to fill the silo before it launches. Only set on
    *  rocket silos. */
   siloParts?: number;
+  /** Every fluid-box connection point this entity declares — see
+   *  RenderEntityProto's own doc comment. A machine like a boiler or steam
+   *  engine has a real fluid box too, so this lives on MachineProto as well
+   *  rather than only on the visual-only catalog. */
+  pipeConnections?: PipeConnectionPoint[];
   localised: string;
 }
 
@@ -250,12 +293,34 @@ export interface GameData {
 
 /** Entities that appear in blueprints but have no rate of their own — poles,
  *  pipes, chests, walls, lamps. Keyed by prototype name, like GameData. */
+/** One fluid-box connection point, in the entity's own unrotated (north-
+ *  facing) local frame — matching Factorio's own `fluid_box.pipe_connections`
+ *  position/direction pairs. `direction` is the cardinal the connection
+ *  stub points outward (0/4/8/12 = N/E/S/W); rotating the entity rotates
+ *  both `position` and `direction` together. The real fluid network graph
+ *  (packages/renderer/src/neighbours/fluid.ts) rotates these into world
+ *  space per placed entity and matches them up tile-for-tile against every
+ *  other entity's own connection points (plain pipes included) to decide
+ *  which points are actually connected — feeding both pipe-cover visibility
+ *  and, longer term, any other feature that needs to know the real fluid
+ *  network rather than just immediate 1-tile pipe neighbours. */
+export interface PipeConnectionPoint {
+  x: number;
+  y: number;
+  direction: 0 | 4 | 8 | 12;
+}
+
 export interface RenderEntityProto {
   name: string;
   tileFootprint: [number, number];
   graphics?: EntityGraphics;
   /** Swaps footprint width/height at east/west facings (splitters). */
   rotatesFootprint?: boolean;
+  /** Every fluid-box connection point this entity declares (all boxes
+   *  flattened together — rendering never needs to know which fluid box a
+   *  point belongs to, only where it is). Absent for entities with no fluid
+   *  box at all. */
+  pipeConnections?: PipeConnectionPoint[];
   localised: string;
 }
 

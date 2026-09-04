@@ -1088,3 +1088,137 @@ button.ghost:hover, select:hover { border-color: var(--frame-light); }
 @media (prefers-reduced-motion: reduce) {
   * { transition-duration: 0ms !important; }
 }
+
+/* Layer-order debug tool (#/layer-debug, dev aid — not linked from nav) */
+.layer-debug-root {
+  display: flex;
+  height: 100%;
+  width: 100%;
+}
+#ld-sidebar {
+  width: 380px;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px;
+  overflow-y: auto;
+  background: var(--panel);
+  border-right: 1px solid var(--border);
+}
+#ld-sidebar h2 {
+  margin: 8px 0 0;
+  font-size: 13px;
+  font-family: var(--display);
+  color: var(--gold);
+}
+#ld-sidebar h2:first-child { margin-top: 0; }
+.ld-hint { font-size: 11px; color: var(--text-dim); }
+#ld-filter {
+  background: var(--panel-2);
+  color: var(--text);
+  border: 1px solid var(--frame-light);
+  border-radius: 4px;
+  padding: 6px 8px;
+  font-size: 13px;
+}
+#ld-entity-list {
+  max-height: 160px;
+  overflow-y: auto;
+  border: 1px solid var(--frame-light);
+  border-radius: 4px;
+}
+.ld-entity-row {
+  padding: 5px 8px;
+  cursor: pointer;
+  font-size: 12px;
+  border-bottom: 1px solid var(--panel-2);
+}
+.ld-entity-row:hover { background: var(--panel-3); }
+.ld-entity-row.active { background: var(--frame); color: var(--gold-strong); }
+.ld-row { display: flex; gap: 6px; }
+.ld-row button {
+  background: var(--panel-2);
+  color: var(--text);
+  border: 1px solid var(--frame-light);
+  border-radius: 4px;
+  padding: 6px 12px;
+  cursor: pointer;
+  font-size: 13px;
+}
+.ld-row button:hover { background: var(--panel-3); }
+#ld-recent { display: flex; flex-wrap: wrap; gap: 6px; }
+.ld-chip {
+  padding: 4px 8px;
+  border: 1px solid var(--frame-light);
+  border-radius: 12px;
+  font-size: 11px;
+  cursor: pointer;
+  background: var(--panel-2);
+}
+.ld-chip:hover { background: var(--panel-3); }
+.ld-chip.active { background: var(--frame); color: var(--gold-strong); border-color: var(--gold); }
+#ld-layer-list { display: flex; flex-direction: column; gap: 6px; }
+.ld-layer-card {
+  border: 1px solid var(--frame-light);
+  border-radius: 6px;
+  padding: 8px;
+  background: var(--panel-2);
+  cursor: grab;
+  font-size: 11px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.ld-layer-card.dragging { opacity: 0.4; }
+.ld-layer-card.selected { border-color: var(--gold); background: var(--frame); }
+.ld-layer-name { font-weight: 600; word-break: break-all; color: var(--text); }
+.ld-layer-meta { color: var(--text-dim); display: flex; justify-content: space-between; align-items: center; gap: 6px; }
+.ld-layer-meta select {
+  background: var(--panel-3);
+  color: var(--text);
+  border: 1px solid var(--frame-light);
+  border-radius: 4px;
+  font-size: 11px;
+  padding: 2px 4px;
+}
+#ld-copy {
+  background: var(--panel-2);
+  color: var(--text);
+  border: 1px solid var(--frame-light);
+  border-radius: 4px;
+  padding: 6px 12px;
+  cursor: pointer;
+  font-size: 13px;
+  align-self: flex-start;
+}
+#ld-copy:hover { background: var(--panel-3); }
+#ld-json {
+  width: 100%;
+  height: 160px;
+  background: var(--panel-2);
+  color: var(--surplus);
+  border: 1px solid var(--frame-light);
+  border-radius: 4px;
+  font-family: var(--mono);
+  font-size: 10px;
+  padding: 6px;
+  resize: vertical;
+}
+#ld-canvas-wrap {
+  flex: 1;
+  position: relative;
+  overflow: hidden;
+  background: #201f1b;
+}
+/* Sits on top of mountRenderer's own canvas (a plain sibling <canvas>
+   inside the same wrap) purely to pulse the hovered layer card's sprite —
+   pointer-events:none so it never intercepts the real canvas's own
+   pan/zoom/click handling underneath it. */
+#ld-highlight-canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+}

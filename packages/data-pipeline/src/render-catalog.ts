@@ -9,6 +9,8 @@ import {
   directionColumnGraphics,
   layerOf,
   perDirection,
+  pipeConnectionsOf,
+  pipeCoversLayers,
   stackSources,
   unwrapAll,
   toSprite,
@@ -31,31 +33,42 @@ const DIR4 = ["north", "east", "south", "west"] as const;
 const DIR8 = ["north", "northeast", "east", "southeast", "south", "southwest", "west", "northwest"] as const;
 
 /** Pipes and heat-pipes ship one sprite per connection shape, named by which
- *  sides connect. */
-const PIPE_VARIANTS = [
-  "straight_vertical",
-  "straight_horizontal",
-  "corner_up_right",
-  "corner_up_left",
-  "corner_down_right",
-  "corner_down_left",
-  "t_up",
-  "t_down",
-  "t_left",
-  "t_right",
-  "cross",
-  "ending_up",
-  "ending_down",
-  "ending_left",
-  "ending_right",
-  "straight_vertical_single",
-] as const;
+ *  sides connect — classifyPipe (neighbours/pipe.ts) is what actually
+ *  decides which of these names a tile needs at draw time, so the keys here
+ *  must match ITS naming, not necessarily the source prototype's own field
+ *  names. Regular pipe's own fields already agree with classifyPipe's
+ *  corner_{up,down}_{left,right} order; heat-pipe's equivalent fields swap
+ *  it to corner_{left,right}_{up,down} — confirmed by spike against the raw
+ *  dump, not a typo in either prototype, just two different conventions —
+ *  so each PIPE_VARIANTS entry also lists heat-pipe's alternate field name
+ *  to fall back to when the canonical one isn't present. */
+const PIPE_VARIANTS: { key: string; altKey?: string }[] = [
+  { key: "straight_vertical" },
+  { key: "straight_horizontal" },
+  { key: "corner_up_right", altKey: "corner_right_up" },
+  { key: "corner_up_left", altKey: "corner_left_up" },
+  { key: "corner_down_right", altKey: "corner_right_down" },
+  { key: "corner_down_left", altKey: "corner_left_down" },
+  { key: "t_up" },
+  { key: "t_down" },
+  { key: "t_left" },
+  { key: "t_right" },
+  { key: "cross" },
+  { key: "ending_up" },
+  { key: "ending_down" },
+  { key: "ending_left" },
+  { key: "ending_right" },
+  // heat-pipe's own no-neighbours sprite is just called "single", not
+  // "straight_vertical_single" like regular pipe's — same
+  // different-convention story as the corner keys above.
+  { key: "straight_vertical_single", altKey: "single" },
+];
 
 function pipeGraphics(pictures: any): EntityGraphics | undefined {
   if (!pictures) return undefined;
   const sprites: Record<string, Sprite> = {};
-  for (const key of PIPE_VARIANTS) {
-    const raw = pictures[key];
+  for (const { key, altKey } of PIPE_VARIANTS) {
+    const raw = pictures[key] ?? (altKey ? pictures[altKey] : undefined);
     const sprite = toSprite(Array.isArray(raw) ? raw[0] : raw);
     if (sprite) sprites[key] = sprite;
   }
@@ -208,7 +221,11 @@ function splitterGraphics(proto: any): EntityGraphics | undefined {
  *  always drawn together at their animation's first (closed) frame since a
  *  blueprint shows an idle roboport. The hatch is two leaves — up and down —
  *  each sliding into place from its own side at frame 0; each field's own
- *  shift already positions its half, no rotation needed. */
+ *  shift already positions its half, no rotation needed. The doors must sit
+ *  visibly on top of the hatch opening they cover — Layer.AboveObject,
+ *  confirmed by hand in the layer-order debug tool (#/layer-debug): sharing
+ *  plain Layer.Object with `base` let the base win the y-sort and render
+ *  the doors underneath it instead. */
 function roboportGraphics(proto: any): EntityGraphics | undefined {
   const layers: GraphicsLayer[] = [];
   for (const l of unwrapAll(proto.base)) {
@@ -218,7 +235,7 @@ function roboportGraphics(proto: any): EntityGraphics | undefined {
   if (patch) layers.push({ layer: Layer.Object, sprites: patch });
   for (const field of ["door_animation_up", "door_animation_down"]) {
     const door = toSprite(proto[field]);
-    if (door) layers.push({ layer: Layer.Object, sprites: door });
+    if (door) layers.push({ layer: Layer.AboveObject, sprites: door });
   }
   return layers.length > 0 ? { layers } : undefined;
 }
@@ -237,6 +254,34 @@ function thrusterGraphics(proto: any): EntityGraphics | undefined {
   const pipes = animationListGraphics(gs?.working_visualisations);
   if (pipes) layers.push(...pipes.layers);
   return { layers };
+}
+
+/** artillery-turret's cannon (base + barrel) rotates through a 256-entry
+ *  aiming sheet — 64 rows of line_length frames, meant for fine in-combat
+ *  traverse — rather than the plain {north,east,south,west} split every
+ *  other rotatable entity here uses. A blueprint only shows one of the 16
+ *  placement facings, so this picks that facing's single nearest frame via
+ *  Layer.direction256 (see collect.ts's axisIndex) instead of animating
+ *  through the sheet. The turret's own base_picture platform is genuinely
+ *  static (no direction_count of its own — radially symmetric, doesn't need
+ *  to rotate) and stays a plain fixed sprite. */
+function artilleryTurretGraphics(proto: any): EntityGraphics | undefined {
+  const layers: GraphicsLayer[] = [];
+  for (const l of unwrapAll(proto.base_picture)) {
+    layers.push({ layer: l.shadow ? Layer.Shadow : Layer.Object, sprites: l.sprite });
+  }
+  for (const field of ["cannon_base_pictures", "cannon_barrel_pictures"]) {
+    for (const l of unwrapAll(proto[field])) {
+      const lineLength = l.sprite.columns ?? 1;
+      layers.push({
+        layer: l.shadow ? Layer.Shadow : Layer.AboveObject,
+        sprites: l.sprite,
+        column: { by: "direction256", axis: "column", lineLength },
+        row: { by: "direction256", axis: "row", lineLength },
+      });
+    }
+  }
+  return layers.length > 0 ? { layers } : undefined;
 }
 
 /** Gates only have two real orientations, so north aliases south and east
@@ -281,6 +326,23 @@ function perFacingGraphics(proto: any, field: string): EntityGraphics | undefine
   const sprites = perDirection(proto[field], DIR4);
   if (!sprites) return undefined;
   return { layers: [{ layer: Layer.Object, sprites, per: "dir4" }] };
+}
+
+/** A storage tank only has two real looks, not four: its `pictures.picture`
+ *  sheet's `frames: 2` isn't animation frame count despite the field name —
+ *  it's flipped tank/pipe-window art for the vertical (north/south) vs.
+ *  horizontal (east/west) placement, confirmed against the reference
+ *  renderer's own draw_storage_tank (frame = floor(dir/4) % frames, dir
+ *  0..15). Plain `directionColumnGraphics`/`isDirectionIndexed` would treat
+ *  this `frames` field as an animation length and always draw frame 0,
+ *  which is why the tank never appeared to rotate. */
+function storageTankGraphics(proto: any): EntityGraphics | undefined {
+  const { main, shadow } = unwrap(proto.pictures?.picture);
+  if (!main) return undefined;
+  const layers: GraphicsLayer[] = [];
+  if (shadow) layers.push({ layer: Layer.Shadow, sprites: shadow, column: { by: "direction" } });
+  layers.push({ layer: Layer.Object, sprites: main, column: { by: "direction" } });
+  return { layers };
 }
 
 /** A rail's five pieces stack bottom-to-top: ballast, path, ties, backplates,
@@ -410,7 +472,6 @@ const ROTATES_FOOTPRINT = new Set([
 const PICTURE_FIELD: Record<string, string> = {
   container: "picture",
   "logistic-container": "picture",
-  "storage-tank": "pictures",
   pump: "animations",
   "offshore-pump": "graphics_set",
   "solar-panel": "picture",
@@ -455,10 +516,6 @@ const PICTURE_FIELD: Record<string, string> = {
   "ammo-turret": "graphics_set",
   "electric-turret": "graphics_set",
   "fluid-turret": "graphics_set",
-  // artillery-turret has no folded_animation of its own — base_picture is
-  // its stationary base/platform only (no rotating cannon barrel, same
-  // "static pose" simplification already used for rocket-silo/inserters).
-  "artillery-turret": "base_picture",
   reactor: "picture",
   "linked-container": "picture",
   "infinity-container": "picture",
@@ -476,7 +533,6 @@ const STACKED_FIELDS: Record<string, string[]> = {
   "ammo-turret": ["graphics_set", "folded_animation"],
   "electric-turret": ["graphics_set", "folded_animation"],
   "fluid-turret": ["graphics_set", "folded_animation"],
-  "artillery-turret": ["base_picture", "cannon_base_pictures", "cannon_barrel_pictures"],
 };
 
 const SIMPLE_STATIC_TABLES = [...new Set([...Object.keys(PICTURE_FIELD), ...Object.keys(STACKED_FIELDS)])];
@@ -543,23 +599,38 @@ export function buildRenderCatalog(raw: Raw, locale: LocaleTables, version: stri
   // prototype type but have no placing item, so can't appear in a blueprint.
   const NOT_PLACEABLE = /^(crash-site-|factorio-logo-|factorio-space-age-logo|fulgoran-ruin-)/;
 
+  // Every prototype with a fluid box gets its connection points recorded and
+  // a pipe-covers layer appended, regardless of which adapter above built
+  // its base graphics — added once here rather than at each call site so a
+  // new fluid-box entity picks this up automatically instead of needing its
+  // own adapter updated too.
   const add = (proto: any, graphics: EntityGraphics | undefined, footprintOverride?: [number, number]) => {
     if (entities[proto.name] || NOT_PLACEABLE.test(proto.name)) return;
+    const pipeConnections = pipeConnectionsOf(proto);
+    const coverLayers = pipeCoversLayers(proto);
+    if (coverLayers.length > 0) {
+      graphics = { ...(graphics ?? { layers: [] }), layers: [...(graphics?.layers ?? []), ...coverLayers] };
+    }
     entities[proto.name] = {
       name: proto.name,
       tileFootprint: footprintOverride ?? footprintOf(proto),
       graphics,
       rotatesFootprint: ROTATES_FOOTPRINT.has(proto.name),
+      pipeConnections: pipeConnections.length > 0 ? pipeConnections : undefined,
       localised: locale.entityName.get(proto.name) ?? proto.name,
     };
   };
+
+  // These three tables' folded_animation gun piece must always draw above
+  // its graphics_set base — see stackSources's own promoteLaterSources doc.
+  const PROMOTE_GUN_ABOVE_BASE = new Set(["ammo-turret", "electric-turret", "fluid-turret"]);
 
   for (const table of SIMPLE_STATIC_TABLES) {
     const stacked = STACKED_FIELDS[table];
     const field = PICTURE_FIELD[table];
     for (const proto of Object.values(raw[table] ?? {})) {
       if (stacked) {
-        add(proto, stackSources(stacked.map((f) => proto[f])));
+        add(proto, stackSources(stacked.map((f) => proto[f]), PROMOTE_GUN_ABOVE_BASE.has(table)));
         continue;
       }
       // A prototype may not use its table's usual field — passive chests
@@ -569,6 +640,9 @@ export function buildRenderCatalog(raw: Raw, locale: LocaleTables, version: stri
     }
   }
 
+  for (const proto of Object.values(raw["storage-tank"] ?? {})) {
+    add(proto, storageTankGraphics(proto));
+  }
   for (const proto of Object.values(raw.pipe ?? {})) {
     add(proto, pipeGraphics(proto.pictures));
   }
@@ -592,6 +666,9 @@ export function buildRenderCatalog(raw: Raw, locale: LocaleTables, version: stri
   }
   for (const proto of Object.values(raw.roboport ?? {})) {
     add(proto, roboportGraphics(proto));
+  }
+  for (const proto of Object.values(raw["artillery-turret"] ?? {})) {
+    add(proto, artilleryTurretGraphics(proto));
   }
   for (const proto of Object.values(raw.thruster ?? {})) {
     add(proto, thrusterGraphics(proto));

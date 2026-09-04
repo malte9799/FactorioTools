@@ -5,6 +5,7 @@ import { collectEntity } from "./draw/collect.js";
 import { paint } from "./draw/paint.js";
 import { drawInserter } from "./sprites/inserter.js";
 import { NeighbourGrid } from "./neighbours/grid.js";
+import { FluidNetwork } from "./neighbours/fluid.js";
 import type { DrawCommand } from "./draw/commands.js";
 
 /** A small standalone canvas that draws exactly one entity, centered and
@@ -71,7 +72,7 @@ export function mountEntityPreview(container: HTMLElement, entityName: string, d
         commands,
         entity,
         visual,
-        { grid: new NeighbourGrid(), isPipeLike: never, isWallLike: never, isBeltLike: never, platformBoxes: [], animationFrame: 0 },
+        { grid: new NeighbourGrid(), fluidNetwork: new FluidNetwork(), isPipeLike: never, isWallLike: never, isBeltLike: never, platformBoxes: [], animationFrame: 0 },
         1,
       );
       paint(ctx, atlas, commands);

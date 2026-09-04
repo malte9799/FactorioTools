@@ -1,4 +1,4 @@
-import type { EntityGraphics, GameData, InserterGraphics, RenderCatalog } from "@factoriotools/engine";
+import type { EntityGraphics, GameData, InserterGraphics, PipeConnectionPoint, RenderCatalog } from "@factoriotools/engine";
 import { toCardinal, Dir } from "./neighbours/grid.js";
 
 /** One lookup over both GameData (entities with rates) and the RenderCatalog
@@ -16,6 +16,10 @@ export interface ResolvedVisual {
   moduleSlots: number;
   /** Alt mode draws a facing arrow for these. */
   showDirectionArrow: boolean;
+  /** Fluid-box connection points, in the entity's own unrotated local frame
+   *  — feeds the fluid network graph (neighbours/fluid.ts). Undefined for
+   *  every entity with no fluid box. */
+  pipeConnections?: PipeConnectionPoint[];
 }
 
 const EMPTY = {
@@ -36,6 +40,7 @@ export function buildVisualLookup(data: GameData, catalog: RenderCatalog): Map<s
       localised: m.localised,
       isMachine: true,
       moduleSlots: m.moduleSlots,
+      pipeConnections: m.pipeConnections,
     });
   }
   for (const b of Object.values(data.beacons)) {
@@ -74,6 +79,7 @@ export function buildVisualLookup(data: GameData, catalog: RenderCatalog): Map<s
       rotatesFootprint: e.rotatesFootprint,
       localised: e.localised,
       showDirectionArrow: e.name.includes("combinator"),
+      pipeConnections: e.pipeConnections,
     });
   }
   return lookup;

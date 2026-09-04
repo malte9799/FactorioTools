@@ -35,7 +35,7 @@ import type {
   Sprite,
 } from "@factoriotools/engine";
 import { loadLocale, localisedRecipeName, type LocaleTables } from "./locale.js";
-import { animationListGraphics, beltGraphics, directionColumnGraphics, sheetsOf, toSprite, unwrap, unwrapAll } from "./sprite-shapes.js";
+import { animationListGraphics, beltGraphics, directionColumnGraphics, layerOf, pipeConnectionsOf, pipeCoversLayers, sheetsOf, toSprite, unwrap, unwrapAll } from "./sprite-shapes.js";
 import { buildRenderCatalog } from "./render-catalog.js";
 import type { RenderCatalog } from "@factoriotools/engine";
 
@@ -182,27 +182,55 @@ const DIR4 = ["north", "east", "south", "west"] as const;
  *  "the drill doesn't rotate" since these pieces are the visually dominant
  *  chassis. Returned as `per: "dir4"` when a piece is actually direction-
  *  split, or a plain sprite when it isn't (so a single-direction piece still
- *  renders — better than dropping it for lack of the other 3 facings). */
-function alwaysDrawnPieces(workingVisualisations: any[] | undefined, baseSheet: string | undefined): GraphicsLayer[] {
-  // Two ordering quirks the renderer's own paint order (layer, then each
-  // command's y-shift, and only THEN array declaration order — see
-  // compareDrawCommands in draw/commands.ts) won't get right by array
-  // position alone, since these pieces all share Layer.Object and their
-  // differing shiftY values would otherwise decide the outcome instead:
-  //  - electric-mining-drill's own rotating arm/head assembly (declared for
-  //    every facing) must draw OVER its east/south/west-only ore-chute
-  //    overlay — confirmed against the real game — so it's promoted a whole
-  //    layer, to Layer.AboveObject.
-  //  - a piece named "*-front.*" (electric-mining-drill's own -front.png
-  //    pieces, Factorio's own naming for "goes in front of everything else
-  //    here") goes a layer above even that, on Layer.AboveObject pushed
-  //    after the arm/head, so it wins the y-tiebreak against it too.
+ *  renders — better than dropping it for lack of the other 3 facings).
+ *
+ *  `baseSheets` is every sheet the entity's own main body already draws (one
+ *  per facing when the body is direction-split, e.g. big-mining-drill) — a
+ *  working_visualisations entry naming one of those same sheets at the same
+ *  shift is Factorio re-declaring the base pose for its own tracking
+ *  purposes, not new art, and would otherwise draw as an exact duplicate on
+ *  top of the real body (confirmed by spike: big-mining-drill's own
+ *  {dir}-still.png is both the body AND one such entry). */
+/** Per-entity, per-filename-pattern paint tier overrides — the renderer's
+ *  own paint order is layer tier first, then each sprite's own y-shift, and
+ *  only THEN array declaration order (compareDrawCommands in
+ *  draw/commands.ts), so two pieces sharing a tier order by whichever
+ *  happens to have the larger shiftY, not by which this function declared
+ *  first. Every entry here was confirmed by hand against the real render in
+ *  the layer-order debug tool (#/layer-debug), not derived from the raw
+ *  prototype data, since nothing in the dump states an intended stacking
+ *  order for working_visualisations pieces.
+ *
+ *  Checked in array order, first match wins; a piece matching nothing here
+ *  falls through to the generic isFull/isPartial rule below. `ySortBias`
+ *  breaks a tie between two pieces landing on the very same tier — e.g.
+ *  big-mining-drill's top-nozzle and top both sit on AboveObject, but
+ *  nozzle's own shift is less negative than top's (so it would win the
+ *  y-sort and wrongly cover it); nozzle's small negative bias guarantees it
+ *  loses that tie regardless of either piece's real shift. */
+const TIER_OVERRIDES: { entity: string; pattern: RegExp; layer: Layer; ySortBias?: number }[] = [
+  // electric-mining-drill: arm/head assembly over its own chute overlay,
+  // "front" pieces over that.
+  { entity: "electric-mining-drill", pattern: /-front\.[^/]+$/, layer: Layer.AboveObject },
+  { entity: "electric-mining-drill", pattern: /electric-mining-drill(-horizontal)?\.[^/]+$/, layer: Layer.AboveObject },
+  // big-mining-drill: still/wheels/arm chassis at the bottom, support/front
+  // above that, top-nozzle above that, top above even the nozzle.
+  { entity: "big-mining-drill", pattern: /-still(-reel)?\.[^/]+$|-wheels\.[^/]+$|\/big-mining-drill-drill\.[^/]+$/, layer: Layer.LowerObject },
+  { entity: "big-mining-drill", pattern: /-support\.[^/]+$|-still-front\.[^/]+$/, layer: Layer.Object },
+  { entity: "big-mining-drill", pattern: /-top-nozzle\.[^/]+$/, layer: Layer.AboveObject, ySortBias: -0.01 },
+  { entity: "big-mining-drill", pattern: /-top\.[^/]+$/, layer: Layer.AboveObject },
+];
+
+function alwaysDrawnPieces(entityName: string, workingVisualisations: any[] | undefined, baseSheets: Set<string>): GraphicsLayer[] {
   const full: GraphicsLayer[] = [];
   const partial: GraphicsLayer[] = [];
   const top: GraphicsLayer[] = [];
-  const isFrontPiece = (sprites: Partial<Record<(typeof DIR4)[number], Sprite>> | Sprite): boolean => {
-    const sprite = "sheet" in sprites ? sprites : (sprites.north ?? sprites.east ?? sprites.south ?? sprites.west);
-    return /-front\.[^/]+$/.test(sprite?.sheet ?? "");
+  const bottom: GraphicsLayer[] = [];
+  const firstSprite = (sprites: Partial<Record<(typeof DIR4)[number], Sprite>> | Sprite): Sprite | undefined =>
+    "sheet" in sprites ? sprites : (sprites.north ?? sprites.east ?? sprites.south ?? sprites.west);
+  const tierOverride = (sprites: Partial<Record<(typeof DIR4)[number], Sprite>> | Sprite) => {
+    const sheet = firstSprite(sprites)?.sheet ?? "";
+    return TIER_OVERRIDES.find((t) => t.entity === entityName && t.pattern.test(sheet));
   };
   for (const entry of workingVisualisations ?? []) {
     // `always_draw` means "draw whenever this entry's own state is active",
@@ -219,6 +247,13 @@ function alwaysDrawnPieces(workingVisualisations: any[] | undefined, baseSheet: 
     const states: string[] | undefined = entry.draw_in_states;
     if (Array.isArray(states) && !states.includes("idle")) continue;
     if (!Array.isArray(states) && entry.always_draw !== true) continue;
+    // A moving-vs-stopped pair (big-mining-drill's own wheel-shift entries:
+    // one enabled only "during_transition", its twin only "during_
+    // waypoint_stop") is Factorio picking whichever matches the drill's
+    // current motion state — a blueprint's idle pose is the stopped one, so
+    // the transition-only entry would otherwise double up as a duplicate
+    // sprite drawn at the exact same shift.
+    if (entry.enabled_in_animated_shift_during_waypoint_stop === false) continue;
 
     if (DIR4.some((d) => entry[`${d}_animation`])) {
       // A direction's own `{dir}_animation` can hold more than one non-
@@ -237,7 +272,7 @@ function alwaysDrawnPieces(workingVisualisations: any[] | undefined, baseSheet: 
           });
       }
       const anyMain = slots[0]?.north ?? slots[0]?.east ?? slots[0]?.south ?? slots[0]?.west;
-      if (!anyMain || anyMain.sheet === baseSheet || TRANSIENT_EFFECT_FILENAME.test(anyMain.sheet)) continue;
+      if (!anyMain || baseSheets.has(anyMain.sheet) || TRANSIENT_EFFECT_FILENAME.test(anyMain.sheet)) continue;
       // Some pieces (electric-mining-drill's east/south/west-only ore-chute
       // overlay) never had north art to begin with — Factorio simply doesn't
       // draw that piece facing north, not "art is missing". Pushed as a
@@ -246,18 +281,21 @@ function alwaysDrawnPieces(workingVisualisations: any[] | undefined, baseSheet: 
       // everywhere for lack of the other one/two.
       const isFull = DIR4.every((d) => slots[0]?.[d]);
       for (const sprites of slots) {
-        if (isFrontPiece(sprites)) top.push({ layer: Layer.AboveObject, sprites, per: "dir4" });
-        else if (isFull) full.push({ layer: Layer.AboveObject, sprites, per: "dir4" });
+        const override = tierOverride(sprites);
+        if (override) (override.layer === Layer.AboveObject ? top : override.layer === Layer.LowerObject ? bottom : partial).push({ layer: override.layer, sprites, per: "dir4", ySortBias: override.ySortBias });
+        else if (isFull) full.push({ layer: Layer.Object, sprites, per: "dir4" });
         else partial.push({ layer: Layer.Object, sprites, per: "dir4" });
       }
       continue;
     }
 
     const { main } = unwrap(entry.north_animation ?? entry.animation);
-    if (!main || main.sheet === baseSheet || TRANSIENT_EFFECT_FILENAME.test(main.sheet)) continue;
-    (isFrontPiece(main) ? top : full).push({ layer: Layer.AboveObject, sprites: main });
+    if (!main || baseSheets.has(main.sheet) || TRANSIENT_EFFECT_FILENAME.test(main.sheet)) continue;
+    const override = tierOverride(main);
+    if (override) (override.layer === Layer.AboveObject ? top : override.layer === Layer.LowerObject ? bottom : partial).push({ layer: override.layer, sprites: main, ySortBias: override.ySortBias });
+    else partial.push({ layer: Layer.Object, sprites: main });
   }
-  return [...partial, ...full, ...top];
+  return [...bottom, ...partial, ...full, ...top];
 }
 
 /** pumpjack's own rotating baseplate (the pipe-connector piece its horsehead
@@ -291,20 +329,43 @@ function pumpjackBaseGraphics(proto: any): GraphicsLayer[] {
   return layers;
 }
 
+/** Entities whose own base body (the plain Object-tier layer
+ *  directionColumnGraphics builds from graphics_set's animation/
+ *  idle_animation) must sit BELOW its other always-drawn pieces instead of
+ *  among them — confirmed by hand in the layer-order debug tool
+ *  (#/layer-debug): electromagnetic-plant's own base plate was rendering
+ *  over the machine's body instead of under it. */
+const BODY_TIER_OVERRIDES: Record<string, Layer> = {
+  "big-mining-drill": Layer.LowerObject,
+  "electromagnetic-plant": Layer.LowerObject,
+};
+
 function graphicsForMachine(proto: any): EntityGraphics | undefined {
   const graphics = directionColumnGraphics(machineAnimation(proto));
   if (!graphics) return undefined;
 
-  const body = graphics.layers[graphics.layers.length - 1]!;
-  const baseSheet = "per" in body ? undefined : body.sprites.sheet;
+  // The Object-tier layer specifically — not just graphics.layers's last
+  // entry, which is only the body when the source declared its shadow
+  // BEFORE the main sprite; electromagnetic-plant's own idle_animation
+  // declares [base, base-shadow] in that order, so the literal last layer
+  // there is the shadow, and an unconditional last-element pick silently
+  // missed the real body for both baseSheets and the tier override below.
+  const body = graphics.layers.find((l) => l.layer === Layer.Object) ?? graphics.layers[graphics.layers.length - 1]!;
+  const baseSheets = new Set("per" in body ? Object.values(body.sprites).map((s) => s.sheet) : [body.sprites.sheet]);
+  const bodyOverride = BODY_TIER_OVERRIDES[proto.name];
+  if (bodyOverride !== undefined && body.layer === Layer.Object) body.layer = bodyOverride;
   graphics.layers.unshift(...pumpjackBaseGraphics(proto));
-  graphics.layers.push(...alwaysDrawnPieces(proto.graphics_set?.working_visualisations, baseSheet));
+  graphics.layers.push(...alwaysDrawnPieces(proto.name, proto.graphics_set?.working_visualisations, baseSheets));
   return graphics;
 }
 
 /** The rocket silo's pieces are numbered by draw order in their filenames;
- *  they are stacked in their closed resting pose. */
-const ROCKET_SILO_PIECES = ["shadow_sprite", "hole_sprite", "door_back_sprite", "door_front_sprite", "base_day_sprite", "base_front_sprite"];
+ *  they are stacked in their closed resting pose. hole_sprite (the open
+ *  launch-shaft art under the doors) is deliberately excluded — a
+ *  blueprint's silo is always shown closed, so that hole is permanently
+ *  covered by door_back_sprite/door_front_sprite and would never be seen,
+ *  confirmed by hand in the layer-order debug tool (#/layer-debug). */
+const ROCKET_SILO_PIECES = ["shadow_sprite", "door_back_sprite", "door_front_sprite", "base_day_sprite", "base_front_sprite"];
 
 function graphicsForRocketSilo(proto: any): EntityGraphics | undefined {
   const layers: GraphicsLayer[] = [];
@@ -316,8 +377,40 @@ function graphicsForRocketSilo(proto: any): EntityGraphics | undefined {
   return layers.length > 0 ? { layers } : undefined;
 }
 
+/** A beacon's empty module sockets are their own art (module_visualisations),
+ *  separate from the main body — always visible, not just when a module is
+ *  actually inserted (`has_empty_slot: true` is exactly the piece Factorio
+ *  itself shows for an empty slot). The other three pieces per slot
+ *  (box/lights masks, lights glow) are tinted per the specific module
+ *  placed there — this renderer has no runtime-tint concept (see
+ *  unwrapAll's own apply_runtime_tint skip), and a blueprint's module
+ *  loadout isn't reflected here yet regardless, so only the untinted empty-
+ *  slot base renders; a real module in the slot still leaves the socket
+ *  visible underneath, same as the game's own idle/no-quality-glow look.
+ *
+ *  A small positive ySortBias keeps both slots above beacon-bottom.png even
+ *  though they share its Layer.LowerObject tier: slot 2's own shift
+ *  (y=-0.375) is less than beacon-bottom's (y=0.031), so without the bias
+ *  it would lose the y-sort and render hidden underneath the base —
+ *  confirmed by hand in the layer-order debug tool (#/layer-debug). */
+function beaconModuleSlotGraphics(proto: any): GraphicsLayer[] {
+  const style = proto.graphics_set?.module_visualisations?.[0];
+  const layers: GraphicsLayer[] = [];
+  for (const slot of style?.slots ?? []) {
+    for (const piece of slot) {
+      if (piece.has_empty_slot !== true) continue;
+      const sprite = toSprite(piece.pictures);
+      if (sprite) layers.push({ layer: layerOf(piece.render_layer, Layer.LowerObject), sprites: sprite, ySortBias: 1 });
+    }
+  }
+  return layers;
+}
+
 function graphicsForBeacon(proto: any): EntityGraphics | undefined {
-  return animationListGraphics(proto.graphics_set?.animation_list) ?? graphicsForMachine(proto);
+  const graphics = animationListGraphics(proto.graphics_set?.animation_list) ?? graphicsForMachine(proto);
+  if (!graphics) return graphics;
+  graphics.layers.push(...beaconModuleSlotGraphics(proto));
+  return graphics;
 }
 
 
@@ -396,6 +489,13 @@ function mapMachines(raw: Raw, locale: LocaleTables): Record<string, MachineProt
       const categories: string[] =
         proto.crafting_categories ?? proto.resource_categories ?? (kind === "lab" ? ["lab"] : []);
 
+      let graphics = table === "rocket-silo" ? graphicsForRocketSilo(proto) : graphicsForMachine(proto);
+      const coverLayers = pipeCoversLayers(proto);
+      if (coverLayers.length > 0) {
+        graphics = { ...(graphics ?? { layers: [] }), layers: [...(graphics?.layers ?? []), ...coverLayers] };
+      }
+      const pipeConnections = pipeConnectionsOf(proto);
+
       const machine: MachineProto = {
         name: proto.name,
         kind,
@@ -416,8 +516,9 @@ function mapMachines(raw: Raw, locale: LocaleTables): Record<string, MachineProt
         // an outline). Rocket silo has no graphics_set at all — its own
         // graphicsForRocketSilo reads its real multi-piece structure
         // instead (see that function's own doc comment).
-        graphics: table === "rocket-silo" ? graphicsForRocketSilo(proto) : graphicsForMachine(proto),
+        graphics,
         siloParts: proto.rocket_parts_required,
+        pipeConnections: pipeConnections.length > 0 ? pipeConnections : undefined,
         localised: locale.entityName.get(proto.name) ?? proto.name,
       };
       machines[proto.name] = machine;

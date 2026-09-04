@@ -1,4 +1,5 @@
-import { CARDINALS, Dir, opposite, toCardinal, type Cardinal, type NeighbourGrid, type Neighbour } from "./grid.js";
+import { CARDINALS, Dir, opposite, step, toCardinal, type Cardinal, type NeighbourGrid, type Neighbour } from "./grid.js";
+import type { FluidNetwork } from "./fluid.js";
 
 const N = 1, E = 2, S = 4, W = 8;
 
@@ -36,13 +37,28 @@ export function classifyPipe(
   y: number,
   grid: NeighbourGrid,
   isPipeLike: (name: string) => boolean,
+  fluidNetwork?: FluidNetwork,
 ): string {
   let mask = 0;
   for (const dir of CARDINALS) {
     const n = grid.towards(x, y, dir);
-    if (!n || !isPipeLike(n.name)) continue;
-    const open = openSide(n);
-    if (open === undefined || open === opposite(dir)) mask |= BIT[dir];
+    if (n && isPipeLike(n.name)) {
+      const open = openSide(n);
+      if (open === undefined || open === opposite(dir)) {
+        mask |= BIT[dir];
+        continue;
+      }
+    }
+    // Not a plain pipe-like neighbour (or a facing-restricted one that
+    // doesn't open this way) — a machine/storage-tank/etc's own fluid box
+    // can still have a real connection point right there (e.g. a pump's
+    // socket one tile off its own centre), which the single-tile grid check
+    // above has no way to see. The fluid network's own point-to-point match
+    // (the same one pipe-covers uses) answers that directly: is there a
+    // connection point at this neighbour tile facing back at (x,y)?
+    if (fluidNetwork?.hasConnectionFacing(x + step(dir).dx, y + step(dir).dy, opposite(dir))) {
+      mask |= BIT[dir];
+    }
   }
   return MASK_TO_VARIANT[mask]!;
 }

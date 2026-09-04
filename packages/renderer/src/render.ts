@@ -5,6 +5,7 @@ import { getSharedIconAtlas } from "./iconAtlas.js";
 import { buildVisualLookup, effectiveFootprint, isPoleLike, isUndergroundLike, makeConnectorPredicates, type ResolvedVisual } from "./entityLookup.js";
 import { drawAltModeOverlay } from "./entityDraw.js";
 import { buildGrid, NeighbourGrid } from "./neighbours/grid.js";
+import { buildFluidNetwork, FluidNetwork } from "./neighbours/fluid.js";
 import type { PlatformBox } from "./neighbours/platform.js";
 import { collectEntity, type CollectContext } from "./draw/collect.js";
 import { paint, drawOutline } from "./draw/paint.js";
@@ -120,6 +121,7 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
   let entities: PlacedEntity[] = [];
   let entityById = new Map<number, PlacedEntity>();
   let grid = new NeighbourGrid();
+  let fluidNetwork = new FluidNetwork();
   let spatialIndex = new SpatialIndex([]);
   let platformBoxes: PlatformBox[] = [];
   let highlight: HighlightRole | null = null;
@@ -262,6 +264,7 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
     let ghost: PlacedEntity | undefined;
     let ghostCanPlace = true;
     let previewGrid = grid;
+    let previewFluidNetwork = fluidNetwork;
     if (mode.kind === "place" && ghostWorldPos) {
       const ghostVisual = visualFor(mode.entityName);
       if (ghostVisual) {
@@ -288,6 +291,12 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
           undergroundType: isUndergroundLike(mode.entityName) ? "input" : undefined,
         };
         if (connectors.isBeltLike(mode.entityName)) previewGrid = buildGrid([...entities, ghost]);
+        // A ghost with its own fluid box needs its pipe-cover patches (and
+        // a neighbouring ghost/placed pipe needs the ghost's own connection
+        // points) reflected live too, the same way previewGrid does for
+        // belts above — otherwise a ghost building always shows every cover
+        // regardless of what it's actually being placed next to.
+        previewFluidNetwork = buildFluidNetwork([...entities, ghost], (name) => visualFor(name)?.pipeConnections);
 
         // Valid iff nothing else's footprint overlaps the ghost's own —
         // queryRect already returns entityNumbers whose box overlaps a
@@ -320,7 +329,7 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
     // previewGrid — an already-placed belt must not change how it looks
     // just because a ghost is hovering nearby; only the ghost itself (drawn
     // separately below, against previewGrid) shows the connected preview.
-    const collectCtx: CollectContext = { grid, ...connectors, platformBoxes, animationFrame };
+    const collectCtx: CollectContext = { grid, fluidNetwork, ...connectors, platformBoxes, animationFrame };
     const commands: DrawCommand[] = [];
     const procedural: PlacedEntity[] = [];
     for (const entity of visibleEntities) {
@@ -382,7 +391,7 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
           drawInserter(ctx, atlas, ghost, visual.inserterGraphics, ghostTint);
         } else if (visual.graphics) {
           const ghostCommands: DrawCommand[] = [];
-          collectEntity(ghostCommands, ghost, visual, { grid: previewGrid, ...connectors, platformBoxes, animationFrame }, 1);
+          collectEntity(ghostCommands, ghost, visual, { grid: previewGrid, fluidNetwork: previewFluidNetwork, ...connectors, platformBoxes, animationFrame }, 1);
           for (const c of ghostCommands) c.tint = ghostTint;
           paint(ctx, atlas, ghostCommands);
         }
@@ -676,6 +685,7 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
     entities = newEntities;
     entityById = new Map(entities.map((e) => [e.entityNumber, e]));
     grid = buildGrid(entities);
+    fluidNetwork = buildFluidNetwork(entities, (name) => visualFor(name)?.pipeConnections);
 
     const boxes: IndexedBox[] = [];
     platformBoxes = [];

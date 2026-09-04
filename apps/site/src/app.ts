@@ -1,6 +1,7 @@
 import "./style.css";
 import { renderNav, ROUTES } from "./nav.js";
 import { mountBlueprintViewer } from "./tools/blueprint-viewer/index.js";
+import { mountLayerDebug } from "./tools/layer-debug/index.js";
 
 const navRoot = document.getElementById("nav-root")!;
 const toolRoot = document.getElementById("tool-root")!;
@@ -20,6 +21,11 @@ function route() {
   switch (hash) {
     case "#/blueprint-viewer":
       unmountCurrent = mountBlueprintViewer(toolRoot);
+      break;
+    // Dev aid, not a product route — reachable by URL but deliberately not
+    // in ROUTES/the nav bar (see mountLayerDebug's own doc comment).
+    case "#/layer-debug":
+      unmountCurrent = mountLayerDebug(toolRoot);
       break;
     default:
       window.location.hash = ROUTES[0]!.hash;
