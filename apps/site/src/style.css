@@ -938,6 +938,14 @@ button.ghost:hover, select:hover { border-color: var(--frame-light); }
 
 .palette-grid .empty { grid-column: 1 / -1; }
 
+/* Invisible row-break spacer between subgroups (see edit-palette.ts's
+   renderGrid) — same footprint as a real cell so it pads the grid's
+   auto-flow onto a new row without leaving a visible gap or border. */
+.palette-cell-filler {
+  width: 40px;
+  height: 40px;
+}
+
 /* Quality strip at the bottom of the build palette — matches the real
    game's own 5-circle quality selector (normal through legendary).
    Selects which quality newly-placed entities carry; building over an

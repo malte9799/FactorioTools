@@ -5,6 +5,7 @@ import { QUALITY_TIERS } from "./quality-options.js";
 export interface PaletteEntry {
   name: string;
   localised: string;
+  subgroup: string;
 }
 
 /** Fixed grid width — matches the real game's own build-menu grid (10
@@ -46,7 +47,7 @@ function buildCategorisedGroups(data: GameData, catalog: RenderCatalog): Categor
     if (!position) continue; // no item resolves place_result to this entity — not directly placeable
     const sortKey = `${position.subgroupOrder} ${position.subgroup} ${position.order}`;
     const list = byGroup.get(position.group) ?? [];
-    list.push({ entry: { name: proto.name, localised: proto.localised }, sortKey });
+    list.push({ entry: { name: proto.name, localised: proto.localised, subgroup: position.subgroup }, sortKey });
     byGroup.set(position.group, list);
   }
 
@@ -153,7 +154,28 @@ export function buildPalette(
       grid.innerHTML = `<p class="empty">No matches.</p>`;
       return;
     }
+    // Each subgroup starts its own fresh row — matching the real game's own
+    // build menu (confirmed by spike against reference screenshots: belts,
+    // inserters, poles+pipes, rails, etc. each begin a new row rather than
+    // flowing continuously into whatever column the previous subgroup left
+    // off at). Padding the current row out to GRID_COLUMNS with empty
+    // placeholder cells before a subgroup change is what forces the CSS
+    // grid (a plain left-to-right auto-flow) onto a new row without needing
+    // an explicit `grid-row` on every cell.
+    let column = 0;
+    let previousSubgroup: string | null = null;
     for (const entry of entries) {
+      if (previousSubgroup !== null && entry.subgroup !== previousSubgroup) {
+        while (column % GRID_COLUMNS !== 0) {
+          const filler = document.createElement("div");
+          filler.className = "palette-cell-filler";
+          grid.appendChild(filler);
+          column++;
+        }
+      }
+      previousSubgroup = entry.subgroup;
+      column++;
+
       const cell = document.createElement("button");
       cell.type = "button";
       cell.className = "palette-cell";

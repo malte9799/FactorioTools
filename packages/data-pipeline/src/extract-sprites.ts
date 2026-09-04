@@ -149,9 +149,14 @@ function extractIconAtlas(): void {
 /** Build-menu tab icons (item-group.icon) are each their own whole-image
  *  PNG (logistics.png, production.png, ...) — confirmed by spike, NOT a
  *  cell in the shared item/recipe icon sheet extractIconAtlas() builds.
- *  Copied flat into their own directory the same way extractEntitySheets()
- *  copies entity sheets, keyed by basename (matches how
- *  MenuGroup.icon/render-catalog.ts's buildMenuIndex references them). */
+ *  Cropped to the prototype's own `icon_size` (defaulting to 64, Factorio's
+ *  own documented default) the same way extractIconAtlas() strips mipmaps
+ *  off regular item icons — confirmed by spike that e.g. logistics.png is
+ *  192x128 while its own icon_size is 128: the real icon is only the
+ *  leftmost icon_size x icon_size square, the rest a smaller mipmap level
+ *  the game ignores by default (no icon_mipmaps override here), which a
+ *  plain file copy left in the image and rendered squeezed into the tab
+ *  alongside the real icon. */
 function extractItemGroupIcons(): void {
   const raw = JSON.parse(readFileSync(DUMP_PATH, "utf-8")) as Record<string, Record<string, any>>;
   const outDir = path.join(SITE_PUBLIC, "data/sprites/item-groups");
@@ -168,7 +173,12 @@ function extractItemGroupIcons(): void {
       missing++;
       continue;
     }
-    copyFileSync(src, path.join(outDir, path.basename(src)));
+    const iconSize = typeof (proto as any).icon_size === "number" ? (proto as any).icon_size : 64;
+    const png = PNG.sync.read(readFileSync(src));
+    const cropped = new PNG({ width: iconSize, height: iconSize });
+    cropped.data.fill(0);
+    PNG.bitblt(png, cropped, 0, 0, Math.min(png.width, iconSize), Math.min(png.height, iconSize), 0, 0);
+    writeFileSync(path.join(outDir, path.basename(src)), PNG.sync.write(cropped));
     copied++;
   }
   console.log(`Item-group icons: copied ${copied}, missing ${missing} -> ${outDir}`);
