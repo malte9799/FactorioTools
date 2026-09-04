@@ -364,7 +364,13 @@ function graphicsForMachine(proto: any): EntityGraphics | undefined {
   // there is the shadow, and an unconditional last-element pick silently
   // missed the real body for both baseSheets and the tier override below.
   const body = graphics.layers.find((l) => l.layer === Layer.Object) ?? graphics.layers[graphics.layers.length - 1]!;
-  const baseSheets = new Set("per" in body ? Object.values(body.sprites).map((s) => s.sheet) : [body.sprites.sheet]);
+  const baseSheets = new Set(
+    "per" in body
+      ? body.per === "heat-connection-patches"
+        ? [...body.connected, ...body.disconnected].map((s) => s.sheet)
+        : Object.values(body.sprites).map((s) => s.sheet)
+      : [body.sprites.sheet],
+  );
   const bodyOverride = BODY_TIER_OVERRIDES[proto.name];
   if (bodyOverride !== undefined && body.layer === Layer.Object) body.layer = bodyOverride;
   graphics.layers.unshift(...pumpjackBaseGraphics(proto));

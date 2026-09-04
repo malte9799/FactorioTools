@@ -1,4 +1,4 @@
-import type { EntityGraphics, GameData, InserterGraphics, PipeConnectionPoint, RenderCatalog } from "@factoriotools/engine";
+import type { EntityGraphics, GameData, HeatConnectionPoint, InserterGraphics, PipeConnectionPoint, RenderCatalog } from "@factoriotools/engine";
 import { toCardinal, Dir } from "./neighbours/grid.js";
 
 /** One lookup over both GameData (entities with rates) and the RenderCatalog
@@ -20,6 +20,10 @@ export interface ResolvedVisual {
    *  — feeds the fluid network graph (neighbours/fluid.ts). Undefined for
    *  every entity with no fluid box. */
   pipeConnections?: PipeConnectionPoint[];
+  /** `heat_buffer.connections` points, in the entity's own unrotated local
+   *  frame — feeds the heat network graph (neighbours/heat.ts). Undefined
+   *  for every entity with no heat buffer. */
+  heatConnections?: HeatConnectionPoint[];
 }
 
 const EMPTY = {
@@ -80,6 +84,7 @@ export function buildVisualLookup(data: GameData, catalog: RenderCatalog): Map<s
       localised: e.localised,
       showDirectionArrow: e.name.includes("combinator"),
       pipeConnections: e.pipeConnections,
+      heatConnections: e.heatConnections,
     });
   }
   return lookup;
@@ -122,8 +127,9 @@ export function isPoleLike(name: string): boolean {
 export function makeConnectorPredicates(lookup: Map<string, ResolvedVisual>) {
   const has = (kind: string) => (name: string) => lookup.get(name)?.graphics?.connector === kind;
   const isPipeLike = (name: string) => has("pipe")(name) || name === "pipe-to-ground";
+  const isHeatPipeLike = has("heat-pipe");
   const isWallLike = (name: string) => has("wall")(name) || name === "gate";
   const isBeltLike = has("belt");
   const isPlatformLike = has("platform");
-  return { isPipeLike, isWallLike, isBeltLike, isPlatformLike };
+  return { isPipeLike, isHeatPipeLike, isWallLike, isBeltLike, isPlatformLike };
 }

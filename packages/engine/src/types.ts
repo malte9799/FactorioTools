@@ -175,6 +175,15 @@ export type GraphicsLayer = {
    *  graph finds unconnected are drawn; keyed by Dir4Name to match
    *  `PipeConnectionPoint.direction`. */
   | { sprites: Partial<Record<Dir4Name, Sprite>>; per: "pipe-covers" }
+  /** One small pipe-stub cap per `heat_buffer.connections` entry, drawn at
+   *  every point — unlike pipe-covers (drawn only when unconnected), a
+   *  reactor's 12 heat-connection points always show one of two full sprite
+   *  sets, picked per point by whether the real heat network finds a
+   *  matching neighbour there. `connected`/`disconnected` are indexed by
+   *  connection-point index (the sheet's own `variation_count`), not by
+   *  direction — several points can share the same direction (a reactor has
+   *  3 per side) so a Dir4Name key can't distinguish them. */
+  | { connected: Sprite[]; disconnected: Sprite[]; per: "heat-connection-patches" }
 );
 
 /** How an entity is drawn: a flat list of layers, drawn in array order within
@@ -189,7 +198,7 @@ export interface EntityGraphics {
 
 /** Names a neighbour-classification rule; the rules live in
  *  packages/renderer/src/neighbours. */
-export type ConnectorKind = "pipe" | "wall" | "belt" | "platform";
+export type ConnectorKind = "pipe" | "heat-pipe" | "wall" | "belt" | "platform";
 
 
 export interface MachineProto {
@@ -310,6 +319,17 @@ export interface PipeConnectionPoint {
   direction: 0 | 4 | 8 | 12;
 }
 
+/** One `heat_buffer.connections` entry, in the entity's own unrotated
+ *  (north-facing) local frame — same shape as PipeConnectionPoint, but heat
+ *  pipes and fluid pipes are materially different networks (a heat pipe
+ *  never carries fluid and vice versa), so this is kept as its own type
+ *  rather than reused, even though the fields are identical today. */
+export interface HeatConnectionPoint {
+  x: number;
+  y: number;
+  direction: 0 | 4 | 8 | 12;
+}
+
 export interface RenderEntityProto {
   name: string;
   tileFootprint: [number, number];
@@ -321,6 +341,11 @@ export interface RenderEntityProto {
    *  point belongs to, only where it is). Absent for entities with no fluid
    *  box at all. */
   pipeConnections?: PipeConnectionPoint[];
+  /** Every `heat_buffer.connections` entry this entity declares, in
+   *  declaration order — the reactor's own connection-patch art is indexed
+   *  by this same order (see GraphicsLayer's `heat-connection-patches`
+   *  variant). Absent for entities with no heat buffer at all. */
+  heatConnections?: HeatConnectionPoint[];
   localised: string;
 }
 
