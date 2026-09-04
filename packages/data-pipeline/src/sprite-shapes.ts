@@ -1,6 +1,6 @@
 /** Reading Factorio's sprite declarations, which come in a handful of
  *  historically-grown shapes, into this project's flat Sprite type. */
-import { Layer, type Dir4Name, type EntityGraphics, type GraphicsLayer, type PipeConnectionPoint, type Sprite } from "@factoriotools/engine";
+import { Layer, type Dir4Name, type EntityGraphics, type GraphicsLayer, type HeatConnectionPoint, type PipeConnectionPoint, type Sprite } from "@factoriotools/engine";
 
 /** A leaf sprite declaration: {filename,width,height,...}. Some use a single
  *  square `size` instead of width/height, some split a long frame strip over
@@ -81,7 +81,7 @@ export function unwrapAll(source: any): UnwrappedLayer[] {
     // Glow/additive layers are near-black outside their lit pixels, meant
     // for a blend mode this renderer doesn't implement — drawn with normal
     // alpha compositing they paint a black box over whatever's beneath.
-    if (layer.apply_runtime_tint || layer.flags?.includes("mask") || layer.draw_as_glow || layer.blend_mode === "additive") continue;
+    if (layer.apply_runtime_tint || layer.flags?.includes("mask") || layer.draw_as_glow || layer.draw_as_light || layer.blend_mode === "additive") continue;
     const sprite = toSprite(layer);
     if (!sprite) continue;
     out.push({
@@ -366,6 +366,65 @@ export function pipeCoversLayers(proto: any): GraphicsLayer[] {
   return layers;
 }
 
+/** Every `heat_buffer.connections` entry a prototype declares, in its own
+ *  unrotated (north-facing) local frame — straight off Factorio's own
+ *  position/direction pairs, same shape as `pipeConnectionsOf` but for the
+ *  separate heat network (a heat pipe never carries fluid and vice versa).
+ *  Both the reactor and heat-pipe itself declare these; a reactor's own
+ *  connection-patch art is indexed by this exact array order (confirmed
+ *  against the reference renderer's draw_reactor, which zips
+ *  `heat_buffer.connections.entries()` 1:1 against `connection_patches_*`'s
+ *  variation index). */
+export function heatConnectionsOf(proto: any): HeatConnectionPoint[] {
+  const out: HeatConnectionPoint[] = [];
+  for (const c of proto.heat_buffer?.connections ?? []) {
+    if (!Array.isArray(c.position) || typeof c.direction !== "number") continue;
+    out.push({ x: c.position[0], y: c.position[1], direction: c.direction });
+  }
+  return out;
+}
+
+/** Splits a `variation_count`-grid sprite (one shared sheet, one frame per
+ *  heat-connection point) into a flat per-index Sprite array, each pinned to
+ *  its own column via `x` — matching the reference renderer's own
+ *  `duplicateAndSetPropertyUsing(sheet, 'x', 'width', i)`. */
+function splitVariations(sprite: Sprite, count: number): Sprite[] {
+  const out: Sprite[] = [];
+  for (let i = 0; i < count; i++) {
+    out.push({ ...sprite, x: (sprite.x ?? 0) + i * sprite.frameWidth, columns: undefined });
+  }
+  return out;
+}
+
+/** `per: "heat-connection-patches"` layer from a reactor's own
+ *  `connection_patches_connected`/`connection_patches_disconnected` fields —
+ *  the small pipe-stub cap Factorio draws at every one of its 12 fixed
+ *  `heat_buffer.connections` points, switching sprite set depending on
+ *  whether a heat pipe is actually adjacent there. Uses the plain (non-
+ *  `heat_`-prefixed) fields deliberately: those carry the glow/tint overlay
+ *  layers meant for a running reactor's "heated" pose, which this renderer
+ *  has no concept of (see unwrapAll's draw_as_light filter) — the plain
+ *  fields are the idle-pose art, matching `picture` (not `heat_picture`)
+ *  being what render-catalog.ts already draws for the reactor's own body. */
+export function heatConnectionPatchLayers(proto: any): GraphicsLayer[] {
+  const connections = heatConnectionsOf(proto);
+  if (connections.length === 0) return [];
+  const connectedRaw = proto.connection_patches_connected?.sheet;
+  const disconnectedRaw = proto.connection_patches_disconnected?.sheet;
+  const connectedSprite = toSprite(Array.isArray(connectedRaw) ? connectedRaw[0] : connectedRaw);
+  const disconnectedSprite = toSprite(Array.isArray(disconnectedRaw) ? disconnectedRaw[0] : disconnectedRaw);
+  if (!connectedSprite || !disconnectedSprite) return [];
+  const count = connections.length;
+  return [
+    {
+      layer: Layer.Object,
+      per: "heat-connection-patches",
+      connected: splitVariations(connectedSprite, count),
+      disconnected: splitVariations(disconnectedSprite, count),
+    },
+  ];
+}
+
 /** Every sheet an entity's graphics reference, for the sprite extractor —
  *  every file in Sprite.sheets too, for a sprite split across several (see
  *  toSprite's own doc comment), not just its fallback single `sheet`. */
@@ -373,8 +432,14 @@ export function sheetsOf(graphics: EntityGraphics | undefined): string[] {
   const out: string[] = [];
   const collect = (s: Sprite) => (s.sheets ? out.push(...s.sheets) : out.push(s.sheet));
   for (const layer of graphics?.layers ?? []) {
-    if ("per" in layer) Object.values(layer.sprites).forEach(collect);
-    else collect(layer.sprites);
+    if (!("per" in layer)) {
+      collect(layer.sprites);
+    } else if (layer.per === "heat-connection-patches") {
+      layer.connected.forEach(collect);
+      layer.disconnected.forEach(collect);
+    } else {
+      Object.values(layer.sprites).forEach(collect);
+    }
   }
   return out;
 }

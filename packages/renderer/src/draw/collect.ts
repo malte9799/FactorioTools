@@ -6,12 +6,15 @@ import { classifyWall } from "../neighbours/wall.js";
 import { classifyBeltCell, undergroundSideLoaded, type BeltCap } from "../neighbours/beltGraph.js";
 import { classifyPlatform, type PlatformBox } from "../neighbours/platform.js";
 import type { FluidNetwork } from "../neighbours/fluid.js";
+import type { HeatNetwork } from "../neighbours/heat.js";
 import { PIXELS_PER_TILE, type DrawCommand } from "./commands.js";
 
 export interface CollectContext {
   grid: NeighbourGrid;
   fluidNetwork: FluidNetwork;
+  heatNetwork: HeatNetwork;
   isPipeLike: (name: string) => boolean;
+  isHeatPipeLike: (name: string) => boolean;
   isWallLike: (name: string) => boolean;
   isBeltLike: (name: string) => boolean;
   /** Every platform-connectable entity's footprint box, for cargo hubs/bays
@@ -59,6 +62,13 @@ interface EntityFrame {
    *  rotated local position (world tile minus entity's own rounded centre,
    *  matching push()'s existing offsetX/offsetY convention). */
   unconnectedPipeCovers: { offsetX: number; offsetY: number; direction: Cardinal }[];
+  /** Every `heat_buffer.connections` point this entity declares, in
+   *  declaration order (matching the `heat-connection-patches` layer's own
+   *  `connected`/`disconnected` array index) — a reactor always draws one
+   *  patch per point, unlike pipe-covers' unconnected-only set, since the
+   *  connected and disconnected art are two distinct sprites rather than an
+   *  added cap over otherwise-bare art. */
+  heatConnectionPatches: { index: number; offsetX: number; offsetY: number; connected: boolean }[];
 }
 
 function resolveFrame(entity: PlacedEntity, visual: ResolvedVisual, ctx: CollectContext): EntityFrame {
@@ -96,11 +106,27 @@ function resolveFrame(entity: PlacedEntity, visual: ResolvedVisual, ctx: Collect
         const { dx, dy } = step(p.direction);
         return { offsetX: p.x - x + dx, offsetY: p.y - y + dy, direction: p.direction };
       }),
+    // A reactor's own connection-patch art sits directly at the connection
+    // point's own world position, not a further tile out the way a pipe
+    // cover does — matching the reference renderer's own draw_reactor
+    // (addToShift(conn.position, patchSheet), no extra step). A ghost
+    // (entityNumber -1) always shows its disconnected art everywhere: it
+    // isn't actually built yet, so there's no real heat network to have
+    // joined into.
+    heatConnectionPatches: ctx.heatNetwork.pointsFor(entity.entityNumber).map((p, index) => ({
+      index,
+      offsetX: p.x - x,
+      offsetY: p.y - y,
+      connected: entity.entityNumber !== -1 && ctx.heatNetwork.isConnected(p),
+    })),
   };
 
   switch (visual.graphics?.connector) {
     case "pipe":
       frame.connectionName = classifyPipe(x, y, ctx.grid, ctx.isPipeLike, ctx.fluidNetwork);
+      break;
+    case "heat-pipe":
+      frame.connectionName = classifyPipe(x, y, ctx.grid, ctx.isHeatPipeLike, ctx.heatNetwork);
       break;
     case "wall":
       frame.connectionName = classifyWall(x, y, ctx.grid, ctx.isWallLike);
@@ -374,6 +400,18 @@ export function collectEntity(
     if ("per" in layer && layer.per === "pipe-covers") {
       for (const point of frame.unconnectedPipeCovers) {
         const sprite = layer.sprites[dir4Name(point.direction)];
+        if (sprite) push(out, sprite, 0, 0, entity, layer.layer, order, alpha, point.offsetX, point.offsetY);
+      }
+      return;
+    }
+
+    // A reactor's heat-connection-patch draws once per heat_buffer
+    // connection point — always exactly one sprite per point (either its
+    // connected or disconnected variant), unlike pipe-covers which only adds
+    // a cap where nothing else is drawn.
+    if ("per" in layer && layer.per === "heat-connection-patches") {
+      for (const point of frame.heatConnectionPatches) {
+        const sprite = (point.connected ? layer.connected : layer.disconnected)[point.index];
         if (sprite) push(out, sprite, 0, 0, entity, layer.layer, order, alpha, point.offsetX, point.offsetY);
       }
       return;

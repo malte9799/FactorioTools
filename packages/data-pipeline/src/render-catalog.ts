@@ -7,11 +7,14 @@ import type { LocaleTables } from "./locale.js";
 import {
   animationListGraphics,
   directionColumnGraphics,
+  heatConnectionPatchLayers,
+  heatConnectionsOf,
   layerOf,
   perDirection,
   pipeConnectionsOf,
   pipeCoversLayers,
   stackSources,
+  staticGraphics,
   unwrapAll,
   toSprite,
   unwrap,
@@ -64,7 +67,7 @@ const PIPE_VARIANTS: { key: string; altKey?: string }[] = [
   { key: "straight_vertical_single", altKey: "single" },
 ];
 
-function pipeGraphics(pictures: any): EntityGraphics | undefined {
+function pipeGraphics(pictures: any, connector: "pipe" | "heat-pipe" = "pipe"): EntityGraphics | undefined {
   if (!pictures) return undefined;
   const sprites: Record<string, Sprite> = {};
   for (const { key, altKey } of PIPE_VARIANTS) {
@@ -74,9 +77,25 @@ function pipeGraphics(pictures: any): EntityGraphics | undefined {
   }
   if (Object.keys(sprites).length === 0) return undefined;
   return {
-    connector: "pipe",
+    connector,
     layers: [{ layer: Layer.Object, sprites, per: "connection" }],
   };
+}
+
+/** The reactor's own body (`picture`) sits above a second static sprite,
+ *  `lower_layer_picture` — the internal-piping baseplate visible around its
+ *  edges (reactor-pipes.png) — which must paint underneath the body rather
+ *  than stack among its layers in declaration order: paint order sorts by
+ *  layer tier first, each sprite's own y-shift only second, so sharing
+ *  Layer.Object with the body would risk winning the sort and covering it
+ *  depending on their relative shifts. Same story as pumpjack's own
+ *  Layer.LowerObject baseplate in dump-to-gamedata.ts's pumpjackBaseGraphics. */
+function reactorGraphics(proto: any): EntityGraphics | undefined {
+  const body = staticGraphics(proto.picture);
+  if (!body) return undefined;
+  const { main: lower } = unwrap(proto.lower_layer_picture);
+  if (!lower) return body;
+  return { layers: [{ layer: Layer.LowerObject, sprites: lower }, ...body.layers] };
 }
 
 /** Walls pick both their sprite and its shadow by the same connection name. */
@@ -516,7 +535,6 @@ const PICTURE_FIELD: Record<string, string> = {
   "ammo-turret": "graphics_set",
   "electric-turret": "graphics_set",
   "fluid-turret": "graphics_set",
-  reactor: "picture",
   "linked-container": "picture",
   "infinity-container": "picture",
   "electric-energy-interface": "picture",
@@ -603,13 +621,20 @@ export function buildRenderCatalog(raw: Raw, locale: LocaleTables, version: stri
   // a pipe-covers layer appended, regardless of which adapter above built
   // its base graphics — added once here rather than at each call site so a
   // new fluid-box entity picks this up automatically instead of needing its
-  // own adapter updated too.
+  // own adapter updated too. Every prototype with a heat buffer (reactor,
+  // heat-pipe) gets the same treatment for the separate heat network: its
+  // connection points recorded, and — for a reactor, the only prototype that
+  // ships connection_patches_* art of its own — a heat-connection-patches
+  // layer appended.
   const add = (proto: any, graphics: EntityGraphics | undefined, footprintOverride?: [number, number]) => {
     if (entities[proto.name] || NOT_PLACEABLE.test(proto.name)) return;
     const pipeConnections = pipeConnectionsOf(proto);
     const coverLayers = pipeCoversLayers(proto);
-    if (coverLayers.length > 0) {
-      graphics = { ...(graphics ?? { layers: [] }), layers: [...(graphics?.layers ?? []), ...coverLayers] };
+    const heatConnections = heatConnectionsOf(proto);
+    const heatPatchLayers = heatConnectionPatchLayers(proto);
+    const extraLayers = [...coverLayers, ...heatPatchLayers];
+    if (extraLayers.length > 0) {
+      graphics = { ...(graphics ?? { layers: [] }), layers: [...(graphics?.layers ?? []), ...extraLayers] };
     }
     entities[proto.name] = {
       name: proto.name,
@@ -617,6 +642,7 @@ export function buildRenderCatalog(raw: Raw, locale: LocaleTables, version: stri
       graphics,
       rotatesFootprint: ROTATES_FOOTPRINT.has(proto.name),
       pipeConnections: pipeConnections.length > 0 ? pipeConnections : undefined,
+      heatConnections: heatConnections.length > 0 ? heatConnections : undefined,
       localised: locale.entityName.get(proto.name) ?? proto.name,
     };
   };
@@ -643,11 +669,14 @@ export function buildRenderCatalog(raw: Raw, locale: LocaleTables, version: stri
   for (const proto of Object.values(raw["storage-tank"] ?? {})) {
     add(proto, storageTankGraphics(proto));
   }
+  for (const proto of Object.values(raw.reactor ?? {})) {
+    add(proto, reactorGraphics(proto));
+  }
   for (const proto of Object.values(raw.pipe ?? {})) {
     add(proto, pipeGraphics(proto.pictures));
   }
   for (const proto of Object.values(raw["heat-pipe"] ?? {})) {
-    add(proto, pipeGraphics(proto.connection_sprites));
+    add(proto, pipeGraphics(proto.connection_sprites, "heat-pipe"));
   }
   for (const proto of Object.values(raw["pipe-to-ground"] ?? {})) {
     add(proto, perFacingGraphics(proto, "pictures"));

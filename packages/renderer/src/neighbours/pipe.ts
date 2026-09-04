@@ -1,5 +1,11 @@
 import { CARDINALS, Dir, opposite, step, toCardinal, type Cardinal, type NeighbourGrid, type Neighbour } from "./grid.js";
-import type { FluidNetwork } from "./fluid.js";
+
+/** What classifyPipe needs from a connection-point network — implemented by
+ *  both FluidNetwork (for plain pipes) and HeatNetwork (for heat pipes),
+ *  kept separate classes since the two networks must never cross-match. */
+export interface ConnectionNetwork {
+  hasConnectionFacing(x: number, y: number, direction: Cardinal): boolean;
+}
 
 const N = 1, E = 2, S = 4, W = 8;
 
@@ -37,7 +43,7 @@ export function classifyPipe(
   y: number,
   grid: NeighbourGrid,
   isPipeLike: (name: string) => boolean,
-  fluidNetwork?: FluidNetwork,
+  network?: ConnectionNetwork,
 ): string {
   let mask = 0;
   for (const dir of CARDINALS) {
@@ -50,13 +56,14 @@ export function classifyPipe(
       }
     }
     // Not a plain pipe-like neighbour (or a facing-restricted one that
-    // doesn't open this way) — a machine/storage-tank/etc's own fluid box
-    // can still have a real connection point right there (e.g. a pump's
-    // socket one tile off its own centre), which the single-tile grid check
-    // above has no way to see. The fluid network's own point-to-point match
-    // (the same one pipe-covers uses) answers that directly: is there a
+    // doesn't open this way) — a machine/storage-tank/etc's own fluid (or
+    // heat) box can still have a real connection point right there (e.g. a
+    // pump's socket one tile off its own centre, or a reactor's heat-buffer
+    // socket), which the single-tile grid check above has no way to see.
+    // The network's own point-to-point match (the same one pipe-covers/
+    // heat-connection-patches uses) answers that directly: is there a
     // connection point at this neighbour tile facing back at (x,y)?
-    if (fluidNetwork?.hasConnectionFacing(x + step(dir).dx, y + step(dir).dy, opposite(dir))) {
+    if (network?.hasConnectionFacing(x + step(dir).dx, y + step(dir).dy, opposite(dir))) {
       mask |= BIT[dir];
     }
   }

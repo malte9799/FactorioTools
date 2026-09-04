@@ -293,7 +293,9 @@ export function mountLayerDebug(root: HTMLElement): () => void {
   }
 
   function spriteForLayer(layer: GraphicsLayer): Sprite | undefined {
-    return "per" in layer ? layer.sprites[dirLabel(direction) as keyof typeof layer.sprites] : layer.sprites;
+    if (!("per" in layer)) return layer.sprites;
+    if (layer.per === "heat-connection-patches") return layer.disconnected[0];
+    return layer.sprites[dirLabel(direction) as keyof typeof layer.sprites];
   }
 
   function layerSheetLabel(layer: GraphicsLayer): string {
