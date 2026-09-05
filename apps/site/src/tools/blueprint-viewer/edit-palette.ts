@@ -77,22 +77,28 @@ function groupTabIcon(group: MenuGroup, size: number): HTMLSpanElement {
   return el;
 }
 
-/** Builds the quality strip shown at the bottom of the build palette (per
- *  the user's own reference screenshot: 5 circles, normal through
- *  legendary) — selects which quality newly-placed entities carry, AND
- *  (per the user's own design: "building over an existing entity with a
- *  different quality selected changes its quality") is read by
- *  index.ts's placeEntity when deciding whether a click on an occupied
- *  tile should upgrade that entity in place instead of adding a new one. */
-function buildQualityStrip(container: HTMLElement, initial: QualityName, onChange: (quality: QualityName) => void): void {
+/** Builds the quality strip shown at the bottom of the build palette —
+ *  selects which quality newly-placed entities carry, AND (per the user's
+ *  own design: "building over an existing entity with a different quality
+ *  selected changes its quality") is read by index.ts's placeEntity when
+ *  deciding whether a click on an occupied tile should upgrade that entity
+ *  in place instead of adding a new one. Uses the real game's own quality
+ *  diamond icons (extract-sprites.ts's "quality" ICON_TABLES entry) rather
+ *  than plain colored dots, matching the actual in-game quality picker. */
+/** Returns a setter so a caller can drive the strip's active tier
+ *  programmatically (index.ts's Shift+Alt+scroll quality-cycle shortcut) —
+ *  keeps the visible highlight in sync without a second, separate source
+ *  of truth for "which tier is selected". */
+function buildQualityStrip(container: HTMLElement, initial: QualityName, onChange: (quality: QualityName) => void): (quality: QualityName) => void {
   container.className = "palette-quality-strip";
   let active = initial;
   const buttons = QUALITY_TIERS.map((tier) => {
     const button = document.createElement("button");
     button.type = "button";
-    button.className = `quality-dot quality-${tier}`;
+    button.className = "quality-dot";
     button.title = tier;
     button.setAttribute("aria-label", tier);
+    button.appendChild(icon(tier, tier, 24));
     button.classList.toggle("is-active", tier === active);
     button.addEventListener("click", () => {
       active = tier;
@@ -102,6 +108,10 @@ function buildQualityStrip(container: HTMLElement, initial: QualityName, onChang
     container.appendChild(button);
     return button;
   });
+  return (quality) => {
+    active = quality;
+    buttons.forEach((b, i) => b.classList.toggle("is-active", QUALITY_TIERS[i] === active));
+  };
 }
 
 /** Builds a tabbed, fixed-width-grid placeable-entity picker into
@@ -117,13 +127,16 @@ function buildQualityStrip(container: HTMLElement, initial: QualityName, onChang
  *  strip currently has selected — the caller wires that to
  *  renderer.setInteractionMode({kind:'place', entityName}) plus tracking
  *  the chosen quality for the next placement. Plain DOM construction, no
- *  template library, matching legacy-view/panels.ts's style. */
+ *  template library, matching legacy-view/panels.ts's style. Returns a
+ *  setter for the quality strip's active tier, so a caller can drive it
+ *  programmatically (index.ts's Shift+Alt+scroll quality-cycle shortcut)
+ *  without a second, separate source of truth for "which tier is picked". */
 export function buildPalette(
   container: HTMLElement,
   data: GameData,
   catalog: RenderCatalog,
   onPick: (entityName: string, quality: QualityName) => void,
-): void {
+): (quality: QualityName) => void {
   const groups = buildCategorisedGroups(data, catalog);
   let selectedQuality: QualityName = "normal";
 
@@ -142,7 +155,7 @@ export function buildPalette(
   grid.style.setProperty("--palette-columns", String(GRID_COLUMNS));
 
   const qualityStrip = document.createElement("div");
-  buildQualityStrip(qualityStrip, selectedQuality, (quality) => {
+  const setActiveQuality = buildQualityStrip(qualityStrip, selectedQuality, (quality) => {
     selectedQuality = quality;
   });
 
@@ -234,4 +247,8 @@ export function buildPalette(
   renderGrid(groups[activeGroupIndex]?.entries ?? []);
 
   container.replaceChildren(filterInput, tabStrip, grid, qualityStrip);
+  return (quality) => {
+    selectedQuality = quality;
+    setActiveQuality(quality);
+  };
 }

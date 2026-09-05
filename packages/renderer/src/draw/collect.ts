@@ -69,6 +69,12 @@ interface EntityFrame {
    *  connected and disconnected art are two distinct sprites rather than an
    *  added cap over otherwise-bare art. */
   heatConnectionPatches: { index: number; offsetX: number; offsetY: number; connected: boolean }[];
+  /** Whether each of a beacon's physical module slots (index order matches
+   *  the module-slot layer's own `slots` array) actually has a module in
+   *  it — true entries draw the filled box/lights pieces, false draw the
+   *  empty socket. Derived from entity.modules' collapsed ModuleStack[] by
+   *  expanding count back out to one bool per physical slot. */
+  filledSlots: boolean[];
 }
 
 function resolveFrame(entity: PlacedEntity, visual: ResolvedVisual, ctx: CollectContext): EntityFrame {
@@ -124,6 +130,11 @@ function resolveFrame(entity: PlacedEntity, visual: ResolvedVisual, ctx: Collect
       offsetY: p.y - y,
       connected: entity.entityNumber !== -1 && ctx.heatNetwork.isConnected(p),
     })),
+    // entity.modules is collapsed (one ModuleStack per distinct
+    // name+quality, each with its own count) — expanding count back out
+    // gives one entry per physical slot, in the same left-to-right order
+    // Factorio itself fills them, matching index.ts's own expandModuleSlots.
+    filledSlots: entity.modules.flatMap((stack) => Array<boolean>(stack.count).fill(true)),
   };
 
   switch (visual.graphics?.connector) {
@@ -209,7 +220,7 @@ function axisIndex(axis: GraphicsLayer["column"], frame: EntityFrame): number {
   switch (axis.by) {
     case "none": return 0;
     case "direction": return frame.direction;
-    case "animation": return frame.animation;
+    case "animation": return Math.floor(frame.animation / (axis.slowdown ?? 1));
     case "connection": return frame.connectionIndex;
     case "underground-end": {
       const sideLoadIndex = frame.undergroundIn ? axis.inSideLoadIndex : axis.outSideLoadIndex;
@@ -225,6 +236,10 @@ function axisIndex(axis: GraphicsLayer["column"], frame: EntityFrame): number {
       const frameIndex = Math.round((frame.rawDirection / 16) * 256) % 256;
       return axis.axis === "column" ? frameIndex % axis.lineLength : Math.floor(frameIndex / axis.lineLength);
     }
+    // Rail-signal/rail-chain-signal's own row axis — entity.direction (0..15)
+    // IS the row directly, no 256-scaling needed (their sheet is a genuine
+    // 16-row grid, one row per placement facing).
+    case "direction16": return frame.rawDirection;
   }
 }
 
@@ -419,6 +434,21 @@ export function collectEntity(
         const sprite = (point.connected ? layer.connected : layer.disconnected)[point.index];
         if (sprite) push(out, sprite, 0, 0, entity, layer.layer, order, alpha, point.offsetX, point.offsetY);
       }
+      return;
+    }
+
+    // A beacon's module-slot art: each physical slot draws its own empty
+    // socket, or (once a module actually occupies it) the box/lights-mask/
+    // lights-glow pieces layered over it — every piece already carries its
+    // own baked-in shift, so no extra offset is needed here.
+    if ("per" in layer && layer.per === "module-slot") {
+      layer.slots.forEach((slot, i) => {
+        if (frame.filledSlots[i]) {
+          for (const sprite of slot.filled) push(out, sprite, 0, 0, entity, layer.layer, order, alpha, 0, 0, false, undefined, 0, layer.ySortBias ?? 0);
+        } else {
+          push(out, slot.empty, 0, 0, entity, layer.layer, order, alpha, 0, 0, false, undefined, 0, layer.ySortBias ?? 0);
+        }
+      });
       return;
     }
 

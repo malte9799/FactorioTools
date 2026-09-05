@@ -1,9 +1,9 @@
-import type { GameData, PlacedEntity, RenderCatalog } from "@factoriotools/engine";
+import type { GameData, PlacedEntity, QualityName, RenderCatalog } from "@factoriotools/engine";
 import { Camera } from "./camera.js";
 import { getSharedSpriteAtlas } from "./spriteAtlas.js";
 import { getSharedIconAtlas } from "./iconAtlas.js";
-import { buildVisualLookup, effectiveFootprint, isPoleLike, isUndergroundLike, makeConnectorPredicates, type ResolvedVisual } from "./entityLookup.js";
-import { drawAltModeOverlay } from "./entityDraw.js";
+import { activeFluidConnections, buildVisualLookup, effectiveFootprint, isPoleLike, isTwoDirectionOnly, isUndergroundLike, makeConnectorPredicates, rotationStep, type ResolvedVisual } from "./entityLookup.js";
+import { drawAltModeOverlay, drawQualityBadge } from "./entityDraw.js";
 import { buildGrid, NeighbourGrid } from "./neighbours/grid.js";
 import { buildFluidNetwork, FluidNetwork } from "./neighbours/fluid.js";
 import { buildHeatNetwork, HeatNetwork } from "./neighbours/heat.js";
@@ -29,7 +29,7 @@ export interface HighlightRole {
  *  logic): it removes whatever's under the cursor after a short press-and-
  *  hold, then erases anything the cursor drags across immediately, exactly
  *  like the real game's mine-by-right-click. */
-export type InteractionMode = { kind: "idle" } | { kind: "place"; entityName: string; direction?: number };
+export type InteractionMode = { kind: "idle" } | { kind: "place"; entityName: string; direction?: number; quality?: QualityName };
 
 export interface BlueprintRenderer {
   canvas: HTMLCanvasElement;
@@ -281,7 +281,7 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
           x: snapped.x,
           y: snapped.y,
           direction: ghostDirection,
-          quality: "normal",
+          quality: mode.quality ?? "normal",
           modules: [],
           filterItems: [],
           // Every underground-belt/loader tier MUST carry a real
@@ -301,7 +301,10 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
         // points) reflected live too, the same way previewGrid does for
         // belts above — otherwise a ghost building always shows every cover
         // regardless of what it's actually being placed next to.
-        previewFluidNetwork = buildFluidNetwork([...entities, ghost], (name) => visualFor(name)?.pipeConnections);
+        previewFluidNetwork = buildFluidNetwork([...entities, ghost], (e) => {
+          const points = visualFor(e.name)?.pipeConnections;
+          return points && activeFluidConnections(points, e.recipe, data);
+        });
         // A reactor ghost needs its own heat-connection-patch art (connected
         // vs disconnected) to react live to a neighbouring heat pipe too,
         // same story as the fluid network above.
@@ -404,6 +407,10 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
           for (const c of ghostCommands) c.tint = ghostTint;
           paint(ctx, atlas, ghostCommands);
         }
+        // Always shown, regardless of alt-mode — what quality you're about
+        // to place should stay visible the whole time it's in hand, not
+        // only when alt-mode also happens to be on.
+        drawQualityBadge(ctx, iconAtlas, ghost, visual);
       }
     }
 
@@ -699,7 +706,10 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
     entities = newEntities;
     entityById = new Map(entities.map((e) => [e.entityNumber, e]));
     grid = buildGrid(entities);
-    fluidNetwork = buildFluidNetwork(entities, (name) => visualFor(name)?.pipeConnections);
+    fluidNetwork = buildFluidNetwork(entities, (e) => {
+      const points = visualFor(e.name)?.pipeConnections;
+      return points && activeFluidConnections(points, e.recipe, data);
+    });
     heatNetwork = buildHeatNetwork(entities, (name) => visualFor(name)?.heatConnections);
 
     const boxes: IndexedBox[] = [];
@@ -728,7 +738,9 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
           ? [layer.sprites]
           : layer.per === "heat-connection-patches"
             ? [...layer.connected, ...layer.disconnected]
-            : Object.values(layer.sprites);
+            : layer.per === "module-slot"
+              ? layer.slots.flatMap((slot) => [slot.empty, ...slot.filled])
+              : Object.values(layer.sprites);
         for (const sprite of sprites) atlas.get(sprite.sheet);
       }
       const ins = visual?.inserterGraphics;
@@ -798,15 +810,25 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
       }
     },
     rotateGhost(reverse) {
-      // Quarter-turn in the 16-way scheme (step 4 of 16) — matches
-      // toCardinal()'s own commitment to 16-way-only (see its doc comment
-      // in beltGraph.ts): every direction value this renderer produces is
-      // 16-way, since that's the only scheme Factorio 2.0 blueprint exports
-      // use. A previous 8-way step here (+2 of 8) was inconsistent with
-      // that and silently produced directions toCardinal() would then
-      // misinterpret.
+      // Quarter-turn in the 16-way scheme (step 4 of 16) for most entities
+      // — matches toCardinal()'s own commitment to 16-way-only (see its doc
+      // comment in beltGraph.ts): every direction value this renderer
+      // produces is 16-way, since that's the only scheme Factorio 2.0
+      // blueprint exports use. A previous 8-way step here (+2 of 8) was
+      // inconsistent with that and silently produced directions
+      // toCardinal() would then misinterpret. rotationStep gives a finer
+      // step (1 of 16) for rail-signal/rail-chain-signal, matching the
+      // real game's own 22.5° rotate gesture for those two.
       if (mode.kind !== "place" || isPoleLike(mode.entityName)) return;
-      ghostDirection = (ghostDirection + (reverse ? -4 : 4) + 16) % 16;
+      if (isTwoDirectionOnly(mode.entityName)) {
+        // Only two facings exist at all (north=0, east=4) — R just
+        // toggles between them, `reverse` is a no-op (there's no
+        // meaningful "other way" between only two choices).
+        ghostDirection = ghostDirection === 0 ? 4 : 0;
+        return;
+      }
+      const step = rotationStep(mode.entityName);
+      ghostDirection = (ghostDirection + (reverse ? -step : step) + 16) % 16;
     },
     hitTest(clientX, clientY) {
       const rect = canvas.getBoundingClientRect();

@@ -93,6 +93,13 @@ function extractIconAtlas(): void {
     "pipe",
     "electric-pole",
     "rocket-silo",
+    // The 5 quality tiers (normal/uncommon/rare/epic/legendary) — same
+    // {name, icon} shape as every other table here, keyed by tier name
+    // rather than an item/entity name (no collision risk, both namespaces
+    // are unrelated strings). Used by the build-menu quality strip and
+    // alt-mode's per-entity quality badge, both wanting the real diamond
+    // icon Factorio itself uses rather than a plain colored dot.
+    "quality",
   ];
 
   const entries: { id: string; file: string }[] = [];

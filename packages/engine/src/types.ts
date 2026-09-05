@@ -120,8 +120,12 @@ export type FrameAxis =
       inSideLoadIndex?: number;
       outSideLoadIndex?: number;
     }
-  /** Advances with the renderer's clock. */
-  | { by: "animation" }
+  /** Advances with the renderer's clock. `slowdown` divides the raw
+   *  per-tick clock before indexing (default 1, every entity's previous
+   *  behavior) — a belt wants full speed, but rail-signal's own 3-frame
+   *  red/orange/green cycle at full speed reads as a strobe/flicker rather
+   *  than a visible color change. */
+  | { by: "animation"; slowdown?: number }
   /** A neighbour-derived index, from the entity's `connector`. */
   | { by: "connection" }
   /** Artillery-turret's cannon rotates through a 256-entry aiming sheet
@@ -130,7 +134,14 @@ export type FrameAxis =
    *  picks the single frame nearest that facing rather than animating
    *  through the sheet: entity.direction (0..15) scaled onto 0..255, then
    *  split into this row/column pair. */
-  | { by: "direction256"; axis: "column" | "row"; lineLength: number };
+  | { by: "direction256"; axis: "column" | "row"; lineLength: number }
+  /** Rail-signal/rail-chain-signal pack a genuine 16-way direction sheet
+   *  (one row per entity.direction value, 0..15 exactly, no 256-scaling
+   *  needed) with several animation-state frames per row as columns —
+   *  `column` picks by "animation" (slowed way down, see its own doc
+   *  comment) to cycle through the row's red/orange/green frames, while
+   *  `row` uses this to pick the direction row directly. */
+  | { by: "direction16" };
 
 /** One drawable piece of an entity.
  *
@@ -184,6 +195,16 @@ export type GraphicsLayer = {
    *  direction — several points can share the same direction (a reactor has
    *  3 per side) so a Dir4Name key can't distinguish them. */
   | { connected: Sprite[]; disconnected: Sprite[]; per: "heat-connection-patches" }
+  /** A beacon's per-slot module art — one entry per physical slot (index
+   *  order matches graphics_set.module_visualisations[0].slots). `empty`
+   *  is the socket art shown when nothing's in that slot (drawn today
+   *  regardless of loadout); `filled` is the box/lights-mask/lights-glow
+   *  pieces shown once a module actually occupies it. This renderer has no
+   *  runtime-tint concept (see unwrapAll's own apply_runtime_tint skip), so
+   *  `filled` is the same untinted shape for every module — real Factorio
+   *  colors it per the module's own beacon_tint, this only shows that a
+   *  slot is occupied at all. */
+  | { slots: { empty: Sprite; filled: Sprite[] }[]; per: "module-slot" }
 );
 
 /** How an entity is drawn: a flat list of layers, drawn in array order within
@@ -317,6 +338,40 @@ export interface PipeConnectionPoint {
   x: number;
   y: number;
   direction: 0 | 4 | 8 | 12;
+  /** Pumpjack's own output socket is the one prototype in the dump that
+   *  declares `positions` (plural — one [x,y] per placement direction,
+   *  indexed 0/4/8/12 -> array index 0..3) instead of a single `position`:
+   *  its off-center nozzle doesn't land correctly under a plain 90°
+   *  rotation of one base point, so Factorio ships all 4 pre-computed
+   *  positions directly. When present, the fluid network graph
+   *  (packages/renderer/src/neighbours/fluid.ts) looks up the entity's
+   *  actual facing here instead of rotating `x`/`y`. */
+  positionsByDirection?: [number, number][];
+  /** Which of the prototype's own (possibly several) fluid boxes this point
+   *  belongs to, in declaration order (0-based) — e.g. assembling-machine-2
+   *  has box 0 = input, box 1 = output; foundry has 0/1 = input, 2/3 =
+   *  output. Undefined for a prototype with only one fluid box (a plain
+   *  pump, boiler, etc — nothing to disambiguate). Combined with
+   *  `flowDirection`, lets a caller (index.ts's activeFluidBoxIndices) work
+   *  out which boxes the entity's currently-selected recipe actually
+   *  activates, for machines that only draw the connections their fluid
+   *  boxes are relevant for (assembling-machine-2/3, foundry,
+   *  electromagnetic-plant, cryogenic-plant — real Factorio turns these off
+   *  entirely for a recipe with no matching fluid ingredient/product,
+   *  matching `fluid_boxes_off_when_no_fluid_recipe`). */
+  fluidboxIndex?: number;
+  /** The fluid box's own production_type — which side of a recipe (an
+   *  ingredient vs a product) this point's box corresponds to. */
+  flowDirection?: "input" | "output" | "input-output";
+  /** The prototype's own `fluid_boxes_off_when_no_fluid_recipe` flag —
+   *  true for assembling-machine-2/3, foundry, electromagnetic-plant,
+   *  cryogenic-plant (recipe-conditional boxes); false/absent for
+   *  oil-refinery, chemical-plant, and every other multi-fluid-box entity
+   *  (their boxes always show, regardless of which recipe — Factorio never
+   *  turns them off, they just sit unconnected when a recipe doesn't use
+   *  a given box). renderer/entityLookup.ts's activeFluidConnections only
+   *  filters points where this is true. */
+  boxesOffWhenNoFluidRecipe?: boolean;
 }
 
 /** One `heat_buffer.connections` entry, in the entity's own unrotated

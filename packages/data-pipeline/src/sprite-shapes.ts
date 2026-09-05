@@ -316,7 +316,13 @@ function fluidBoxesOf(proto: any): any[] {
  *  the fluid network graph's own rotation-by-placement-direction expects. */
 export function pipeConnectionsOf(proto: any): PipeConnectionPoint[] {
   const out: PipeConnectionPoint[] = [];
-  for (const box of fluidBoxesOf(proto)) {
+  const boxes = fluidBoxesOf(proto);
+  // Only tagged when there's more than one box to disambiguate — a plain
+  // pump/boiler/etc's single box needs no index, and every point already
+  // gets the box's own production_type either way.
+  const multiBox = boxes.length > 1;
+  const boxesOffWhenNoFluidRecipe = proto.fluid_boxes_off_when_no_fluid_recipe === true;
+  boxes.forEach((box, boxIndex) => {
     for (const c of box.pipe_connections ?? []) {
       // A pipe-to-ground's second entry is its underground link to the
       // paired piece, not a normal surface socket — it has no matching
@@ -326,10 +332,22 @@ export function pipeConnectionsOf(proto: any): PipeConnectionPoint[] {
       // (only undefined/'normal' connection_type counts).
       if (c.connection_type !== undefined && c.connection_type !== "normal") continue;
       const direction = DIR4_BY_VALUE[c.direction ?? 0];
-      if (!direction || !Array.isArray(c.position)) continue;
-      out.push({ x: c.position[0], y: c.position[1], direction: c.direction });
+      if (!direction) continue;
+      const fluidboxIndex = multiBox ? boxIndex : undefined;
+      const flowDirection = box.production_type;
+      // Pumpjack's own output socket declares `positions` (plural, one
+      // [x,y] per placement direction) instead of a single `position` —
+      // see PipeConnectionPoint's own doc comment for why. x/y here are
+      // meaningless in that case (no single north-frame point exists) and
+      // ignored downstream whenever positionsByDirection is present.
+      if (Array.isArray(c.positions) && c.positions.length === 4) {
+        out.push({ x: c.positions[0][0], y: c.positions[0][1], direction: c.direction, positionsByDirection: c.positions, fluidboxIndex, flowDirection, boxesOffWhenNoFluidRecipe });
+        continue;
+      }
+      if (!Array.isArray(c.position)) continue;
+      out.push({ x: c.position[0], y: c.position[1], direction: c.direction, fluidboxIndex, flowDirection, boxesOffWhenNoFluidRecipe });
     }
-  }
+  });
   return out;
 }
 
@@ -443,6 +461,11 @@ export function sheetsOf(graphics: EntityGraphics | undefined): string[] {
     } else if (layer.per === "heat-connection-patches") {
       layer.connected.forEach(collect);
       layer.disconnected.forEach(collect);
+    } else if (layer.per === "module-slot") {
+      for (const slot of layer.slots) {
+        collect(slot.empty);
+        slot.filled.forEach(collect);
+      }
     } else {
       Object.values(layer.sprites).forEach(collect);
     }

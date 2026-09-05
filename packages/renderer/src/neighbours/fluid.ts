@@ -18,10 +18,18 @@ import { opposite, toCardinal, type Cardinal } from "./grid.js";
  *  steps — so `entity.direction` is first collapsed to its nearest
  *  cardinal the same way collect.ts's own `frame.direction` is. */
 function rotatePoint(point: PipeConnectionPoint, entityDirection: number): { x: number; y: number; direction: Cardinal } {
-  const steps = Math.round(toCardinal(entityDirection) / 4) % 4;
+  const cardinal = toCardinal(entityDirection);
+  const steps = Math.round(cardinal / 4) % 4;
+  const direction = ((point.direction + steps * 4) % 16) as Cardinal;
+  // Pumpjack's own output socket: no single base point rotates correctly
+  // (its nozzle is off-center) — Factorio ships the exact position for
+  // each of the 4 facings directly, so look that up instead of rotating.
+  if (point.positionsByDirection) {
+    const [x, y] = point.positionsByDirection[steps]!;
+    return { x, y, direction };
+  }
   let { x, y } = point;
   for (let i = 0; i < steps; i++) [x, y] = [-y, x];
-  const direction = ((point.direction + steps * 4) % 16) as Cardinal;
   return { x, y, direction };
 }
 
@@ -111,11 +119,11 @@ export class FluidNetwork {
  *  entity kind, just each entity's own catalog entry. */
 export function buildFluidNetwork(
   entities: PlacedEntity[],
-  pipeConnectionsOf: (name: string) => PipeConnectionPoint[] | undefined,
+  pipeConnectionsOf: (entity: PlacedEntity) => PipeConnectionPoint[] | undefined,
 ): FluidNetwork {
   const network = new FluidNetwork();
   for (const entity of entities) {
-    const connections = pipeConnectionsOf(entity.name);
+    const connections = pipeConnectionsOf(entity);
     if (connections && connections.length > 0) network.add(entity, connections);
   }
   return network;

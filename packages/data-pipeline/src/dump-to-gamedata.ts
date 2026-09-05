@@ -35,7 +35,7 @@ import type {
   Sprite,
 } from "@factoriotools/engine";
 import { loadLocale, localisedRecipeName, type LocaleTables } from "./locale.js";
-import { animationListGraphics, beltGraphics, directionColumnGraphics, layerOf, pipeConnectionsOf, pipeCoversLayers, sheetsOf, toSprite, unwrap, unwrapAll } from "./sprite-shapes.js";
+import { animationListGraphics, beltGraphics, directionColumnGraphics, pipeConnectionsOf, pipeCoversLayers, sheetsOf, toSprite, unwrap, unwrapAll } from "./sprite-shapes.js";
 import { buildRenderCatalog } from "./render-catalog.js";
 import type { RenderCatalog } from "@factoriotools/engine";
 
@@ -368,7 +368,9 @@ function graphicsForMachine(proto: any): EntityGraphics | undefined {
     "per" in body
       ? body.per === "heat-connection-patches"
         ? [...body.connected, ...body.disconnected].map((s) => s.sheet)
-        : Object.values(body.sprites).map((s) => s.sheet)
+        : body.per === "module-slot"
+          ? body.slots.flatMap((slot) => [slot.empty, ...slot.filled]).map((s) => s.sheet)
+          : Object.values(body.sprites).map((s) => s.sheet)
       : [body.sprites.sheet],
   );
   const bodyOverride = BODY_TIER_OVERRIDES[proto.name];
@@ -396,33 +398,40 @@ function graphicsForRocketSilo(proto: any): EntityGraphics | undefined {
   return layers.length > 0 ? { layers } : undefined;
 }
 
-/** A beacon's empty module sockets are their own art (module_visualisations),
- *  separate from the main body — always visible, not just when a module is
- *  actually inserted (`has_empty_slot: true` is exactly the piece Factorio
- *  itself shows for an empty slot). The other three pieces per slot
- *  (box/lights masks, lights glow) are tinted per the specific module
- *  placed there — this renderer has no runtime-tint concept (see
- *  unwrapAll's own apply_runtime_tint skip), and a blueprint's module
- *  loadout isn't reflected here yet regardless, so only the untinted empty-
- *  slot base renders; a real module in the slot still leaves the socket
- *  visible underneath, same as the game's own idle/no-quality-glow look.
+/** A beacon's module sockets are their own art (module_visualisations),
+ *  separate from the main body — an empty-slot base (`has_empty_slot:
+ *  true`) shown when nothing's in that slot, and (once a module actually
+ *  occupies it) the box/lights-mask/lights-glow pieces layered over it.
+ *  Those filled pieces are tinted per the specific module's own
+ *  beacon_tint — this renderer has no runtime-tint concept (see
+ *  unwrapAll's own apply_runtime_tint skip) — so they draw as the same
+ *  untinted shape regardless of which module is equipped; that still
+ *  reads as "this slot has something in it" even without the game's own
+ *  per-module color.
  *
- *  A small positive ySortBias keeps both slots above beacon-bottom.png even
- *  though they share its Layer.LowerObject tier: slot 2's own shift
+ *  A small positive ySortBias keeps every piece above beacon-bottom.png
+ *  even though they share its Layer.LowerObject tier: slot 2's own shift
  *  (y=-0.375) is less than beacon-bottom's (y=0.031), so without the bias
  *  it would lose the y-sort and render hidden underneath the base —
  *  confirmed by hand in the layer-order debug tool (#/layer-debug). */
 function beaconModuleSlotGraphics(proto: any): GraphicsLayer[] {
   const style = proto.graphics_set?.module_visualisations?.[0];
-  const layers: GraphicsLayer[] = [];
-  for (const slot of style?.slots ?? []) {
+  const rawSlots: any[] = style?.slots ?? [];
+  const slots: { empty: Sprite; filled: Sprite[] }[] = [];
+  for (const slot of rawSlots) {
+    const emptyPiece = slot.find((p: any) => p.has_empty_slot === true);
+    const empty = emptyPiece && toSprite(emptyPiece.pictures);
+    if (!empty) continue; // no empty-slot base means this slot's own art is unusable either way
+    const filled: Sprite[] = [];
     for (const piece of slot) {
-      if (piece.has_empty_slot !== true) continue;
+      if (piece.has_empty_slot === true) continue;
       const sprite = toSprite(piece.pictures);
-      if (sprite) layers.push({ layer: layerOf(piece.render_layer, Layer.LowerObject), sprites: sprite, ySortBias: 1 });
+      if (sprite) filled.push(sprite);
     }
+    slots.push({ empty, filled });
   }
-  return layers;
+  if (slots.length === 0) return [];
+  return [{ layer: Layer.LowerObject, slots, per: "module-slot", ySortBias: 1 }];
 }
 
 function graphicsForBeacon(proto: any): EntityGraphics | undefined {

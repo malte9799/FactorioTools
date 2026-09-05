@@ -1026,33 +1026,24 @@ button.ghost:hover, select:hover { border-color: var(--frame-light); }
   border-top: 1px solid var(--frame-dark);
 }
 
+/* Real quality diamond icon (extract-sprites.ts's "quality" ICON_TABLES
+   entry) sits inside a plain button frame — no more per-tier background
+   color, the icon itself already carries its own color/shape. */
 .quality-dot {
   width: 28px;
   height: 28px;
   border-radius: 2px;
-  padding: 5px;
+  padding: 2px;
   display: flex;
+  align-items: center;
+  justify-content: center;
   border: 1px solid var(--frame-dark);
   background: var(--panel);
   box-shadow: inset 0 1px 3px var(--bevel-dark);
   cursor: pointer;
 }
 
-.quality-dot::before {
-  content: "";
-  width: 100%;
-  height: 100%;
-  border-radius: 50%;
-  background: inherit;
-}
-
 .quality-dot.is-active { border-color: var(--gold-strong); box-shadow: inset 0 1px 3px var(--bevel-dark), 0 0 0 1px rgba(255, 214, 130, 0.5); }
-
-.quality-normal { background: #8a8a8a; }
-.quality-uncommon { background: #4fd15a; }
-.quality-rare { background: #4fa9f0; }
-.quality-epic { background: #b768e8; }
-.quality-legendary { background: linear-gradient(135deg, #ffb84d, #ff7a3d); }
 
 /* ---------- entity GUI (per-machine window, opened by clicking a
    placed entity) — styled after the real game's own machine GUI per the

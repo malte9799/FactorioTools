@@ -311,6 +311,71 @@ function artilleryTurretGraphics(proto: any): EntityGraphics | undefined {
   return layers.length > 0 ? { layers } : undefined;
 }
 
+/** fusion-reactor's own border: 8 fixed screen-space patch positions
+ *  around its perimeter (graphics_set.connections_graphics, each with its
+ *  own baked shift placing it at one specific spot), whose art per slot
+ *  is reassigned by facing — graphics_set.direction_to_connections_graphics
+ *  maps {north, east} (fusion-reactor is `two_direction_only`, matching
+ *  its own tileFootprint being square, so those are its only two facings)
+ *  to an 8-length permutation of the 8 pieces' own (1-based) indices. One
+ *  GraphicsLayer per PHYSICAL slot (position fixed, from that slot's own
+ *  piece's baked shift), with a {north,east} sprite pair — the ART shown
+ *  at a fixed position changes with facing, not the position itself.
+ *  Confirmed by spike: piece 1's shift is unique and constant across both
+ *  entries in direction_to_connections_graphics.north (index 0 -> piece
+ *  1) and .east (index 6 -> piece 1) — the permutation reassigns WHICH
+ *  piece's art renders at slot 0, not slot 0's own screen position. */
+function fusionReactorConnectionLayers(proto: any): GraphicsLayer[] {
+  const gs = proto.graphics_set;
+  const pieces: { main?: Sprite; shadow?: Sprite }[] = (gs?.connections_graphics ?? []).map((c: any) => unwrap(c.pictures));
+  const dirMap = gs?.direction_to_connections_graphics;
+  if (pieces.length === 0 || !dirMap?.north || !dirMap?.east) return [];
+
+  const layers: GraphicsLayer[] = [];
+  for (let slot = 0; slot < pieces.length; slot++) {
+    const northPiece = pieces[dirMap.north[slot] - 1];
+    const eastPiece = pieces[dirMap.east[slot] - 1];
+    if (northPiece?.shadow && eastPiece?.shadow) {
+      layers.push({ layer: Layer.Shadow, sprites: { north: northPiece.shadow, east: eastPiece.shadow }, per: "dir4" });
+    }
+    if (northPiece?.main && eastPiece?.main) {
+      layers.push({ layer: Layer.Object, sprites: { north: northPiece.main, east: eastPiece.main }, per: "dir4" });
+    }
+  }
+  return layers;
+}
+
+function fusionReactorGraphics(proto: any): EntityGraphics | undefined {
+  const body = directionColumnGraphics(proto.graphics_set);
+  const layers = [...(body?.layers ?? []), ...fusionReactorConnectionLayers(proto)];
+  return layers.length > 0 ? { layers } : undefined;
+}
+
+/** rail-signal/rail-chain-signal's own sheet: 16 rows (one per placement
+ *  direction, 0..15 — a genuine 16-way sheet, not the 256-entry aiming grid
+ *  artillery-turret's cannon uses) of line_length animation-state frames
+ *  (red/orange/green light cycling) each. row picks the direction row
+ *  directly (direction16); column cycles through the row's own frames with
+ *  the renderer's animation clock — a blueprint view has no real signal
+ *  state to show, but the light should still visibly blink/cycle rather
+ *  than freeze on frame 0, matching a signal's look at rest in-game. */
+function railSignalGraphics(proto: any): EntityGraphics | undefined {
+  const layers: GraphicsLayer[] = [];
+  for (const l of unwrapAll(proto.ground_picture_set?.structure)) {
+    const lineLength = l.sprite.columns ?? 1;
+    layers.push({
+      layer: l.shadow ? Layer.Shadow : Layer.Object,
+      sprites: { ...l.sprite, columns: lineLength },
+      // ~1.5 real-world seconds per full 3-frame loop (0.5s/frame, 60fps
+      // render clock / 30) — full clock speed made the cycle read as a
+      // flicker/strobe instead of a visible color change.
+      column: { by: "animation", slowdown: 30 },
+      row: { by: "direction16" },
+    });
+  }
+  return layers.length > 0 ? { layers } : undefined;
+}
+
 /** Gates only have two real orientations, so north aliases south and east
  *  aliases west. */
 function gateGraphics(proto: any): EntityGraphics | undefined {
@@ -531,8 +596,6 @@ const PICTURE_FIELD: Record<string, string> = {
   "power-switch": "power_on_animation",
   "display-panel": "sprites",
   "land-mine": "picture_safe",
-  "rail-signal": "ground_picture_set",
-  "rail-chain-signal": "ground_picture_set",
   "train-stop": "rail_overlay_animations",
   "asteroid-collector": "graphics_set",
   "agricultural-tower": "graphics_set",
@@ -557,7 +620,6 @@ const PICTURE_FIELD: Record<string, string> = {
   "infinity-container": "picture",
   "electric-energy-interface": "picture",
   "burner-generator": "animation",
-  "fusion-reactor": "graphics_set",
   "selector-combinator": "sprites",
   "lightning-attractor": "chargable_graphics",
 };
@@ -687,8 +749,16 @@ export function buildRenderCatalog(raw: Raw, locale: LocaleTables, version: stri
   for (const proto of Object.values(raw["storage-tank"] ?? {})) {
     add(proto, storageTankGraphics(proto));
   }
+  for (const proto of Object.values(raw["fusion-reactor"] ?? {})) {
+    add(proto, fusionReactorGraphics(proto));
+  }
   for (const proto of Object.values(raw.reactor ?? {})) {
     add(proto, reactorGraphics(proto));
+  }
+  for (const table of ["rail-signal", "rail-chain-signal"]) {
+    for (const proto of Object.values(raw[table] ?? {})) {
+      add(proto, railSignalGraphics(proto));
+    }
   }
   for (const proto of Object.values(raw.pipe ?? {})) {
     add(proto, pipeGraphics(proto.pictures));

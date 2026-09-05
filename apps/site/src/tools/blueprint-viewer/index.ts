@@ -17,12 +17,12 @@ import {
   TIMESCALE_FACTOR,
 } from "@factoriotools/engine";
 import type { CalculationResult, Timescale, Blueprint, PlacedEntity, QualityName, MachineGroup, ModuleStack, ThroughputContext, BottleneckSubgroup } from "@factoriotools/engine";
-import { mountRenderer, isPoleLike, type BlueprintRenderer, type HighlightRole } from "@factoriotools/renderer";
+import { mountRenderer, isPoleLike, isTwoDirectionOnly, rotationStep, type BlueprintRenderer, type HighlightRole } from "@factoriotools/renderer";
 import { buildRecipeCard, renderResults, type ViewOptions } from "./legacy-view/panels.js";
 import { icon } from "./legacy-view/icons.js";
 import { makeFloatingWindow } from "../../window-manager.js";
 import { buildPalette } from "./edit-palette.js";
-import { appendQualityOptions } from "./quality-options.js";
+import { appendQualityOptions, QUALITY_TIERS } from "./quality-options.js";
 import { buildPropertiesPanel } from "./edit-properties.js";
 import { buildLibrarySidebar } from "./library-sidebar.js";
 
@@ -300,10 +300,21 @@ export function mountBlueprintViewer(root: HTMLElement): () => void {
     altModeButton.classList.toggle("is-active", altModeOn);
   }
   altModeButton.addEventListener("click", () => setAltMode(!altModeOn), { signal });
-  window.addEventListener("keydown", (e) => {
+  // Toggles on key-UP, not key-DOWN — matches the real game's own Alt-mode
+  // gesture (holding Alt doesn't preview it here, it's a plain toggle) and
+  // avoids a held key's own OS-level repeat re-firing this on every
+  // auto-repeat tick the way keydown would.
+  window.addEventListener("keyup", (e) => {
     if (e.key !== "Alt") return;
     if (document.activeElement instanceof HTMLInputElement || document.activeElement instanceof HTMLTextAreaElement) return;
     e.preventDefault();
+    // The Alt release that ends a Shift+Alt+scroll quality-cycle gesture
+    // isn't a plain "tap Alt" toggle press — skip the toggle just this
+    // once and clear the flag for the next, genuinely plain release.
+    if (usedAltForQualityScroll) {
+      usedAltForQualityScroll = false;
+      return;
+    }
     setAltMode(!altModeOn);
   }, { signal });
 
@@ -572,19 +583,31 @@ export function mountBlueprintViewer(root: HTMLElement): () => void {
     mutateEntity(selectedEntity, mutate);
   }
 
-  /** Quarter-turn step in the 16-way scheme (step 4 of a full turn of 16) —
-   *  matches toCardinal()'s own commitment to 16-way-only (see its doc
-   *  comment in packages/renderer/src/beltGraph.ts): every direction value
-   *  this app produces or reads is 16-way, since that's the only scheme
-   *  Factorio 2.0 blueprint exports use. Shared by the properties panel's
-   *  Rotate button and the 'r'/Shift+R keyboard shortcut (both the
+  /** Quarter-turn step in the 16-way scheme (step 4 of a full turn of 16)
+   *  for most entities — matches toCardinal()'s own commitment to
+   *  16-way-only (see its doc comment in
+   *  packages/renderer/src/beltGraph.ts): every direction value this app
+   *  produces or reads is 16-way, since that's the only scheme Factorio 2.0
+   *  blueprint exports use. rotationStep gives a finer step (1 of 16) for
+   *  rail-signal/rail-chain-signal, matching the real game's own 22.5°
+   *  rotate gesture for those two. Shared by the properties panel's Rotate
+   *  button and the 'r'/Shift+R keyboard shortcut (both the
    *  currently-selected AND the merely-hovered-under-cursor path) so every
    *  trigger rotates identically. `reverse` turns counter-clockwise
    *  (Shift+R) instead of the default clockwise (r). */
   function rotateEntity(target: PlacedEntity, reverse = false) {
     if (isPoleLike(target.name)) return;
+    if (isTwoDirectionOnly(target.name)) {
+      // Only two facings exist at all (north=0, east=4) — R just toggles
+      // between them, `reverse` is a no-op.
+      mutateEntity(target, (e) => {
+        e.direction = e.direction === 0 ? 4 : 0;
+      });
+      return;
+    }
+    const step = rotationStep(target.name);
     mutateEntity(target, (e) => {
-      e.direction = (e.direction + (reverse ? -4 : 4) + 16) % 16;
+      e.direction = (e.direction + (reverse ? -step : step) + 16) % 16;
     });
   }
 
@@ -613,7 +636,7 @@ export function mountBlueprintViewer(root: HTMLElement): () => void {
     } else {
       paletteSelection = newMode.place;
       paletteQuality = newMode.quality ?? "normal";
-      renderer.setInteractionMode({ kind: "place", entityName: newMode.place, direction: newMode.direction });
+      renderer.setInteractionMode({ kind: "place", entityName: newMode.place, direction: newMode.direction, quality: paletteQuality });
     }
     // The yellow inward-fading border is the at-a-glance "you have
     // something in hand" cue, matching the real game's own cursor-ghost
@@ -646,9 +669,14 @@ export function mountBlueprintViewer(root: HTMLElement): () => void {
 
   const paletteBody = $<HTMLDivElement>("#palette-body");
   let lastPalettePointer = { x: 0, y: 0 };
+  // Set by refreshPalette (rebuilt whenever the palette's own DOM is, e.g.
+  // after loadData() swaps datasets) — lets code outside edit-palette.ts
+  // (the Shift+Alt+scroll quality-cycle shortcut below) drive the strip's
+  // active tier without a second, separate source of truth for it.
+  let setPaletteQuality: (quality: QualityName) => void = () => {};
 
   function refreshPalette() {
-    buildPalette(paletteBody, getData(), getRenderCatalog(), (entityName, quality) => {
+    setPaletteQuality = buildPalette(paletteBody, getData(), getRenderCatalog(), (entityName, quality) => {
       setMode({ place: entityName, quality });
       deselect();
       // Picking a cell changes paletteSelection without the pointer itself
@@ -914,6 +942,33 @@ export function mountBlueprintViewer(root: HTMLElement): () => void {
     input.value = text;
     load(text);
   }, { signal });
+
+  // Set whenever Shift+Alt+scroll actually fires, checked (and cleared) by
+  // the Alt-keyup handler below — lets it skip the alt-mode toggle for the
+  // Alt release that ends this gesture, instead of reading as a plain
+  // "tap Alt by itself" toggle press.
+  let usedAltForQualityScroll = false;
+
+  // Shift+Alt+scroll while a ghost is in hand cycles its quality tier
+  // (up on scroll-up, down on scroll-down) — matches the real game's own
+  // quality-cycle gesture. Captured on the container (not the renderer's
+  // own inner <canvas>) so it can stopImmediatePropagation before the
+  // renderer's own wheel listener (canvas.ts's zoom-at-cursor) sees it —
+  // without that, scrolling to change quality would also zoom the camera.
+  canvas.addEventListener("wheel", (e) => {
+    if (!e.shiftKey || !e.altKey || !paletteSelection) return;
+    e.preventDefault();
+    e.stopImmediatePropagation();
+    usedAltForQualityScroll = true;
+    const i = QUALITY_TIERS.indexOf(paletteQuality);
+    const next = QUALITY_TIERS[Math.min(QUALITY_TIERS.length - 1, Math.max(0, i + (e.deltaY < 0 ? 1 : -1)))]!;
+    if (next === paletteQuality) return;
+    // No direction passed — setMode/setInteractionMode preserve the
+    // ghost's current facing as long as the entity name itself doesn't
+    // change, which it doesn't here (only the quality does).
+    setMode({ place: paletteSelection, quality: next });
+    setPaletteQuality(next);
+  }, { capture: true, signal });
 
   // 'r' rotates whatever you're currently "holding" — matches Factorio's
   // own convention. In place mode that's the not-yet-placed ghost (rotates

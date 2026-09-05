@@ -122,6 +122,75 @@ export function isPoleLike(name: string): boolean {
   return name.endsWith("electric-pole") || name === "substation";
 }
 
+/** The R/Shift+R quarter-turn step, in the 16-way scheme this renderer
+ *  produces for every direction value (see rotateGhost's own doc comment).
+ *  Every entity rotates in 90° increments (step 4 of 16) except
+ *  rail-signal/rail-chain-signal, which the real game rotates in much
+ *  finer 22.5° increments (step 1 of 16) — their 16-row direction sheet
+ *  (see data-pipeline's railSignalGraphics) exists precisely to show all
+ *  16 of those facings, not just 4. */
+export function rotationStep(name: string): number {
+  return name === "rail-signal" || name === "rail-chain-signal" ? 1 : 4;
+}
+
+/** True for every `two_direction_only` entity (only fusion-reactor today)
+ *  — the real game only lets R toggle these between north and east, not
+ *  the usual 4 (or, for rail-signal/rail-chain-signal, 16) facings. Its own
+ *  connection-patch art (data-pipeline's fusionReactorGraphics) only has
+ *  north/east sprites for exactly this reason — south/west would silently
+ *  draw nothing for those layers. */
+export function isTwoDirectionOnly(name: string): boolean {
+  return name === "fusion-reactor";
+}
+
+/** For entities whose fluid boxes turn off entirely when the current
+ *  recipe has no matching fluid ingredient/product (assembling-machine-2/3,
+ *  foundry, electromagnetic-plant, cryogenic-plant — Factorio's own
+ *  `fluid_boxes_off_when_no_fluid_recipe`), filters `points` down to just
+ *  the boxes that recipe actually activates. Everything else — a
+ *  single-fluid-box entity, or a multi-box one WITHOUT that flag
+ *  (oil-refinery, chemical-plant — Factorio never turns their boxes off,
+ *  a box just sits unconnected when a recipe doesn't use it) — passes
+ *  through untouched.
+ *
+ *  Factorio assigns a recipe's fluid ingredients/products to boxes by
+ *  matching declaration order: the machine's own boxes, in ascending
+ *  fluidboxIndex, filtered to a flow direction, get the recipe's fluid
+ *  ingredients (for input boxes) or products (for output) in the order
+ *  each declares them — `fluidbox_index` on an ingredient/product
+ *  overrides this only for the rare recipe that needs to (e.g.
+ *  chemical-plant's basic-oil-processing); the implicit order-matching
+ *  covers every one of these 4 machines' own recipes, none of which uses
+ *  an explicit index. */
+export function activeFluidConnections(
+  points: PipeConnectionPoint[],
+  recipeName: string | undefined,
+  data: GameData,
+): PipeConnectionPoint[] {
+  const gated = points.some((p) => p.fluidboxIndex !== undefined && p.boxesOffWhenNoFluidRecipe);
+  if (!gated) return points;
+
+  const recipe = recipeName ? data.recipes[recipeName] : undefined;
+  const isFluid = (name: string) => data.items[name]?.kind === "fluid";
+  const fluidIngredientCount = recipe?.ingredients.filter((i) => isFluid(i.name)).length ?? 0;
+  const fluidProductCount = recipe?.results.filter((r) => isFluid(r.name)).length ?? 0;
+
+  // Rank each box among same-flow-direction boxes (ascending fluidboxIndex)
+  // to know its position in the recipe's own ingredient/product order.
+  const boxIndices = [...new Set(points.map((p) => p.fluidboxIndex).filter((i): i is number => i !== undefined))].sort((a, b) => a - b);
+  const rankByFlow = new Map<"input" | "output" | "input-output", number>();
+  const activeBoxes = new Set<number>();
+  for (const boxIndex of boxIndices) {
+    const flow = points.find((p) => p.fluidboxIndex === boxIndex)?.flowDirection;
+    if (!flow) continue;
+    const rank = rankByFlow.get(flow) ?? 0;
+    rankByFlow.set(flow, rank + 1);
+    const limit = flow === "output" ? fluidProductCount : fluidIngredientCount;
+    if (rank < limit) activeBoxes.add(boxIndex);
+  }
+  return points.filter((p) => p.fluidboxIndex === undefined || activeBoxes.has(p.fluidboxIndex));
+}
+
 /** Family predicates for the neighbour classifiers, derived from which
  *  connector an entity declares. */
 export function makeConnectorPredicates(lookup: Map<string, ResolvedVisual>) {

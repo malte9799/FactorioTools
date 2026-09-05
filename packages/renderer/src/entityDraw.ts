@@ -7,6 +7,7 @@ import type { IconAtlas } from "./iconAtlas.js";
 const RECIPE_ICON_SIZE = 0.8;
 const MODULE_ICON_SIZE = 0.42;
 const MODULE_ICON_GAP = 0.05;
+const QUALITY_ICON_SIZE = 0.3;
 
 function drawIcon(ctx: CanvasRenderingContext2D, iconAtlas: IconAtlas, name: string, cx: number, cy: number, size: number): boolean {
   const found = iconAtlas.get(name);
@@ -33,6 +34,38 @@ function drawIcon(ctx: CanvasRenderingContext2D, iconAtlas: IconAtlas, name: str
   return true;
 }
 
+/** Plain icon, no backing disc/rim — the quality badge's own diamond
+ *  sprite already reads fine on its own at this small size (unlike the
+ *  larger recipe/module badges, which need the disc for contrast), and a
+ *  circular backing looked visually wrong behind a diamond shape. */
+function drawPlainIcon(ctx: CanvasRenderingContext2D, iconAtlas: IconAtlas, name: string, cx: number, cy: number, size: number): boolean {
+  const found = iconAtlas.get(name);
+  if (!found) return false;
+  const { sheet, cell } = found;
+  ctx.drawImage(sheet, cell.x, cell.y, cell.w, cell.h, cx - size / 2, cy - size / 2, size, size);
+  return true;
+}
+
+/** Quality badge: bottom-left corner of the entity's own footprint,
+ *  matching the real game's alt-mode. "normal" quality has no badge
+ *  in-game either (it's the default, nothing to call out) — every other
+ *  tier does, on ANY entity (not gated to machines/beacons the way the
+ *  recipe/module badges are). Exported standalone (not folded into
+ *  drawAltModeOverlay below) so the placement ghost can show it too —
+ *  what quality you're about to place should always be visible, not only
+ *  in alt-mode, matching the real game's own cursor-stack quality icon. */
+export function drawQualityBadge(
+  ctx: CanvasRenderingContext2D,
+  iconAtlas: IconAtlas,
+  entity: PlacedEntity,
+  visual: ResolvedVisual,
+): void {
+  if (entity.quality === "normal") return;
+  const [fw, fh] = visual.tileFootprint;
+  const size = Math.min(QUALITY_ICON_SIZE, fw * 0.3, fh * 0.3);
+  drawPlainIcon(ctx, iconAtlas, entity.quality, entity.x - fw / 2 + size / 2, entity.y + fh / 2 - size / 2, size);
+}
+
 /** Alt-mode overlay (Factorio's own Alt-key view): a recipe icon centered
  *  on crafting machines, and a row of module icons beneath — for machines
  *  AND beacons, since both can carry modules. Drawn as a separate pass
@@ -46,8 +79,10 @@ export function drawAltModeOverlay(
   entity: PlacedEntity,
   visual: ResolvedVisual,
 ): void {
-  if (!visual.isMachine && !visual.isBeacon) return;
+  drawQualityBadge(ctx, iconAtlas, entity, visual);
+
   const [fw, fh] = visual.tileFootprint;
+  if (!visual.isMachine && !visual.isBeacon) return;
 
   // Recipe badge: centered on the machine, or nudged up a touch when a
   // module row will also be drawn so the two don't overlap.
