@@ -79,6 +79,14 @@ export interface BlueprintRenderer {
    *  holding an item in hand doesn't suppress right-click removal in the
    *  real game either. */
   onErase(callback: (entityNumber: number) => void): void;
+  /** Fires whenever the shared sprite atlas's pending-load count changes —
+   *  `loading` is true while at least one sheet is still fetching/decoding
+   *  (a pan/zoom bringing new entities into view, or the initial burst on
+   *  loading a blueprint). Drives a small, non-blocking "still loading
+   *  sprites" badge rather than a full-screen spinner — the canvas keeps
+   *  drawing outline fallbacks for not-yet-loaded entities the whole time,
+   *  nothing is actually blocked. */
+  onLoadingChange(callback: (loading: boolean) => void): void;
   destroy(): void;
 }
 
@@ -847,6 +855,9 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
     onErase(callback) {
       eraseCallback = callback;
     },
+    onLoadingChange(callback) {
+      atlas.setOnPendingChange((pending) => callback(pending > 0));
+    },
     destroy() {
       destroyed = true;
       cancelAnimationFrame(rafHandle);
@@ -861,6 +872,7 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
       window.removeEventListener("keydown", onKeyDown);
       window.removeEventListener("keyup", onKeyUp);
       window.removeEventListener("blur", onBlur);
+      atlas.setOnPendingChange(null);
     },
   };
 }

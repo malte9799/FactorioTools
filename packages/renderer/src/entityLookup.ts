@@ -122,15 +122,24 @@ export function isPoleLike(name: string): boolean {
   return name.endsWith("electric-pole") || name === "substation";
 }
 
-/** The R/Shift+R quarter-turn step, in the 16-way scheme this renderer
+/** Entities that rotate in 22.5° increments (step 1 of the 16-way scheme)
+ *  instead of the usual 90° (step 4) — rail-signal/rail-chain-signal have
+ *  a genuine 16-row direction sheet (data-pipeline's railSignalGraphics),
+ *  one real sprite per step. */
+const FINE_ROTATION = new Set(["rail-signal", "rail-chain-signal"]);
+
+/** Entities that rotate in 45° increments (step 2 of 16) — 8-way, matching
+ *  their own 8 real facing sprites (dir8) — railgun-turret only, so far. */
+const EIGHT_WAY_ROTATION = new Set(["railgun-turret"]);
+
+/** The R/Shift+R rotation step, in the 16-way scheme this renderer
  *  produces for every direction value (see rotateGhost's own doc comment).
  *  Every entity rotates in 90° increments (step 4 of 16) except
- *  rail-signal/rail-chain-signal, which the real game rotates in much
- *  finer 22.5° increments (step 1 of 16) — their 16-row direction sheet
- *  (see data-pipeline's railSignalGraphics) exists precisely to show all
- *  16 of those facings, not just 4. */
+ *  FINE_ROTATION (step 1) and EIGHT_WAY_ROTATION (step 2) above. */
 export function rotationStep(name: string): number {
-  return name === "rail-signal" || name === "rail-chain-signal" ? 1 : 4;
+  if (FINE_ROTATION.has(name)) return 1;
+  if (EIGHT_WAY_ROTATION.has(name)) return 2;
+  return 4;
 }
 
 /** True for every `two_direction_only` entity (only fusion-reactor today)

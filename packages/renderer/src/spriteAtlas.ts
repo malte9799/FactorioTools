@@ -22,6 +22,22 @@ export class SpriteAtlas {
   // work in the hot path.
   private images = new Map<string, HTMLImageElement>();
   private loading = new Map<string, Promise<HTMLImageElement>>();
+  // How many of `loading`'s promises haven't settled yet — used instead of
+  // `loading.size` directly so a caller (render.ts's small loading-spinner
+  // badge) can tell "actively fetching/decoding right now" apart from
+  // "every sheet ever requested this session", which loading.size alone
+  // conflates (entries are never removed once settled).
+  private pendingCount = 0;
+  private onPendingChange: ((pending: number) => void) | null = null;
+
+  /** Subscribes to pendingCount changes — called with the new count every
+   *  time a sheet load starts or settles. Only one subscriber at a time
+   *  (render.ts's own small loading badge); a second call replaces the
+   *  first, matching every other single-callback setter in this
+   *  codebase (onHover, onPlace, etc). */
+  setOnPendingChange(callback: ((pending: number) => void) | null): void {
+    this.onPendingChange = callback;
+  }
 
   /** Returns the image if already loaded (synchronous, for the draw loop);
    *  triggers a load in the background otherwise so a later frame picks it
@@ -42,6 +58,12 @@ export class SpriteAtlas {
     if (existing) return existing;
     if (!this.loading.has(modPath)) {
       const url = sheetUrl(modPath);
+      this.pendingCount++;
+      this.onPendingChange?.(this.pendingCount);
+      const settle = () => {
+        this.pendingCount--;
+        this.onPendingChange?.(this.pendingCount);
+      };
       const promise = new Promise<HTMLImageElement>((resolve, reject) => {
         const img = new Image();
         img.decoding = "async";
@@ -56,7 +78,7 @@ export class SpriteAtlas {
       }).catch((err) => {
         console.warn(err.message);
         throw err;
-      });
+      }).finally(settle);
       this.loading.set(modPath, promise);
     }
     return undefined;

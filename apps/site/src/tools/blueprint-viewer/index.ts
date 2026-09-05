@@ -25,10 +25,34 @@ import { buildPalette } from "./edit-palette.js";
 import { appendQualityOptions, QUALITY_TIERS } from "./quality-options.js";
 import { buildPropertiesPanel } from "./edit-properties.js";
 import { buildLibrarySidebar } from "./library-sidebar.js";
+import { saveToLibrary } from "./blueprint-library.js";
 
 const TEMPLATE = `
   <div id="schematic" class="schematic-frame"></div>
   <div id="machine-tooltip" class="machine-tooltip gui-window" hidden></div>
+
+  <div id="load-spinner" class="load-spinner" hidden aria-hidden="true">
+    <div class="load-spinner-ring"></div>
+  </div>
+
+  <div id="unsaved-modal-backdrop" class="modal-backdrop" hidden>
+    <div id="unsaved-modal" class="gui-window modal-window" role="dialog" aria-modal="true" aria-labelledby="unsaved-modal-title">
+      <div class="gui-titlebar">
+        <span id="unsaved-modal-title">Unsaved changes</span>
+      </div>
+      <div class="gui-body">
+        <p>The current blueprint has unsaved changes. What would you like to do?</p>
+        <div id="unsaved-modal-save-row" class="library-save-row" hidden>
+          <input id="unsaved-modal-name" type="text" placeholder="Name…" class="library-save-input" aria-label="Name for the blueprint to save" />
+        </div>
+        <div class="intake-actions">
+          <button id="unsaved-modal-save" class="primary" type="button">Save</button>
+          <button id="unsaved-modal-discard" class="ghost" type="button">Discard</button>
+          <button id="unsaved-modal-cancel" class="ghost" type="button">Cancel</button>
+        </div>
+      </div>
+    </div>
+  </div>
 
   <div id="library-window" class="gui-window docked-window" hidden>
     <div class="gui-titlebar">
@@ -271,6 +295,10 @@ export function mountBlueprintViewer(root: HTMLElement): () => void {
   let blueprints: Blueprint[] = [];
   let entities: PlacedEntity[] = [];
   let result: CalculationResult | null = null;
+  // Set by every edit (applyEdit/undo/redo), cleared by load()/startNew()
+  // and after a successful library save — drives the "Save/Discard/Cancel"
+  // guard before loading over an in-progress edit the user hasn't saved.
+  let hasUnsavedChanges = false;
 
   const options: ViewOptions = {
     timescale: "minute",
@@ -398,6 +426,7 @@ export function mountBlueprintViewer(root: HTMLElement): () => void {
     nextEntityNumber = entities.reduce((max, e) => Math.max(max, e.entityNumber), 0) + 1;
     undoStack = [];
     redoStack = [];
+    hasUnsavedChanges = false;
     deselect();
     renderer.loadBlueprint(entities);
     recalculate();
@@ -416,6 +445,7 @@ export function mountBlueprintViewer(root: HTMLElement): () => void {
     nextEntityNumber = 1;
     undoStack = [];
     redoStack = [];
+    hasUnsavedChanges = false;
     deselect();
     renderer.loadBlueprint(entities);
     recalculate();
@@ -461,6 +491,7 @@ export function mountBlueprintViewer(root: HTMLElement): () => void {
     undoStack.push(snapshotEntities());
     redoStack = [];
     mutate();
+    hasUnsavedChanges = true;
     renderer.updateEntities(entities);
     recalculate();
     renderPropertiesPanel();
@@ -472,6 +503,7 @@ export function mountBlueprintViewer(root: HTMLElement): () => void {
     redoStack.push(snapshotEntities());
     entities = undoStack.pop()!;
     selectedEntity = undefined; // safest default: it may not exist post-undo
+    hasUnsavedChanges = true;
     renderer.updateEntities(entities);
     recalculate();
     renderPropertiesPanel();
@@ -483,6 +515,7 @@ export function mountBlueprintViewer(root: HTMLElement): () => void {
     undoStack.push(snapshotEntities());
     entities = redoStack.pop()!;
     selectedEntity = undefined;
+    hasUnsavedChanges = true;
     renderer.updateEntities(entities);
     recalculate();
     renderPropertiesPanel();
@@ -664,6 +697,19 @@ export function mountBlueprintViewer(root: HTMLElement): () => void {
     renderer.onErase((entityNumber) => {
       removeEntity(entityNumber);
     });
+    // Small non-blocking "still loading sprites" badge — fires while a
+    // pan/zoom brings never-before-seen entities into view (or the
+    // initial burst on loading a blueprint) and their sheets are still
+    // fetching/decoding. Not gating anything: the canvas keeps drawing
+    // outline fallbacks for those entities the whole time, this is purely
+    // an at-a-glance "why do some things look unfinished" cue. Shares the
+    // same #load-spinner element guardedLoad's own withSpinner uses — spinner
+    // itself is declared further down (only ever CALLED once actual sprite
+    // loads happen, well after that point in module init, so no temporal-
+    // dead-zone issue registering the callback here first). */
+    renderer.onLoadingChange((loading) => {
+      setSpinnerReason("sprite-load", loading);
+    });
   }
   wireEditCallbacks();
 
@@ -803,6 +849,127 @@ export function mountBlueprintViewer(root: HTMLElement): () => void {
     populateTargetOptions();
   }
 
+  const spinner = $<HTMLDivElement>("#load-spinner");
+  // Two independent sources can each want the spinner showing at once — a
+  // blueprint decode/rebuild (withSpinner) and the sprite atlas's own
+  // loading state (renderer.onLoadingChange, wired in wireEditCallbacks) —
+  // a bare boolean would let whichever finishes first hide it out from
+  // under the other. Small pending-reason set instead: visible whenever
+  // it's non-empty, each source only ever adds/removes its own key.
+  const spinnerReasons = new Set<string>();
+  function setSpinnerReason(reason: string, active: boolean): void {
+    if (active) spinnerReasons.add(reason);
+    else spinnerReasons.delete(reason);
+    spinner.hidden = spinnerReasons.size === 0;
+  }
+
+  /** Shows the loading spinner, yields one frame so it actually paints
+   *  (decoding + rebuilding the renderer/spatial index for a large
+   *  blueprint is synchronous and can block the main thread long enough
+   *  that skipping this would leave the spinner invisible the whole
+   *  time), then runs `work` and hides the spinner again. */
+  async function withSpinner<T>(work: () => T): Promise<T> {
+    setSpinnerReason("blueprint-load", true);
+    await new Promise(requestAnimationFrame);
+    try {
+      return work();
+    } finally {
+      setSpinnerReason("blueprint-load", false);
+    }
+  }
+
+  const unsavedBackdrop = $<HTMLDivElement>("#unsaved-modal-backdrop");
+  const unsavedSaveRow = $<HTMLDivElement>("#unsaved-modal-save-row");
+  const unsavedNameInput = $<HTMLInputElement>("#unsaved-modal-name");
+  const unsavedSaveButton = $<HTMLButtonElement>("#unsaved-modal-save");
+  const unsavedDiscardButton = $<HTMLButtonElement>("#unsaved-modal-discard");
+  const unsavedCancelButton = $<HTMLButtonElement>("#unsaved-modal-cancel");
+
+  /** Asks "Save / Discard / Cancel" over the current unsaved changes.
+   *  Resolves once the user picks one — Save additionally prompts for a
+   *  name inline (same flow as the Library sidebar's own "Save current")
+   *  before resolving, so a "save" result means the save already
+   *  succeeded. Rejecting/closing without a real choice (e.g. a future
+   *  Escape/backdrop-click) isn't wired — the three buttons are the only
+   *  way out, matching a blocking "you must decide" guard. */
+  function confirmUnsavedChanges(): Promise<"save" | "discard" | "cancel"> {
+    return new Promise((resolve) => {
+      unsavedSaveRow.hidden = true;
+      unsavedNameInput.value = "";
+      unsavedBackdrop.hidden = false;
+
+      function cleanup(): void {
+        unsavedBackdrop.hidden = true;
+        unsavedSaveButton.removeEventListener("click", onSaveClick);
+        unsavedDiscardButton.removeEventListener("click", onDiscard);
+        unsavedCancelButton.removeEventListener("click", onCancel);
+        unsavedNameInput.removeEventListener("keydown", onNameKeydown);
+      }
+      function onSaveClick(): void {
+        // First press reveals the name field instead of saving blindly —
+        // matches the sidebar's own "Save current" row, which always has
+        // the name field visible; here it only appears once Save is
+        // actually chosen, so Discard/Cancel stay one click away.
+        if (unsavedSaveRow.hidden) {
+          unsavedSaveRow.hidden = false;
+          unsavedNameInput.focus();
+          return;
+        }
+        const template = blueprints[0] ?? { item: "blueprint" as const, label: undefined, version: undefined };
+        const bpString = encodeBlueprintString({ blueprint: toBlueprint(entities, template) });
+        const label = unsavedNameInput.value.trim() || "Untitled blueprint";
+        try {
+          saveToLibrary(bpString, label);
+          librarySidebar.refresh();
+          cleanup();
+          resolve("save");
+        } catch {
+          setStatus("Couldn't save — the current blueprint doesn't decode.", "error");
+        }
+      }
+      function onDiscard(): void {
+        cleanup();
+        resolve("discard");
+      }
+      function onCancel(): void {
+        cleanup();
+        resolve("cancel");
+      }
+      function onNameKeydown(e: KeyboardEvent): void {
+        if (e.key === "Enter") onSaveClick();
+      }
+      unsavedSaveButton.addEventListener("click", onSaveClick);
+      unsavedDiscardButton.addEventListener("click", onDiscard);
+      unsavedCancelButton.addEventListener("click", onCancel);
+      unsavedNameInput.addEventListener("keydown", onNameKeydown);
+    });
+  }
+
+  /** Every load entry point (clipboard import, library pick, demo,
+   *  built-in fixtures) goes through this instead of calling load()
+   *  directly: guards against silently discarding an in-progress edit,
+   *  then shows the spinner while the actual (synchronous, can be slow
+   *  for a big blueprint) decode/build work runs. */
+  async function guardedLoad(text: string): Promise<void> {
+    if (hasUnsavedChanges) {
+      const choice = await confirmUnsavedChanges();
+      if (choice === "cancel") return;
+    }
+    await withSpinner(() => load(text));
+  }
+
+  /** Same guard as guardedLoad, for the "+ New blueprint" action — it has
+   *  no blueprint STRING to spinner-load (startNew is instant, clearing
+   *  the canvas), just the same "you have unsaved changes" question
+   *  first. */
+  async function guardedStartNew(): Promise<void> {
+    if (hasUnsavedChanges) {
+      const choice = await confirmUnsavedChanges();
+      if (choice === "cancel") return;
+    }
+    startNew();
+  }
+
   function load(text: string) {
     try {
       const envelope = decodeBlueprintString(text);
@@ -837,17 +1004,17 @@ export function mountBlueprintViewer(root: HTMLElement): () => void {
     }
   }
 
-  buildLibrarySidebar($<HTMLDivElement>("#library-body"), {
+  const librarySidebar = buildLibrarySidebar($<HTMLDivElement>("#library-body"), {
     onLoad(bpString) {
       input.value = bpString;
-      load(bpString);
+      void guardedLoad(bpString);
     },
     getCurrentBpString() {
       if (!entities.length) return null;
       const template = blueprints[0] ?? { item: "blueprint" as const, label: undefined, version: undefined };
       return encodeBlueprintString({ blueprint: toBlueprint(entities, template) });
     },
-    onNew: startNew,
+    onNew: guardedStartNew,
   });
 
   // Titlebar button slides the whole docked sidebar out to a slim collapsed
@@ -872,7 +1039,7 @@ export function mountBlueprintViewer(root: HTMLElement): () => void {
         return;
       }
       input.value = text;
-      load(text);
+      await guardedLoad(text);
     } catch {
       setStatus("Couldn't read the clipboard — your browser may need permission granted first.", "error");
     }
@@ -899,19 +1066,24 @@ export function mountBlueprintViewer(root: HTMLElement): () => void {
       const pool = await loadExamplePool();
       const pick = pool[Math.floor(Math.random() * pool.length)]!;
       input.value = pick.bp;
-      load(pick.bp);
+      await guardedLoad(pick.bp);
     } catch {
       setStatus("Couldn't load an example blueprint — check your connection and try again.", "error");
     }
   }, { signal });
   $("#rotation-test").addEventListener("click", () => {
     input.value = ROTATION_TEST_BLUEPRINT;
-    load(ROTATION_TEST_BLUEPRINT);
+    void guardedLoad(ROTATION_TEST_BLUEPRINT);
   }, { signal });
   $("#debug-lab").addEventListener("click", () => {
     input.value = DEBUG_BLUEPRINT;
-    load(DEBUG_BLUEPRINT);
+    void guardedLoad(DEBUG_BLUEPRINT);
   }, { signal });
+  // Switching between blueprints WITHIN the same already-loaded book isn't
+  // gated — it's not "loading something new" the way import/library-pick
+  // is, and selectBlueprint's own reset (undoStack/hasUnsavedChanges) only
+  // applies to the blueprint just switched TO, matching how the picker
+  // already behaved before this guard existed.
   picker.addEventListener("change", () => selectBlueprint(Number(picker.value)), { signal });
 
   // Cmd/Ctrl+Z undo, +Shift redo — guarded against firing while focus is in

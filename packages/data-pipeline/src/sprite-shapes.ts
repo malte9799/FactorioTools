@@ -50,6 +50,14 @@ export interface UnwrappedLayer {
   columns: number;
   /** True when those columns are facings rather than animation frames. */
   directionIndexed: boolean;
+  /** True when direction AND a real animation are both packed into this
+   *  one grid — direction as rows, the animation's own frames as columns
+   *  (e.g. rocket-turret/tesla-turret's own raising sheet: direction_count
+   *  4 rows of a genuine 18-frame raise animation each). Mutually
+   *  exclusive with directionIndexed (that's the "columns ARE the
+   *  direction, no separate animation" case); this is "columns are a real
+   *  animation, direction is the row instead". */
+  directionInRows: boolean;
 }
 
 /** Unwraps the nesting Factorio puts around sprite declarations into every
@@ -89,6 +97,7 @@ export function unwrapAll(source: any): UnwrappedLayer[] {
       shadow: layer.draw_as_shadow === true,
       columns: sprite.columns ?? 1,
       directionIndexed: isDirectionIndexed(layer),
+      directionInRows: isDirectionInRows(layer),
     });
   }
   return out;
@@ -103,9 +112,29 @@ export function unwrap(source: any): { main?: Sprite; shadow?: Sprite } {
   };
 }
 
-/** True when a sheet's columns are facings rather than animation frames. */
+/** True when a sheet's columns are facings rather than animation frames —
+ *  only when `line_length` is genuinely absent, meaning every direction's
+ *  frame sits side by side in one single row (small-electric-pole: just
+ *  direction_count, no line_length/frame_count at all). The moment
+ *  `line_length` is present at all — even as an explicit 1 — Factorio is
+ *  telling you the row wraps at that width, so direction overflows into
+ *  ROWS instead; see isDirectionInRows, which owns every one of those
+ *  cases instead (gun-turret's raising sheet: direction_count 4,
+ *  line_length 1 → 4 rows of 1 column each, not 4 columns). */
 export function isDirectionIndexed(raw: any): boolean {
-  return (raw?.direction_count ?? 1) > 1 && !raw?.frame_count && !raw?.line_length;
+  return (raw?.direction_count ?? 1) > 1 && raw?.line_length === undefined && (raw?.frame_count ?? 1) <= 1;
+}
+
+/** True when direction is packed into ROWS instead of columns — whenever
+ *  `line_length` is explicitly declared alongside a real direction_count,
+ *  regardless of frame_count (1, meaning no separate animation on top —
+ *  gun-turret/laser-turret's raising sheet — or >1, a genuine multi-frame
+ *  animation per direction — rocket-turret/tesla-turret's own). A
+ *  blueprint shows the idle pose (frame 0 of whichever direction row), so
+ *  this only needs to pick the right ROW; see UnwrappedLayer's own doc
+ *  comment. */
+export function isDirectionInRows(raw: any): boolean {
+  return (raw?.direction_count ?? 1) > 1 && raw?.line_length !== undefined;
 }
 
 /** The common case: a main sprite plus optional shadow, both fixed. */
@@ -116,13 +145,37 @@ export function staticGraphics(source: any): EntityGraphics | undefined {
 }
 
 const DIR4 = ["north", "east", "south", "west"] as const;
+const DIR8 = ["north", "north_east", "east", "south_east", "south", "south_west", "west", "north_west"] as const;
+// Factorio's own raw prototype keys (underscored) -> this codebase's
+// Dir8Name convention (no underscore, matching packages/engine/src/types.ts
+// and neighbours/grid.ts's dir8Name()) — output sprite objects must be
+// keyed the way dir8Name() looks them up at draw time, or every diagonal
+// facing silently finds nothing (confirmed: railgun-turret's 4 diagonals
+// rendered blank because this mapping was missing — DIR8 fed the raw
+// underscored key straight into the sprite record instead).
+const DIR8_OUTPUT_NAME: Record<(typeof DIR8)[number], string> = {
+  north: "north",
+  north_east: "northeast",
+  east: "east",
+  south_east: "southeast",
+  south: "south",
+  south_west: "southwest",
+  west: "west",
+  north_west: "northwest",
+};
 
-/** Finds the {north,east,south,west} wrapper holding a whole sprite per
- *  facing, which may sit a level or two inside the field an entity names —
- *  an asteroid collector's is under graphics_set.animation, a turret's own
- *  rotating base under graphics_set.base_visualisation.animation. */
+/** Finds the {north,east,south,west[,north_east,...]} wrapper holding a
+ *  whole sprite per facing, which may sit a level or two inside the field
+ *  an entity names — an asteroid collector's is under graphics_set.animation,
+ *  a turret's own rotating base under
+ *  graphics_set.base_visualisation.animation. Prefers a full DIR8 match
+ *  (railgun-turret's own folded_animation/preparing_animation/etc ship all
+ *  8) over DIR4 so the 4 diagonal facings' own real art gets used instead
+ *  of silently dropped — only entities that genuinely have no diagonal art
+ *  fall back to the DIR4-only object. */
 function perDirectionSource(source: any): any {
   if (!source || typeof source !== "object") return undefined;
+  if (DIR8.every((d) => source[d] !== undefined)) return source;
   if (DIR4.every((d) => source[d] !== undefined)) return source;
   for (const key of ["animation", "idle_animation", "picture", "pictures", "structure"]) {
     const found = perDirectionSource(source[key]);
@@ -174,6 +227,7 @@ export function stackSources(sources: any[], promoteLaterSources = false): Entit
 export function directionColumnGraphics(source: any): EntityGraphics | undefined {
   const perDir = perDirectionSource(source);
   if (perDir) {
+    const dirs: readonly string[] = DIR8.every((d) => perDir[d] !== undefined) ? DIR8 : DIR4;
     // Zip each facing's own layer list into shared slots — but by ROLE
     // (shadow vs. object) first, then by position within that role, not by
     // raw position across the whole list. A facing's own layer count/order
@@ -186,16 +240,17 @@ export function directionColumnGraphics(source: any): EntityGraphics | undefined
     // top layer instead of the real art.
     const shadowSlots: { sprites: Record<string, Sprite> }[] = [];
     const objectSlots: { sprites: Record<string, Sprite> }[] = [];
-    for (const d of DIR4) {
+    for (const d of dirs) {
       const layers = unwrapAll(perDir[d]);
       if (layers.length === 0) return undefined;
       let shadowI = 0;
       let objectI = 0;
+      const outputKey = dirs === DIR8 ? DIR8_OUTPUT_NAME[d as (typeof DIR8)[number]] : d;
       for (const l of layers) {
         const slots = l.shadow ? shadowSlots : objectSlots;
         const i = l.shadow ? shadowI++ : objectI++;
         const slot = (slots[i] ??= { sprites: {} });
-        slot.sprites[d] = l.sprite;
+        slot.sprites[outputKey] = l.sprite;
       }
     }
     // A slot doesn't need every facing filled in — electric-mining-drill's
@@ -208,11 +263,12 @@ export function directionColumnGraphics(source: any): EntityGraphics | undefined
       ...objectSlots.map((slot) => ({ ...slot, shadow: false })),
     ];
     if (all.length === 0) return undefined;
+    const per = dirs === DIR8 ? ("dir8" as const) : ("dir4" as const);
     return {
       layers: all.map((slot) => ({
         layer: slot.shadow ? Layer.Shadow : Layer.Object,
         sprites: slot.sprites,
-        per: "dir4" as const,
+        per,
       })),
     };
   }
@@ -224,6 +280,11 @@ export function directionColumnGraphics(source: any): EntityGraphics | undefined
       layer: l.shadow ? Layer.Shadow : Layer.Object,
       sprites: l.sprite,
       column: l.directionIndexed ? ({ by: "direction" } as const) : ({ by: "none" } as const),
+      // directionInRows: direction is the ROW (4 rows), the sheet's own
+      // real animation is the column — a blueprint's idle pose is frame 0
+      // of whichever row, so column stays unset (defaults to 0) and only
+      // row needs to pick the facing.
+      row: l.directionInRows ? ({ by: "direction" } as const) : undefined,
     })),
   };
 }
