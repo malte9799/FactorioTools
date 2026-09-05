@@ -183,6 +183,27 @@ const TEMPLATE = `
     <button type="button" data-toggle="palette-window">Build</button>
     <button type="button" data-toggle="about-window">About</button>
     <button type="button" id="alt-mode-toggle" title="Show recipes and modules (Alt)">Alt mode</button>
+    <button type="button" data-toggle="debug-window" title="Performance stats (F8)">Debug</button>
+  </div>
+
+  <div id="debug-window" class="gui-window floating-window" hidden>
+    <div class="gui-titlebar">
+      <span>Debug</span>
+      <span class="grip" aria-hidden="true"></span>
+    </div>
+    <div class="gui-body">
+      <table class="debug-stats-table">
+        <tbody>
+          <tr><td>FPS</td><td id="debug-fps">–</td></tr>
+          <tr><td>Frame time</td><td id="debug-frame-time">–</td></tr>
+          <tr><td>Render time</td><td id="debug-render-time">–</td></tr>
+          <tr><td>Entities (total)</td><td id="debug-total-entities">–</td></tr>
+          <tr><td>Entities (visible)</td><td id="debug-visible-entities">–</td></tr>
+          <tr><td>Draw commands</td><td id="debug-draw-commands">–</td></tr>
+          <tr><td>JS heap</td><td id="debug-heap">–</td></tr>
+        </tbody>
+      </table>
+    </div>
   </div>
 `;
 
@@ -246,6 +267,7 @@ export function mountBlueprintViewer(root: HTMLElement): () => void {
   const resultsWindow = makeFloatingWindow(resultsWindowEl, { x: Math.max(16, window.innerWidth - 460), y: 66 });
   const aboutWindow = makeFloatingWindow($("#about-window"), { x: 16, y: window.innerHeight - 120 });
   const paletteWindow = makeFloatingWindow($("#palette-window"), { x: 16, y: Math.max(280, window.innerHeight - 340) });
+  const debugWindow = makeFloatingWindow($("#debug-window"), { x: Math.max(16, window.innerWidth - 280), y: window.innerHeight - 260 });
   const propertiesWindow = makeFloatingWindow($("#properties-window"), {
     x: Math.max(16, window.innerWidth - 900),
     y: 66,
@@ -265,6 +287,7 @@ export function mountBlueprintViewer(root: HTMLElement): () => void {
     "results-window": resultsWindow,
     "about-window": aboutWindow,
     "palette-window": paletteWindow,
+    "debug-window": debugWindow,
   };
   for (const w of Object.values(allWindows)) w.hide();
   propertiesWindow.hide();
@@ -291,6 +314,41 @@ export function mountBlueprintViewer(root: HTMLElement): () => void {
       if (target) toggleWindow(target);
     }, { signal });
   }
+
+  // F8 toggles the Debug panel — an out-of-the-way key nothing else in
+  // this app claims, matching the convention several game engines/browser
+  // devtools already use for a stats overlay.
+  window.addEventListener("keydown", (e) => {
+    if (e.key !== "F8") return;
+    if (document.activeElement instanceof HTMLInputElement || document.activeElement instanceof HTMLTextAreaElement) return;
+    e.preventDefault();
+    toggleWindow(debugWindow);
+  }, { signal });
+
+  // Polls renderer.getDebugStats() at a fixed rate independent of the draw
+  // loop's own frame rate (updating the DOM every single rAF tick would
+  // itself be wasted layout/paint work, and defeats the point of a panel
+  // meant to diagnose a SLOW frame rate) — only while the panel is
+  // actually visible, so it costs nothing the rest of the time.
+  const debugFps = $<HTMLTableCellElement>("#debug-fps");
+  const debugFrameTime = $<HTMLTableCellElement>("#debug-frame-time");
+  const debugRenderTime = $<HTMLTableCellElement>("#debug-render-time");
+  const debugTotalEntities = $<HTMLTableCellElement>("#debug-total-entities");
+  const debugVisibleEntities = $<HTMLTableCellElement>("#debug-visible-entities");
+  const debugDrawCommands = $<HTMLTableCellElement>("#debug-draw-commands");
+  const debugHeap = $<HTMLTableCellElement>("#debug-heap");
+  const DEBUG_POLL_MS = 500;
+  const debugPollHandle = setInterval(() => {
+    if (debugWindow.el.hidden) return;
+    const stats = renderer.getDebugStats();
+    debugFps.textContent = stats.fps.toFixed(0);
+    debugFrameTime.textContent = `${stats.frameTimeMs.toFixed(1)} ms`;
+    debugRenderTime.textContent = `${stats.renderTimeMs.toFixed(2)} ms`;
+    debugTotalEntities.textContent = String(stats.totalEntities);
+    debugVisibleEntities.textContent = String(stats.visibleEntities);
+    debugDrawCommands.textContent = String(stats.drawCommands);
+    debugHeap.textContent = stats.jsHeapUsedMb !== undefined ? `${stats.jsHeapUsedMb.toFixed(1)} MB` : "n/a (not Chrome)";
+  }, DEBUG_POLL_MS);
 
   let blueprints: Blueprint[] = [];
   let entities: PlacedEntity[] = [];
@@ -1512,6 +1570,8 @@ export function mountBlueprintViewer(root: HTMLElement): () => void {
     aboutWindow.destroy();
     paletteWindow.destroy();
     propertiesWindow.destroy();
+    debugWindow.destroy();
+    clearInterval(debugPollHandle);
     cursorIcon.remove();
   };
 }

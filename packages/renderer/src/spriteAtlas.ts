@@ -29,6 +29,39 @@ export class SpriteAtlas {
   // conflates (entries are never removed once settled).
   private pendingCount = 0;
   private onPendingChange: ((pending: number) => void) | null = null;
+  // Chrome/Firefox appear to seriously contend when many large (some
+  // 10MB+) sheets start decoding in the same tick — a pan/zoom that
+  // suddenly reveals dozens of never-before-seen entities at once
+  // (confirmed by the user: happens specifically on first reveal, not on
+  // cached re-entry) stalls the main thread for the better part of a
+  // second in those browsers, while Safari's own decode pipeline handles
+  // the same burst without visible hitching. img.decode() is already
+  // off the drawImage-blocking path (see get()'s own doc comment) — this
+  // caps how many run AT ONCE instead, queuing the rest, so the browser
+  // never has more than DECODE_CONCURRENCY sheets competing for decode
+  // time simultaneously. Doesn't change total load time much, just
+  // spreads the cost so no single frame absorbs all of it.
+  private static readonly DECODE_CONCURRENCY = 6;
+  private decodeQueue: (() => void)[] = [];
+  private activeDecodes = 0;
+
+  private runOrQueueDecode(start: () => void): void {
+    if (this.activeDecodes < SpriteAtlas.DECODE_CONCURRENCY) {
+      this.activeDecodes++;
+      start();
+    } else {
+      this.decodeQueue.push(start);
+    }
+  }
+
+  private decodeSettled(): void {
+    this.activeDecodes--;
+    const next = this.decodeQueue.shift();
+    if (next) {
+      this.activeDecodes++;
+      next();
+    }
+  }
 
   /** Subscribes to pendingCount changes — called with the new count every
    *  time a sheet load starts or settles. Only one subscriber at a time
@@ -63,18 +96,21 @@ export class SpriteAtlas {
       const settle = () => {
         this.pendingCount--;
         this.onPendingChange?.(this.pendingCount);
+        this.decodeSettled();
       };
       const promise = new Promise<HTMLImageElement>((resolve, reject) => {
-        const img = new Image();
-        img.decoding = "async";
-        img.onload = () => {
-          (img.decode?.() ?? Promise.resolve()).catch(() => {}).then(() => {
-            this.images.set(modPath, img);
-            resolve(img);
-          });
-        };
-        img.onerror = () => reject(new Error(`sprite failed to load: ${url}`));
-        img.src = url;
+        this.runOrQueueDecode(() => {
+          const img = new Image();
+          img.decoding = "async";
+          img.onload = () => {
+            (img.decode?.() ?? Promise.resolve()).catch(() => {}).then(() => {
+              this.images.set(modPath, img);
+              resolve(img);
+            });
+          };
+          img.onerror = () => reject(new Error(`sprite failed to load: ${url}`));
+          img.src = url;
+        });
       }).catch((err) => {
         console.warn(err.message);
         throw err;

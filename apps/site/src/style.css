@@ -564,6 +564,27 @@ button.ghost:hover, select:hover { border-color: var(--frame-light); }
   margin: 0 0 14px;
 }
 
+/* ---------- debug stats panel — a plain two-column key/value table,
+   monospaced values for easy at-a-glance scanning of changing numbers. */
+.debug-stats-table {
+  border-collapse: collapse;
+  font-size: 13px;
+  min-width: 220px;
+}
+
+.debug-stats-table td {
+  padding: 3px 8px 3px 0;
+}
+
+.debug-stats-table td:first-child {
+  color: var(--text-dim, #a89f8f);
+}
+
+.debug-stats-table td:last-child {
+  font-family: var(--mono, monospace);
+  text-align: right;
+}
+
 /* ---------- the game-panel chrome, shared by every floating window ---------- */
 /* Matches the real game's own GUI frame (confirmed against the user's own
    reference screenshots of "Set ghost cursor" / "Select a recipe" /

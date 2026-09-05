@@ -425,6 +425,16 @@ function beaconModuleSlotGraphics(proto: any): GraphicsLayer[] {
     const filled: Sprite[] = [];
     for (const piece of slot) {
       if (piece.has_empty_slot === true) continue;
+      // beacon-module-lights-N.png (draw_as_light: true) is an additive
+      // glow layer meant for a blend mode this Canvas2D renderer doesn't
+      // implement — drawn with normal alpha it paints a near-black box
+      // over the piece beneath, and it's an extra full-size drawImage
+      // call on top for every filled slot. unwrapAll's own layer loop
+      // already skips draw_as_light/draw_as_glow/blend_mode:"additive"
+      // pieces for every other entity; this function builds its sprites
+      // by hand instead of going through unwrapAll, so it needs the same
+      // filter applied explicitly.
+      if (piece.pictures?.draw_as_light || piece.pictures?.draw_as_glow || piece.pictures?.blend_mode === "additive") continue;
       const sprite = toSprite(piece.pictures);
       if (sprite) filled.push(sprite);
     }

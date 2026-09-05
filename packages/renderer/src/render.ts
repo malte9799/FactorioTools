@@ -87,6 +87,21 @@ export interface BlueprintRenderer {
    *  drawing outline fallbacks for not-yet-loaded entities the whole time,
    *  nothing is actually blocked. */
   onLoadingChange(callback: (loading: boolean) => void): void;
+  /** Snapshot of live performance/scene numbers — for the app's own debug
+   *  panel (not shown by default), not read anywhere in the renderer
+   *  itself. fps/frameTimeMs/renderTimeMs average the last 30 frames;
+   *  everything else is read fresh at call time. */
+  getDebugStats(): {
+    fps: number;
+    frameTimeMs: number;
+    renderTimeMs: number;
+    totalEntities: number;
+    visibleEntities: number;
+    drawCommands: number;
+    /** Chrome-only (performance.memory); undefined everywhere else,
+     *  including Safari/Firefox, which don't expose it at all. */
+    jsHeapUsedMb: number | undefined;
+  };
   destroy(): void;
 }
 
@@ -128,6 +143,19 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
   const camera = new Camera({ x: 0, y: 0, pixelsPerTile: 32 });
 
   const connectors = makeConnectorPredicates(visualLookup);
+
+  // Debug-panel stats (getDebugStats) — a rolling 30-frame window for fps/
+  // render time, everything else read fresh at query time. Cheap enough
+  // (a handful of numbers, no allocation in the hot path beyond the fixed-
+  // size ring buffers below) to always maintain rather than gate behind
+  // the panel being open, so the panel shows real history from the moment
+  // it's opened rather than starting from zero.
+  const FRAME_HISTORY = 30;
+  const frameTimes: number[] = [];
+  const renderTimes: number[] = [];
+  let lastTickAt = 0;
+  let lastDrawCommandCount = 0;
+  let lastVisibleEntityCount = 0;
 
   let entities: PlacedEntity[] = [];
   let entityById = new Map<number, PlacedEntity>();
@@ -255,6 +283,7 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
       const e = entityById.get(id);
       if (e) visibleEntities.push(e);
     }
+    lastVisibleEntityCount = visibleEntities.length;
 
     const hasHighlight = highlight !== null;
     const alphaFor = (entity: PlacedEntity): number => {
@@ -364,6 +393,7 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
         drawOutline(ctx, entity.x, entity.y, fw, fh);
       }
     }
+    lastDrawCommandCount = commands.length;
     paint(ctx, atlas, commands);
 
     for (const entity of procedural) {
@@ -445,9 +475,18 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
 
   function tick(): void {
     if (destroyed) return;
+    const now = performance.now();
+    if (lastTickAt !== 0) {
+      frameTimes.push(now - lastTickAt);
+      if (frameTimes.length > FRAME_HISTORY) frameTimes.shift();
+    }
+    lastTickAt = now;
     if (!animationFrozen) animationFrame = (animationFrame + 1) % 1_000_000;
     applyKeyboardPan(16);
+    const drawStart = performance.now();
     draw();
+    renderTimes.push(performance.now() - drawStart);
+    if (renderTimes.length > FRAME_HISTORY) renderTimes.shift();
     rafHandle = requestAnimationFrame(tick);
   }
 
@@ -857,6 +896,22 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
     },
     onLoadingChange(callback) {
       atlas.setOnPendingChange((pending) => callback(pending > 0));
+    },
+    getDebugStats() {
+      const avg = (values: number[]) => (values.length === 0 ? 0 : values.reduce((a, b) => a + b, 0) / values.length);
+      const avgFrameMs = avg(frameTimes);
+      // performance.memory is a non-standard Chrome extension; every other
+      // browser (Safari, Firefox) has no such property at all.
+      const memory = (performance as Performance & { memory?: { usedJSHeapSize: number } }).memory;
+      return {
+        fps: avgFrameMs > 0 ? 1000 / avgFrameMs : 0,
+        frameTimeMs: avgFrameMs,
+        renderTimeMs: avg(renderTimes),
+        totalEntities: entities.length,
+        visibleEntities: lastVisibleEntityCount,
+        drawCommands: lastDrawCommandCount,
+        jsHeapUsedMb: memory ? memory.usedJSHeapSize / (1024 * 1024) : undefined,
+      };
     },
     destroy() {
       destroyed = true;
