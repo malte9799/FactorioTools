@@ -10,7 +10,7 @@
   "scripts": {
     "dev": "npm run dev --workspace=apps/site",
     "build": "npm run build --workspace=apps/site",
-    "test": "npm run test --workspace=@factoriotools/engine",
+    "test": "npm run test --workspaces --if-present",
     "check": "npm run check --workspaces --if-present"
   },
   "devDependencies": {

@@ -5,13 +5,15 @@
   "type": "module",
   "main": "src/index.ts",
   "scripts": {
-    "check": "tsc --noEmit"
+    "check": "tsc --noEmit",
+    "test": "tsx test/pipe.test.ts && tsx test/beltGraph.test.ts && tsx test/spatial-camera.test.ts"
   },
   "dependencies": {
     "@factoriotools/engine": "*"
   },
   "devDependencies": {
     "@types/node": "^22.10.0",
-    "typescript": "^5.7.2"
+    "typescript": "^5.7.2",
+    "tsx": "^4.19.2"
   }
 }
