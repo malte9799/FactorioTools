@@ -37,22 +37,32 @@ export function setData(data: GameData): void {
  *  only the site's own dataset carries a render catalog, so the sprite
  *  renderer only lights up once that specific fetch succeeds. */
 export async function loadData(gameDataUrl = "/data/game-data.json"): Promise<GameData> {
+  const catalogUrl = gameDataUrl.replace(/game-data\.json$/, "render-catalog.json");
+  // Both requests go out together: neither file's contents feed the other's
+  // URL, so awaiting game-data.json to completion (download AND parse) before
+  // even asking for the catalog just added its whole transfer time to the
+  // wait before the renderer can draw anything but outline boxes.
+  // allSettled rather than all so one rejected fetch still leaves the other
+  // usable, matching the per-file fallbacks below.
+  const [dataResult, catalogResult] = await Promise.allSettled([fetch(gameDataUrl), fetch(catalogUrl)]);
+
   try {
-    const res = await fetch(gameDataUrl);
-    if (res.ok) {
-      const data = (await res.json()) as GameData;
+    if (dataResult.status === "fulfilled" && dataResult.value.ok) {
+      const data = (await dataResult.value.json()) as GameData;
       active = data;
-      const catalogUrl = gameDataUrl.replace(/game-data\.json$/, "render-catalog.json");
+      // Still gated on game-data having loaded: a catalog without its dataset
+      // describes entities nothing can look up, exactly as before.
       try {
-        const catalogRes = await fetch(catalogUrl);
-        if (catalogRes.ok) activeCatalog = (await catalogRes.json()) as RenderCatalog;
+        if (catalogResult.status === "fulfilled" && catalogResult.value.ok) {
+          activeCatalog = (await catalogResult.value.json()) as RenderCatalog;
+        }
       } catch {
         // Renderer just falls back to outline boxes for everything.
       }
       return data;
     }
   } catch {
-    // Not generated yet, or fetch blocked — fall through to vanilla.
+    // Not generated yet, or malformed — fall through to vanilla.
   }
   return active;
 }
