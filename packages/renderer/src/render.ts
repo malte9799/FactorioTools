@@ -9,7 +9,7 @@ import { buildFluidNetwork, FluidNetwork } from "./neighbours/fluid.js";
 import { buildHeatNetwork, HeatNetwork } from "./neighbours/heat.js";
 import type { PlatformBox } from "./neighbours/platform.js";
 import { collectEntity, type CollectContext } from "./draw/collect.js";
-import { paint, drawOutline } from "./draw/paint.js";
+import { paint, paintPlain, drawOutline } from "./draw/paint.js";
 import type { DrawCommand } from "./draw/commands.js";
 import { drawInserter } from "./sprites/inserter.js";
 import { SpatialIndex, type IndexedBox } from "./spatialIndex.js";
@@ -421,7 +421,9 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
     // a tinted ghost's offscreen buffer (paintTinted) is exactly as sharp
     // as the rest of the canvas instead of a fixed, zoom-independent size.
     const tintedRes = dpr * camera.state.pixelsPerTile;
-    paint(ctx, atlas, commands, tintedRes);
+    // Scene commands are never tinted — only the ghost is, and it paints via
+    // its own paint() call below — so skip paint()'s tinted/untinted split.
+    paintPlain(ctx, atlas, commands);
 
     for (const entity of procedural) {
       const visual = visualFor(entity.name)!;

@@ -38,7 +38,12 @@ export function paint(
   if (tinted.length > 0) paintTinted(ctx, atlas, tinted, tintedOffscreenRes);
 }
 
-function paintPlain(ctx: CanvasRenderingContext2D, atlas: SpriteAtlas, commands: DrawCommand[]): void {
+/** Paints an already-untinted command list. The main scene pass calls this
+ *  directly: only the placement ghost ever carries a tint, and it is painted
+ *  by its own separate paint() call, so splitting the scene list into tinted
+ *  and untinted halves every frame allocated two arrays to discover that one
+ *  of them is always empty. Sorts in place, same as paint(). */
+export function paintPlain(ctx: CanvasRenderingContext2D, atlas: SpriteAtlas, commands: DrawCommand[]): void {
   commands.sort(compareDrawCommands);
   let alpha = 1;
   let compositeIsMultiply = false;
