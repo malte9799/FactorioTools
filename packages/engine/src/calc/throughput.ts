@@ -178,7 +178,9 @@ export function computeBottleneck(
     const beltCapacity = findAdjacentOutputBelts(ctx, entity, machineBox);
     const capacity = totalOutputCapacity + beltCapacity;
     outputCapacity[product.name] = capacity;
-    const boosted = Math.max(0, product.amount - (product.ignoredByProductivity ?? 0)) * (1 + productivity) + (product.ignoredByProductivity ?? 0);
+    const expected = product.amount * (product.probability ?? 1);
+    const ignored = Math.min(product.ignoredByProductivity ?? 0, expected);
+    const boosted = (expected - ignored) * (1 + productivity) + ignored;
     if (boosted <= 0) continue;
     const maxCrafts = capacity / boosted;
     if (maxCrafts < limitingCraftsFromOutputs) {

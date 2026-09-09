@@ -105,9 +105,12 @@ function productLines(
 ): RecipeLine[] {
   return recipe.results.map((result) => {
     const proto = data.items[result.name];
-    const base = result.amount * (result.probability ?? 1);
-    const ignored = result.ignoredByProductivity ?? 0;
-    const boosted = Math.max(0, base - ignored) * (1 + productivity) + ignored;
+    const expected = result.amount * (result.probability ?? 1);
+    // ignored_by_productivity is clamped to the expected amount — a recipe
+    // can't have more of a product excluded from the bonus than it actually
+    // produces (lua-api ItemProductPrototype.ignored_by_productivity).
+    const ignored = Math.min(result.ignoredByProductivity ?? 0, expected);
+    const boosted = (expected - ignored) * (1 + productivity) + ignored;
     return {
       name: result.name,
       label: proto?.localised ?? result.name,
@@ -135,7 +138,16 @@ function groupKey(entity: PlacedEntity, resolved: ResolvedMachine): string {
   ].join("/");
 }
 
-export function calculate(data: GameData, entities: PlacedEntity[]): CalculationResult {
+/** Researched level per productivity technology (e.g. "steel-plate-
+ *  productivity" -> 3) — not recorded in a blueprint, so the caller collects
+ *  it from the user. Missing entries mean level 0 (unresearched). */
+export type ResearchLevels = Record<string, number>;
+
+export function calculate(
+  data: GameData,
+  entities: PlacedEntity[],
+  researchLevels: ResearchLevels = {},
+): CalculationResult {
   const beacons = findBeacons(data, entities);
   const groups = new Map<string, MachineGroup>();
   const warnings = new Map<string, Warning>();
@@ -212,12 +224,27 @@ export function calculate(data: GameData, entities: PlacedEntity[]): Calculation
     }
 
     const speed = resolved.baseSpeed * (1 + resolved.totalEffects.speed);
-    const craftsPerSecond = speed / recipe.energyRequired;
+    // The engine can't finish more than one craft per tick (60 ticks/s) no
+    // matter how much speed bonus is stacked — real ceiling for a heavily
+    // beaconed setup, not a theoretical one.
+    const craftsPerSecond = Math.min(speed / recipe.energyRequired, 60);
     const power =
       machine.energySource === "electric"
         ? machine.energyUsage * (1 + resolved.totalEffects.consumption) + (machine.drain ?? 0)
         : 0;
-    const productivity = Math.min(resolved.totalEffects.productivity, recipe.maximumProductivity ?? Infinity);
+    // Recipe-productivity research (Steel plate productivity, etc) is a
+    // flat per-recipe bonus applied by the game engine directly — unlike
+    // module/beacon productivity it is NOT gated by the machine's
+    // allowed_effects (a restriction on what modules can affect, not on the
+    // recipe's own baked-in bonus), so it's added after resolveMachine's
+    // effects filtering, not through it.
+    const researchLevel = recipe.productivityTechnology ? researchLevels[recipe.productivityTechnology] ?? 0 : 0;
+    const researchProductivity =
+      researchLevel * (data.productivityTechnologies[recipe.productivityTechnology ?? ""]?.changePerLevel ?? 0);
+    const productivity = Math.min(
+      resolved.totalEffects.productivity + researchProductivity,
+      recipe.maximumProductivity ?? Infinity,
+    );
 
     groups.set(key, {
       key,
@@ -230,7 +257,11 @@ export function calculate(data: GameData, entities: PlacedEntity[]): Calculation
       beaconCount: resolved.beaconCount,
       count: 1,
       craftsPerSecond,
-      effects: resolved.totalEffects,
+      // productivity here is the capped total (modules + beacons + research)
+      // used for the actual output math below, so the UI's "prod +X%" badge
+      // matches what products[] was computed with rather than omitting
+      // research's contribution.
+      effects: { ...resolved.totalEffects, productivity },
       powerPerMachine: power,
       entityNumbers: [entity.entityNumber],
       ingredients: ingredientLines(data, recipe, craftsPerSecond),

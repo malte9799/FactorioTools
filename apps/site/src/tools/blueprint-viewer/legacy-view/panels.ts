@@ -1,4 +1,4 @@
-import type { CalculationResult, ItemFlow, MachineGroup, RecipeLine, Timescale } from "@factoriotools/engine";
+import type { CalculationResult, ItemFlow, MachineGroup, RecipeLine, ResearchLevels, Timescale } from "@factoriotools/engine";
 import { TIMESCALE_FACTOR } from "@factoriotools/engine";
 import type { BeltProto, BottleneckSubgroup, GameData, InserterProto, QualityName, ScaleWarning } from "@factoriotools/engine";
 import {
@@ -28,6 +28,11 @@ export interface ViewOptions {
   /** Item name the rocket silo is loaded with — not recorded in the
    *  blueprint, so the UI asks. Null until the user picks one. */
   rocketCargo: string | null;
+  /** Researched level per recipe-productivity technology — not recorded in
+   *  the blueprint (research is per-save, not per-blueprint), so the UI
+   *  asks. Missing entries mean level 0 (unresearched). Mutated in place by
+   *  the research panel's inputs, like rocketCargo above. */
+  researchLevels: ResearchLevels;
 }
 
 export interface FlowHover {
@@ -227,6 +232,58 @@ function section(
   return el;
 }
 
+/** Recipe-productivity research (Steel plate productivity, Processing unit
+ *  productivity, ...) isn't recorded in the blueprint — research is per-save,
+ *  not per-blueprint — so this asks the user how many levels of each
+ *  relevant technology they've researched. Only lists technologies whose
+ *  recipe is actually running somewhere in this blueprint, so an unrelated
+ *  build doesn't show all 8 vanilla entries. */
+function researchPanel(
+  data: GameData,
+  result: CalculationResult,
+  options: ViewOptions,
+  onOptionsChange: () => void,
+): HTMLElement | null {
+  const recipeNames = new Set(result.groups.map((g) => g.recipeName));
+  const relevant = Object.values(data.productivityTechnologies).filter((tech) =>
+    tech.recipes.some((r) => recipeNames.has(r)),
+  );
+  if (relevant.length === 0) return null;
+  relevant.sort((a, b) => a.localised.localeCompare(b.localised));
+
+  const el = document.createElement("section");
+  el.className = "panel";
+  el.innerHTML = `<h2>Research<span class="hint">productivity research isn't in the blueprint — enter what you've unlocked</span></h2>`;
+
+  const list = document.createElement("div");
+  list.className = "flow-list";
+  for (const tech of relevant) {
+    const level = options.researchLevels[tech.name] ?? 0;
+    const row = document.createElement("div");
+    row.className = "flow";
+    row.innerHTML = `
+      <div class="flow-name">
+        <span>${tech.localised}</span>
+        <span class="sub">${formatPercent(tech.changePerLevel)} productivity per level, on ${tech.recipes.map((r) => data.recipes[r]?.localised ?? r).join(", ")}</span>
+      </div>
+      <div class="flow-rate">
+        <input type="number" min="0" step="1" value="${level}" aria-label="${tech.localised} level" class="research-level-input" />
+      </div>
+    `;
+    const inputEl = row.querySelector<HTMLInputElement>(".research-level-input")!;
+    inputEl.addEventListener("change", () => {
+      const parsed = Math.max(0, Math.round(Number(inputEl.value)));
+      inputEl.value = String(parsed);
+      if (parsed === 0) delete options.researchLevels[tech.name];
+      else options.researchLevels[tech.name] = parsed;
+      onOptionsChange();
+    });
+    list.appendChild(row);
+  }
+  el.appendChild(list);
+  return el;
+}
+
 /** A rocket silo's cargo isn't recorded in the blueprint — same gap as a
  *  furnace's recipe — so this asks the user what it's loaded with, then
  *  reports launches/min and how many of that item reach space per minute. */
@@ -350,6 +407,9 @@ export function renderResults(
     `;
     container.appendChild(banner);
   }
+
+  const research = researchPanel(data, result, options, onOptionsChange);
+  if (research) container.appendChild(research);
 
   for (const s of [
     section("Products", "made here and not used here", result.products, data, options, onHover),

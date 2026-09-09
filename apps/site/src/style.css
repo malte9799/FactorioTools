@@ -989,11 +989,63 @@ button.ghost:hover, select:hover { border-color: var(--frame-light); }
   color: var(--text-dim);
 }
 
-/* Wide enough for the fixed 10-column grid (see --palette-columns below) at
-   a comfortable cell size, matching the real game's own build-menu
-   proportions rather than the old narrower list-style window. */
-#palette-window { width: 480px; }
-#palette-window .gui-body { max-height: calc(100vh - 220px); display: flex; flex-direction: column; padding: 10px; }
+/* Every picker window (Build, Select recipe, Select module) is the same
+   grid-menu body — see grid-menu.ts — so they share one size rule instead
+   of three lookalikes drifting apart. Wide enough for the fixed 10-column
+   grid (see --palette-columns below) at a comfortable cell size, matching
+   the real game's own build-menu proportions. */
+/* Width is derived, not eyeballed: 10 columns x 42px + 9 x 2px gaps + the
+   grid's own 6px padding either side = 450px of content, plus the grid
+   border, the body's 10px padding either side, and room for the vertical
+   scrollbar a long tab needs — anything narrower and the grid overflows
+   sideways and grows a horizontal scrollbar (it did, at 480px). */
+.menu-window { width: 512px; }
+.menu-window .gui-body { max-height: calc(100vh - 220px); display: flex; flex-direction: column; padding: 10px; }
+
+.grid-menu { display: flex; flex-direction: column; min-height: 0; flex: 1; }
+
+/* Quality strip (when the menu has one) sits left, the confirm button
+   right — the check is always bottom-right regardless of which extras a
+   given menu shows. */
+.grid-menu-footer {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 10px;
+  margin-top: 8px;
+}
+
+.grid-menu-footer .palette-quality-strip { margin-top: 0; border-top: none; padding-top: 0; }
+
+/* The green confirm button every menu closes through — clicking it, or
+   pressing 'E' with something selected, applies the selection. Disabled
+   until a cell is actually clicked, so confirming can never silently
+   re-apply whatever was already set. */
+.grid-menu-confirm {
+  margin-left: auto;
+  width: 40px;
+  height: 34px;
+  flex: none;
+  font-size: 18px;
+  line-height: 1;
+  color: #0d1a0d;
+  background: linear-gradient(#8ed17a, #5aa348);
+  border: 1px solid #3f7a33;
+  border-radius: 3px;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.45), inset 0 -2px 0 rgba(0, 0, 0, 0.25);
+  cursor: pointer;
+}
+
+.grid-menu-confirm:hover:not(:disabled) { background: linear-gradient(#a2de8d, #6bb457); }
+.grid-menu-confirm:focus-visible { outline: 2px solid var(--gold); outline-offset: 1px; }
+
+.grid-menu-confirm:disabled {
+  color: var(--text-dim);
+  background: var(--panel-2);
+  border-color: var(--frame-dark);
+  box-shadow: inset 0 2px 4px var(--bevel-dark);
+  cursor: default;
+}
 
 .palette-filter {
   width: 100%;
@@ -1055,6 +1107,14 @@ button.ghost:hover, select:hover { border-color: var(--frame-light); }
    reflows arbitrarily with window width. */
 .palette-grid {
   overflow-y: auto;
+  /* The column count is fixed, so the grid's width is known and the window
+     is sized to fit it — a horizontal scrollbar here would only ever mean a
+     rounding/scrollbar-width shortfall, never content the user needs to
+     reach, so clip instead of offering to scroll. `scrollbar-gutter`
+     reserves the vertical bar's space always, so switching to a short tab
+     doesn't shift every cell sideways. */
+  overflow-x: hidden;
+  scrollbar-gutter: stable;
   flex: 1;
   min-height: 0;
   display: grid;
@@ -1085,6 +1145,27 @@ button.ghost:hover, select:hover { border-color: var(--frame-light); }
 .palette-cell:hover { background: var(--panel-3); border-color: var(--frame-light); }
 .palette-cell:focus-visible { outline: 2px solid var(--gold); outline-offset: -2px; }
 .palette-cell .icon { --icon-size: 34px; pointer-events: none; }
+
+/* `is-active` marks what the entity ALREADY has set (its current recipe /
+   this slot's current module) — a faint gold frame, purely informational.
+   `is-selected` is the user's own pending pick in this menu, which is what
+   the confirm button applies, so it reads much louder (green, matching that
+   button). */
+.palette-cell.is-active { border-color: var(--gold); }
+
+.palette-cell.is-selected {
+  border-color: #8ed17a;
+  background: var(--panel-3);
+  box-shadow: inset 0 0 0 1px rgba(142, 209, 122, 0.55), 0 0 6px rgba(90, 163, 72, 0.45);
+}
+
+/* The module menu's leading "empty this slot" cell — an ✕ glyph rather than
+   an icon, since there's no item to show for "nothing". */
+.palette-cell-clear {
+  color: var(--text-dim);
+  font-size: 16px;
+  line-height: 1;
+}
 
 /* Row-break spacer between subgroups (see edit-palette.ts's renderGrid) —
    same footprint as a real slot so it pads the grid's auto-flow onto a new
@@ -1139,7 +1220,7 @@ button.ghost:hover, select:hover { border-color: var(--frame-light); }
 /* ---------- entity GUI (per-machine window, opened by clicking a
    placed entity) — styled after the real game's own machine GUI per the
    user's reference screenshots: a checkered-background sprite preview,
-   name, status line, a gear button expanding a recipe-picker grid, and
+   name, status line, a gear button opening the recipe menu, and
    module-slot icon buttons each expanding their own picker grid.
    Deliberately has no rotate/quality/delete controls — those moved to
    in-world interaction (see index.ts). ---------- */
@@ -1220,8 +1301,6 @@ button.ghost:hover, select:hover { border-color: var(--frame-light); }
   padding: 0;
 }
 
-.recipe-picker { margin-bottom: 10px; }
-
 .entity-gui-module-slots {
   display: flex;
   gap: 6px;
@@ -1237,18 +1316,6 @@ button.ghost:hover, select:hover { border-color: var(--frame-light); }
   display: flex;
   align-items: center;
   justify-content: center;
-}
-
-.module-picker-host {
-  position: absolute;
-  top: calc(100% + 4px);
-  left: 0;
-  z-index: 20;
-  background: var(--frame);
-  border: 1px solid var(--border);
-  border-radius: 4px;
-  padding: 6px;
-  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.5);
 }
 
 @media (prefers-reduced-motion: reduce) {

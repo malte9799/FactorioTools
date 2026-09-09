@@ -172,6 +172,7 @@ export const vanilla: GameData = {
       name: "beacon",
       localised: "Beacon",
       distributionEffectiveness: 1.5,
+      distributionEffectivenessBonusPerQualityLevel: 0.2,
       supplyAreaDistance: 3,
       moduleSlots: 2,
       size: [3, 3],
@@ -216,4 +217,12 @@ export const vanilla: GameData = {
     epic: 1.9,
     legendary: 2.5,
   },
+  qualityLevel: {
+    normal: 0,
+    uncommon: 1,
+    rare: 2,
+    epic: 3,
+    legendary: 5,
+  },
+  productivityTechnologies: {},
 };

@@ -79,6 +79,13 @@ export interface BlueprintRenderer {
    *  holding an item in hand doesn't suppress right-click removal in the
    *  real game either. */
   onErase(callback: (entityNumber: number) => void): void;
+  /** Fires on Alt+right-click over an entity, INSTEAD of onErase — an
+   *  alt-modified right-click is a distinct gesture, not a removal, so the
+   *  renderer reports it separately and leaves what it means to the app
+   *  (today: stamping a held module across every slot of that machine). No
+   *  erase-drag starts, so the modifier can't accidentally mine a row of
+   *  buildings. */
+  onAltRightClickEntity(callback: (entityNumber: number) => void): void;
   /** Fires whenever the shared sprite atlas's pending-load count changes —
    *  `loading` is true while at least one sheet is still fetching/decoding
    *  (a pan/zoom bringing new entities into view, or the initial burst on
@@ -368,7 +375,22 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
         const top = snapped.y - gfh / 2 + epsilon;
         const right = snapped.x + gfw / 2 - epsilon;
         const bottom = snapped.y + gfh / 2 - epsilon;
-        ghostCanPlace = spatialIndex.queryRect(left, top, right, bottom).size === 0;
+        const overlapping = spatialIndex.queryRect(left, top, right, bottom);
+        // A ghost exactly on top of a same-named entity at its own tile is
+        // still a valid placement — it rebuilds that entity in place with
+        // the ghost's own facing/quality (see index.ts's placeEntity), the
+        // same "build over it to reconfigure" move the real game allows.
+        // Only that one specific overlap is forgiven: two or more
+        // overlapping entities, or one of a different name, still blocks —
+        // there's no single existing entity a click there could sensibly
+        // rebuild.
+        ghostCanPlace =
+          overlapping.size === 0 ||
+          (overlapping.size === 1 &&
+            (() => {
+              const only = entityById.get([...overlapping][0]!);
+              return only?.name === mode.entityName && only.x === snapped.x && only.y === snapped.y;
+            })());
       }
     }
 
@@ -394,7 +416,12 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
       }
     }
     lastDrawCommandCount = commands.length;
-    paint(ctx, atlas, commands);
+    // Device pixels per world tile — matches the resolution every placed
+    // entity already draws at via the ctx transform above (dpr * zoom), so
+    // a tinted ghost's offscreen buffer (paintTinted) is exactly as sharp
+    // as the rest of the canvas instead of a fixed, zoom-independent size.
+    const tintedRes = dpr * camera.state.pixelsPerTile;
+    paint(ctx, atlas, commands, tintedRes);
 
     for (const entity of procedural) {
       const visual = visualFor(entity.name)!;
@@ -438,12 +465,12 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
           // Full alpha — the green/red tint itself is what marks this as a
           // ghost rather than a placed entity, so fading it out on top would
           // just hide the texture detail the tint is supposed to sit over.
-          drawInserter(ctx, atlas, ghost, visual.inserterGraphics, ghostTint);
+          drawInserter(ctx, atlas, ghost, visual.inserterGraphics, ghostTint, tintedRes);
         } else if (visual.graphics) {
           const ghostCommands: DrawCommand[] = [];
           collectEntity(ghostCommands, ghost, visual, { grid: previewGrid, fluidNetwork: previewFluidNetwork, heatNetwork: previewHeatNetwork, ...connectors, platformBoxes, animationFrame }, 1);
           for (const c of ghostCommands) c.tint = ghostTint;
-          paint(ctx, atlas, ghostCommands);
+          paint(ctx, atlas, ghostCommands, tintedRes);
         }
         // Always shown, regardless of alt-mode — what quality you're about
         // to place should stay visible the whole time it's in hand, not
@@ -471,6 +498,19 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
     const length = Math.hypot(dx, dy);
     const distance = (KEYBOARD_PAN_SPEED * dtMs) / 1000;
     camera.panByScreenDelta((dx / length) * distance, (dy / length) * distance);
+
+    // Panning moves the world under a stationary screen cursor, so anything
+    // keyed off "the world point under the cursor" — the placement ghost,
+    // an active place/erase drag — goes stale unless it's recomputed here
+    // too, exactly as onPointerMove would if the mouse itself had moved.
+    // Without this, holding left/right-click and panning with WASD left the
+    // ghost frozen at its pre-pan world position (visually "hiding" behind
+    // the scrolling map) and placed/erased nothing along the way.
+    if (isErasing) eraseAtScreenPoint(lastPointer.x, lastPointer.y);
+    if (mode.kind === "place") {
+      ghostWorldPos = worldAtScreenPoint(lastPointer.x, lastPointer.y);
+      if (isPlacingDrag) placeAtGhost();
+    }
   }
 
   function tick(): void {
@@ -499,17 +539,25 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
     camera.zoomAt(factor, sx, sy, rect.width, rect.height);
   }
 
-  function worldAtPointer(e: PointerEvent): { x: number; y: number } {
+  function worldAtScreenPoint(clientX: number, clientY: number): { x: number; y: number } {
     const rect = canvas.getBoundingClientRect();
-    return camera.screenToWorld(e.clientX - rect.left, e.clientY - rect.top, rect.width, rect.height);
+    return camera.screenToWorld(clientX - rect.left, clientY - rect.top, rect.width, rect.height);
   }
 
-  function eraseAtPointer(e: PointerEvent): void {
-    const world = worldAtPointer(e);
+  function worldAtPointer(e: PointerEvent): { x: number; y: number } {
+    return worldAtScreenPoint(e.clientX, e.clientY);
+  }
+
+  function eraseAtScreenPoint(clientX: number, clientY: number): void {
+    const world = worldAtScreenPoint(clientX, clientY);
     const hit = spatialIndex.hitTest(world.x, world.y);
     if (hit === undefined || erasedThisGesture.has(hit)) return;
     erasedThisGesture.add(hit);
     eraseCallback?.(hit);
+  }
+
+  function eraseAtPointer(e: PointerEvent): void {
+    eraseAtScreenPoint(e.clientX, e.clientY);
   }
 
   /** Places at the ghost's current snapped grid cell if that cell hasn't
@@ -563,6 +611,15 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
     }
 
     if (e.button === 2) {
+      if (e.altKey) {
+        // Alt+right-click is its own gesture (see onAltRightClickEntity) —
+        // report the entity under the cursor and start no erase drag, so
+        // the modifier can never mass-mine by accident.
+        const world = worldAtPointer(e);
+        const hit = spatialIndex.hitTest(world.x, world.y);
+        if (hit !== undefined) altRightClickCallback?.(hit);
+        return;
+      }
       // Right-click erase: fires immediately on press (no start delay —
       // removed per user feedback, it felt laggy), then dragging across
       // more entities keeps erasing for the rest of the gesture. Works
@@ -691,6 +748,7 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
   let placeCallback: ((worldX: number, worldY: number, direction: number) => void) | null = null;
   let selectCallback: ((entityNumber: number) => void) | null = null;
   let eraseCallback: ((entityNumber: number) => void) | null = null;
+  let altRightClickCallback: ((entityNumber: number) => void) | null = null;
   const onHoverMove = (e: PointerEvent) => {
     if (!hoverCallback) return;
     const world = worldAtPointer(e);
@@ -893,6 +951,9 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
     },
     onErase(callback) {
       eraseCallback = callback;
+    },
+    onAltRightClickEntity(callback) {
+      altRightClickCallback = callback;
     },
     onLoadingChange(callback) {
       atlas.setOnPendingChange((pending) => callback(pending > 0));

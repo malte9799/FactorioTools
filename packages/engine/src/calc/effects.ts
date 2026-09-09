@@ -83,13 +83,19 @@ export function findBeacons(data: GameData, entities: PlacedEntity[]): PlacedEnt
 }
 
 /** Factorio 2.0 transmits `distribution_effectiveness * profile[n]` of the
- *  combined module effects of all n beacons reaching the machine. Past the end
- *  of the profile it falls off as 1/sqrt(n). Set profile to [1] and
- *  distributionEffectiveness to 0.5 for 1.1 behaviour. */
+ *  combined module effects of all n beacons reaching the machine. Past the
+ *  end of the profile array, the LAST entry is reused — this is the
+ *  engine-documented behaviour (lua-api BeaconPrototype.profile), not a
+ *  recomputed 1/sqrt(n) — the vanilla profile array happens to approximate
+ *  that shape internally, but treating it as a formula would silently
+ *  diverge from any beacon (modded or future vanilla) with a different
+ *  profile. Set profile to [1] and distributionEffectiveness to 0.5 for 1.1
+ *  behaviour. */
 function beaconProfile(profile: number[] | undefined, count: number): number {
   if (count <= 0) return 0;
-  if (profile && count <= profile.length) return profile[count - 1]!;
-  return 1 / Math.sqrt(count);
+  if (!profile || profile.length === 0) return 1;
+  const index = Math.min(count, profile.length) - 1;
+  return profile[index]!;
 }
 
 export function beaconEffectsFor(
@@ -121,9 +127,17 @@ export function beaconEffectsFor(
   );
   for (const beacon of reaching) {
     const proto = data.beacons[beacon.name]!;
-    const qualityBonus = data.qualityModuleEffect[beacon.quality] ?? 1;
+    // The beacon's OWN quality raises distributionEffectiveness additively
+    // (+0.2/level in vanilla), unlike every other quality-scaled stat's
+    // ×(1+0.3×level) multiplier — confirmed against the dump: base 1.5 +
+    // 0.2/level gives 1.5/1.7/1.9/2.1/2.5, not 1.5×2.5=3.75. Module quality
+    // (the modules INSIDE the beacon) still uses the normal multiplier, via
+    // effectsFromModules → qualityScaled.
+    const level = data.qualityLevel[beacon.quality] ?? 0;
+    const effectiveness =
+      proto.distributionEffectiveness + proto.distributionEffectivenessBonusPerQualityLevel * level;
     const perBeacon = effectsFromModules(data, beacon.modules);
-    addInto(combined, perBeacon, proto.distributionEffectiveness * ratio * qualityBonus);
+    addInto(combined, perBeacon, effectiveness * ratio);
   }
   return { entities: reaching, effects: combined };
 }

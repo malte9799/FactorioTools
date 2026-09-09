@@ -30,6 +30,7 @@ import type {
   MachineProto,
   ModuleProto,
   ProductProto,
+  ProductivityTechnology,
   QualityName,
   RecipeProto,
   Sprite,
@@ -83,18 +84,43 @@ const MACHINE_TABLES: { table: string; kind: MachineKind }[] = [
   { table: "generator", kind: "generator" },
 ];
 
-/** The +30%-per-tier bonus to module/machine speed and module effects is a
- *  fixed game-engine constant — confirmed absent from data.raw (checked
- *  utility-constants and every `quality` prototype directly), so it stays
- *  hardcoded here exactly as the original hand-written dataset had it. */
-const QUALITY_MACHINE_SPEED: Record<QualityName, number> = {
-  normal: 1,
-  uncommon: 1.3,
-  rare: 1.6,
-  epic: 1.9,
-  legendary: 2.5,
-};
-const QUALITY_MODULE_EFFECT = QUALITY_MACHINE_SPEED;
+/** Every quality-scaled beneficial stat (module effects, and — confirmed by
+ *  reproducing the wiki's own assembling-machine-3 speed table:
+ *  1.25/1.625/2.0/2.375/3.125 for normal..legendary — a machine's own
+ *  crafting speed too) uses `1 + QUALITY_LEVEL_BONUS * level`. The 0.3
+ *  constant itself is a fixed game-engine value, confirmed absent from
+ *  data.raw (checked utility-constants and every `quality` prototype
+ *  directly) — but `level` per tier IS in data.raw (`quality` table's
+ *  `level` field: normal 0, uncommon 1, rare 2, epic 3, legendary 5 — note
+ *  the jump from 3 to 5), so that part is read from the dump rather than
+ *  guessed. */
+const QUALITY_LEVEL_BONUS = 0.3;
+
+function qualityLevelsOf(raw: Raw): Record<QualityName, number> {
+  const levels: Partial<Record<QualityName, number>> = {};
+  for (const proto of Object.values(raw.quality ?? {})) {
+    if (proto.name in ({ normal: 1, uncommon: 1, rare: 1, epic: 1, legendary: 1 } as const)) {
+      levels[proto.name as QualityName] = proto.level ?? 0;
+    }
+  }
+  // Fall back to the documented vanilla levels for any tier the dump omits
+  // (e.g. a dump taken without the Quality DLC's prototypes present).
+  return {
+    normal: levels.normal ?? 0,
+    uncommon: levels.uncommon ?? 1,
+    rare: levels.rare ?? 2,
+    epic: levels.epic ?? 3,
+    legendary: levels.legendary ?? 5,
+  };
+}
+
+function qualityMultipliersFrom(levels: Record<QualityName, number>): Record<QualityName, number> {
+  const result = {} as Record<QualityName, number>;
+  for (const name of Object.keys(levels) as QualityName[]) {
+    result[name] = 1 + QUALITY_LEVEL_BONUS * levels[name];
+  }
+  return result;
+}
 
 /** Chest-to-chest inserter throughput, items/second, no capacity research.
  *  Not in data.raw either (would need simulating the pickup/swing/drop
@@ -460,7 +486,26 @@ function graphicsForBelt(proto: any): EntityGraphics | undefined {
 
 function mapItems(raw: Raw, locale: LocaleTables): Record<string, ItemProto> {
   const items: Record<string, ItemProto> = {};
-  for (const table of ["item", "item-with-entity-data", "module", "tool", "ammo", "capsule", "gun", "armor", "repair-tool", "rail-planner"]) {
+  for (const table of [
+    "item",
+    "item-with-entity-data",
+    "module",
+    "tool",
+    "ammo",
+    "capsule",
+    "gun",
+    "armor",
+    "repair-tool",
+    "rail-planner",
+    "spidertron-remote",
+    "selection-tool",
+    "copy-paste-tool",
+    "deconstruction-item",
+    "upgrade-item",
+    "blueprint",
+    "blueprint-book",
+    "space-platform-starter-pack",
+  ]) {
     for (const proto of Object.values(raw[table] ?? {})) {
       items[proto.name] = {
         name: proto.name,
@@ -483,7 +528,48 @@ function mapItems(raw: Raw, locale: LocaleTables): Record<string, ItemProto> {
   return items;
 }
 
-function mapRecipes(raw: Raw, locale: LocaleTables): Record<string, RecipeProto> {
+/** Infinitely-repeatable technologies with a `change-recipe-productivity`
+ *  effect (Steel plate productivity, Processing unit productivity, ...) —
+ *  each level adds a flat `change` (0.1 in every vanilla case) to the named
+ *  recipe's productivity, on top of whatever modules/beacons contribute. Not
+ *  in a blueprint (research state is per-save, not per-blueprint), so the UI
+ *  asks the user for a level per technology. Returns both the technology
+ *  table (for the UI to list) and a recipe→technology lookup (for the calc
+ *  engine to apply it). */
+function mapProductivityTechnologies(
+  raw: Raw,
+  locale: LocaleTables,
+): { technologies: Record<string, ProductivityTechnology>; recipeToTechnology: Map<string, string> } {
+  const technologies: Record<string, ProductivityTechnology> = {};
+  const recipeToTechnology = new Map<string, string>();
+
+  for (const proto of Object.values(raw.technology ?? {})) {
+    const effects: any[] = asArray(proto.effects);
+    const prodEffects = effects.filter((e) => e.type === "change-recipe-productivity");
+    if (prodEffects.length === 0) continue;
+
+    // Every vanilla instance uses the same `change` for all its recipes;
+    // take the first rather than assuming without checking.
+    const changePerLevel: number = prodEffects[0].change;
+    const recipes: string[] = prodEffects.map((e: any) => e.recipe);
+
+    technologies[proto.name] = {
+      name: proto.name,
+      localised: locale.technologyName.get(proto.name) ?? proto.name,
+      changePerLevel,
+      recipes,
+    };
+    for (const recipeName of recipes) recipeToTechnology.set(recipeName, proto.name);
+  }
+
+  return { technologies, recipeToTechnology };
+}
+
+function mapRecipes(
+  raw: Raw,
+  locale: LocaleTables,
+  recipeToTechnology: Map<string, string>,
+): Record<string, RecipeProto> {
   const recipes: Record<string, RecipeProto> = {};
   for (const proto of Object.values(raw.recipe ?? {})) {
     const ingredients: IngredientProto[] = asArray(proto.ingredients).map((i: any) => ({
@@ -511,6 +597,7 @@ function mapRecipes(raw: Raw, locale: LocaleTables): Record<string, RecipeProto>
       // is represented by omitting the field, matching how rates.ts already
       // reads it: `recipe.maximumProductivity ?? Infinity`.
       ...(proto.maximum_productivity !== undefined ? { maximumProductivity: proto.maximum_productivity } : {}),
+      ...(recipeToTechnology.has(proto.name) ? { productivityTechnology: recipeToTechnology.get(proto.name) } : {}),
       localised: localisedRecipeName(locale, proto.name, results[0]?.name),
     };
   }
@@ -594,6 +681,12 @@ function mapBeacons(raw: Raw, locale: LocaleTables): Record<string, BeaconProto>
       // guessed at) — this is the exact fragile field the project README
       // flagged as needing verification against a live dump.
       distributionEffectiveness: proto.distribution_effectivity ?? 1,
+      // 2.0 field — the beacon's OWN quality raises this additively (+0.2 per
+      // level in the vanilla dump), unlike the ×(1+0.3×level) multiplier
+      // every other quality-scaled stat uses. Confirmed against the dump:
+      // base 1.5 + 0.2/level gives 1.5/1.7/1.9/2.1/2.5, not 1.5×2.5=3.75.
+      distributionEffectivenessBonusPerQualityLevel:
+        proto.distribution_effectivity_bonus_per_quality_level ?? 0,
       supplyAreaDistance: proto.supply_area_distance ?? 3,
       moduleSlots: proto.module_slots ?? 0,
       size: footprintOf(proto),
@@ -673,12 +766,16 @@ function main() {
   const locale = loadLocale(FACTORIO_DATA_ROOT);
 
   const items = mapItems(raw, locale);
-  const recipes = mapRecipes(raw, locale);
+  const { technologies: productivityTechnologies, recipeToTechnology } = mapProductivityTechnologies(raw, locale);
+  const recipes = mapRecipes(raw, locale, recipeToTechnology);
   const machines = mapMachines(raw, locale);
   const modules = mapModules(raw, locale);
   const beacons = mapBeacons(raw, locale);
   const belts = mapBelts(raw, locale);
   const inserters = mapInserters(raw, locale);
+
+  const qualityLevel = qualityLevelsOf(raw);
+  const qualityMultiplier = qualityMultipliersFrom(qualityLevel);
 
   const data: GameData = {
     version: `factorio-dump ${raw.recipe ? "2.0.77" : "unknown"} (vanilla + space-age + quality + elevated-rails)`,
@@ -689,8 +786,10 @@ function main() {
     beacons,
     belts,
     inserters,
-    qualityMachineSpeed: QUALITY_MACHINE_SPEED,
-    qualityModuleEffect: QUALITY_MODULE_EFFECT,
+    qualityMachineSpeed: qualityMultiplier,
+    qualityModuleEffect: qualityMultiplier,
+    qualityLevel,
+    productivityTechnologies,
   };
 
   mkdirSync(path.dirname(OUT_PATH), { recursive: true });

@@ -15,15 +15,18 @@ import {
   ROTATION_TEST_BLUEPRINT,
   DEBUG_BLUEPRINT,
   TIMESCALE_FACTOR,
+  boxOf,
+  overlaps,
 } from "@factoriotools/engine";
 import type { CalculationResult, Timescale, Blueprint, PlacedEntity, QualityName, MachineGroup, ModuleStack, ThroughputContext, BottleneckSubgroup } from "@factoriotools/engine";
-import { mountRenderer, isPoleLike, isTwoDirectionOnly, rotationStep, type BlueprintRenderer, type HighlightRole } from "@factoriotools/renderer";
+import { mountRenderer, isPoleLike, isTwoDirectionOnly, rotationStep, buildVisualLookup, effectiveFootprint, type BlueprintRenderer, type HighlightRole } from "@factoriotools/renderer";
 import { buildRecipeCard, renderResults, type ViewOptions } from "./legacy-view/panels.js";
 import { icon } from "./legacy-view/icons.js";
 import { makeFloatingWindow } from "../../window-manager.js";
 import { buildPalette } from "./edit-palette.js";
 import { appendQualityOptions, QUALITY_TIERS } from "./quality-options.js";
-import { buildPropertiesPanel } from "./edit-properties.js";
+import { buildPropertiesPanel, buildRecipeMenu, buildModuleMenu } from "./edit-properties.js";
+import type { GridMenuHandle } from "./grid-menu.js";
 import { buildLibrarySidebar } from "./library-sidebar.js";
 import { saveToLibrary } from "./blueprint-library.js";
 
@@ -158,7 +161,7 @@ const TEMPLATE = `
     </div>
   </div>
 
-  <div id="palette-window" class="gui-window floating-window" hidden>
+  <div id="palette-window" class="gui-window floating-window menu-window" hidden>
     <div class="gui-titlebar">
       <span>Build</span>
       <span class="grip" aria-hidden="true"></span>
@@ -174,6 +177,26 @@ const TEMPLATE = `
       <span class="grip" aria-hidden="true"></span>
     </div>
     <div class="gui-body" id="properties-body"></div>
+  </div>
+
+  <div id="recipe-window" class="gui-window floating-window menu-window" hidden>
+    <div class="gui-titlebar">
+      <span>Select recipe</span>
+      <span class="grip" aria-hidden="true"></span>
+    </div>
+    <div class="gui-body">
+      <div id="recipe-body"></div>
+    </div>
+  </div>
+
+  <div id="module-window" class="gui-window floating-window menu-window" hidden>
+    <div class="gui-titlebar">
+      <span>Select module</span>
+      <span class="grip" aria-hidden="true"></span>
+    </div>
+    <div class="gui-body">
+      <div id="module-body"></div>
+    </div>
   </div>
 
   <div id="window-toolbar">
@@ -273,14 +296,24 @@ export function mountBlueprintViewer(root: HTMLElement): () => void {
     y: 66,
     onClose: deselect,
   });
+  const recipeWindow = makeFloatingWindow($("#recipe-window"), {
+    x: Math.max(16, window.innerWidth - 900),
+    y: 66,
+    onClose: () => enterMenuState(recipeExitState()),
+  });
+  const moduleWindow = makeFloatingWindow($("#module-window"), {
+    x: Math.max(16, window.innerWidth - 900),
+    y: 66,
+    onClose: () => enterMenuState("machine-info"),
+  });
 
   // All floating windows start hidden so the blueprint fills the screen
   // uninterrupted — the toolbar below (bottom-of-template, always visible)
-  // toggles each one back on. propertiesWindow isn't in this map — it has
-  // no toolbar entry, since it opens automatically on selection (see
-  // wireEditCallbacks' onSelect) and closes via its own close button, 'e',
-  // or Escape, matching the real game's own "click a building to open its
-  // GUI" convention rather than a manually-toggled panel.
+  // toggles each one back on. propertiesWindow/recipeWindow aren't in this
+  // map — they have no toolbar entry, opening on demand instead (selection,
+  // and the recipe gear button respectively) and closing via their own
+  // close button or Escape, matching the real game's own "click a building
+  // to open its GUI" convention rather than a manually-toggled panel.
   const allWindows: Record<string, { el: HTMLElement; show(): void; hide(): void; bringToFront(): void }> = {
     "library-window": libraryWindow,
     "intake-window": intakeWindow,
@@ -291,6 +324,8 @@ export function mountBlueprintViewer(root: HTMLElement): () => void {
   };
   for (const w of Object.values(allWindows)) w.hide();
   propertiesWindow.hide();
+  recipeWindow.hide();
+  moduleWindow.hide();
   // The library starts open (unlike the others) — it's the entry point for
   // picking a blueprint to work on, matching the reference Surfaces panel
   // being a persistent, always-visible sidebar rather than a popup.
@@ -310,6 +345,14 @@ export function mountBlueprintViewer(root: HTMLElement): () => void {
 
   for (const button of root.querySelectorAll<HTMLButtonElement>("[data-toggle]")) {
     button.addEventListener("click", () => {
+      // The Build window is a menu state, not a free-floating panel — its
+      // body is built fresh on open, so it has to go through the state
+      // machine rather than a bare show()/hide() that would reveal a stale
+      // (or empty) grid.
+      if (button.dataset.toggle === "palette-window") {
+        enterMenuState(menuState === "build" ? "default" : "build");
+        return;
+      }
       const target = allWindows[button.dataset.toggle!];
       if (target) toggleWindow(target);
     }, { signal });
@@ -364,12 +407,17 @@ export function mountBlueprintViewer(root: HTMLElement): () => void {
     scaleFactor: 1,
     measure: { kind: "none" },
     rocketCargo: null,
+    researchLevels: {},
   };
   let scaleTarget: { itemName: string; rate: number; timescale: Timescale } | null = null;
   let latestBottlenecks: Map<string, BottleneckSubgroup[]> = new Map();
 
   let renderer: BlueprintRenderer = mountRenderer(canvas, getData(), getRenderCatalog());
   renderer.onHover(onSchematicHover);
+  // Rebuilt alongside every renderer remount (loadData() resolving with the
+  // real dataset, or a later dataset swap) — placeEntity's collision check
+  // reads this rather than calling buildVisualLookup per click.
+  let visualLookup = buildVisualLookup(getData(), getRenderCatalog());
 
   // Alt mode: Factorio's own alt-key view — recipe icons on machines,
   // module icons on machines/beacons. A persistent toggle (button or the
@@ -394,11 +442,12 @@ export function mountBlueprintViewer(root: HTMLElement): () => void {
     if (e.key !== "Alt") return;
     if (document.activeElement instanceof HTMLInputElement || document.activeElement instanceof HTMLTextAreaElement) return;
     e.preventDefault();
-    // The Alt release that ends a Shift+Alt+scroll quality-cycle gesture
-    // isn't a plain "tap Alt" toggle press — skip the toggle just this
-    // once and clear the flag for the next, genuinely plain release.
-    if (usedAltForQualityScroll) {
-      usedAltForQualityScroll = false;
+    // The Alt release that ends an Alt-modified gesture (Shift+Alt+scroll
+    // quality cycling, Alt+right-click module stamping) isn't a plain "tap
+    // Alt" toggle press — skip the toggle just this once and clear the flag
+    // for the next, genuinely plain release.
+    if (usedAltAsModifier) {
+      usedAltAsModifier = false;
       return;
     }
     setAltMode(!altModeOn);
@@ -583,6 +632,7 @@ export function mountBlueprintViewer(root: HTMLElement): () => void {
   function deselect() {
     selectedEntity = undefined;
     propertiesWindow.hide();
+    recipeWindow.hide();
   }
 
   /** Placing over an existing entity of the SAME name at the SAME tile with
@@ -597,10 +647,32 @@ export function mountBlueprintViewer(root: HTMLElement): () => void {
   function placeEntity(worldX: number, worldY: number, name: string, direction: number, quality: QualityName) {
     const existing = entities.find((e) => e.name === name && e.x === worldX && e.y === worldY);
     if (existing) {
-      if (existing.quality === quality) return; // building the exact same thing again is a no-op
+      // Building the exact same thing again (same quality AND facing) is a
+      // no-op; otherwise this rebuild-in-place upgrades whichever of the two
+      // actually changed — matches the real game's own "build over it to
+      // reconfigure" convention, now covering rotation as well as quality.
+      if (existing.quality === quality && existing.direction === direction) return;
       mutateEntity(existing, (e) => {
         e.quality = quality;
+        e.direction = direction;
       });
+      return;
+    }
+    // In real Factorio nothing shares a tile (elevated rails are the one
+    // exception, out of scope here) — reject a placement whose footprint box
+    // overlaps any already-placed entity's box, the same box math the rate
+    // calculator's beacon-range check already uses. Unknown-footprint
+    // entities fall back to 1x1, matching buildVisualLookup's own default.
+    const newVisual = visualLookup.get(name);
+    const newFootprint = newVisual ? effectiveFootprint(newVisual, direction) : ([1, 1] as [number, number]);
+    const newBox = boxOf(worldX, worldY, newFootprint);
+    const collides = entities.some((e) => {
+      const visual = visualLookup.get(e.name);
+      const footprint = visual ? effectiveFootprint(visual, e.direction) : ([1, 1] as [number, number]);
+      return overlaps(newBox, boxOf(e.x, e.y, footprint));
+    });
+    if (collides) {
+      setStatus("Can't build here — something else already occupies that space.", "error");
       return;
     }
     applyEdit(() => {
@@ -725,6 +797,13 @@ export function mountBlueprintViewer(root: HTMLElement): () => void {
       paletteSelection = null;
       renderer.setInteractionMode({ kind: "idle" });
     } else {
+      // Taking an entity into the cursor drops any held module, so the
+      // cursor only ever carries one thing (the mirror of setHeldModule's
+      // own setMode("idle")).
+      if (heldModule) {
+        heldModule = null;
+        updateCursorIcon(lastPointerPos.x, lastPointerPos.y);
+      }
       paletteSelection = newMode.place;
       paletteQuality = newMode.quality ?? "normal";
       renderer.setInteractionMode({ kind: "place", entityName: newMode.place, direction: newMode.direction, quality: paletteQuality });
@@ -746,14 +825,32 @@ export function mountBlueprintViewer(root: HTMLElement): () => void {
     renderer.onSelect((entityNumber) => {
       const entity = entities.find((e) => e.entityNumber === entityNumber);
       if (!entity) {
-        deselect();
+        enterMenuState("default");
         return;
       }
       selectedEntity = entity;
-      renderPropertiesPanel();
+      // A machine with no recipe set yet opens straight into the recipe
+      // menu — picking one is the only thing its GUI could usefully offer
+      // at that point, so the machine-info screen would just be a step in
+      // the way. Everything else (including a recipe-less non-machine like
+      // a belt) opens its own GUI.
+      const machine = getData().machines[entity.name];
+      const needsRecipe = machine !== undefined && machine.kind === "crafting" && !entity.recipe;
+      enterMenuState(needsRecipe ? "recipe" : "machine-info");
     });
     renderer.onErase((entityNumber) => {
       removeEntity(entityNumber);
+    });
+    // Alt+right-click a machine with a module in hand: stamp that module
+    // into every one of its slots at once. Without a module held there's
+    // nothing to stamp, so the gesture is simply inert (it deliberately
+    // does NOT fall through to erasing — see onAltRightClickEntity).
+    renderer.onAltRightClickEntity((entityNumber) => {
+      // Alt was held as a modifier here, so its release must not also
+      // toggle alt mode (same guard Shift+Alt+scroll uses).
+      usedAltAsModifier = true;
+      const entity = entities.find((e) => e.entityNumber === entityNumber);
+      if (entity) fillAllModuleSlots(entity);
     });
     // Small non-blocking "still loading sprites" badge — fires while a
     // pan/zoom brings never-before-seen entities into view (or the
@@ -773,46 +870,246 @@ export function mountBlueprintViewer(root: HTMLElement): () => void {
 
   const paletteBody = $<HTMLDivElement>("#palette-body");
   let lastPalettePointer = { x: 0, y: 0 };
-  // Set by refreshPalette (rebuilt whenever the palette's own DOM is, e.g.
-  // after loadData() swaps datasets) — lets code outside edit-palette.ts
-  // (the Shift+Alt+scroll quality-cycle shortcut below) drive the strip's
-  // active tier without a second, separate source of truth for it.
-  let setPaletteQuality: (quality: QualityName) => void = () => {};
 
-  function refreshPalette() {
-    setPaletteQuality = buildPalette(paletteBody, getData(), getRenderCatalog(), (entityName, quality) => {
-      setMode({ place: entityName, quality });
-      deselect();
-      // Picking a cell changes paletteSelection without the pointer itself
-      // moving — pointermove won't refire on its own, so the cursor icon
-      // needs this explicit nudge to pick up the newly-picked item/swap
-      // away from a stale one.
-      updateCursorIcon(lastPalettePointer.x, lastPalettePointer.y);
+  /* ---------- menu state machine ----------
+   *
+   * Every picker (Build / Recipe / Module) is the same grid-menu body in its
+   * own floating window, and exactly one menu state is live at a time:
+   *
+   *   default ──E──▶ build ──E/Esc──▶ default
+   *   default ──click machine──▶ machine-info (has a recipe)
+   *                           └▶ recipe      (has none yet)
+   *   machine-info ──E/Esc──▶ default
+   *   machine-info ──gear──▶ recipe     ──E/Esc──▶ machine-info / default
+   *   machine-info ──slot──▶ module     ──E/Esc──▶ machine-info
+   *
+   * 'E' confirms the open menu's selection when it has one (the same thing
+   * the green check button does) and otherwise backs out, so one key drives
+   * the whole graph; Escape always backs out. Keeping the transitions in one
+   * function is what stops the four windows from being shown/hidden
+   * ad-hoc from a dozen call sites and drifting into impossible
+   * combinations. */
+  type MenuState = "default" | "build" | "machine-info" | "recipe" | "module";
+  let menuState: MenuState = "default";
+  /** The open menu's handle, for 'E' to confirm/cancel through. Undefined in
+   *  the two states that aren't a grid menu (default, machine-info). */
+  let activeMenu: GridMenuHandle | undefined;
+  let activeModuleSlot = 0;
+
+  /** Backing out of the recipe menu lands on the machine's own GUI once it
+   *  has a recipe to show there, and on the bare canvas when it still
+   *  doesn't — the recipe menu is the first thing a fresh, recipe-less
+   *  machine opens, so there's no machine-info screen behind it yet. */
+  function recipeExitState(): MenuState {
+    return selectedEntity?.recipe ? "machine-info" : "default";
+  }
+
+  function centerWindow(target: { el: HTMLElement; setPosition(x: number, y: number): void }): void {
+    // Measuring needs the element actually laid out — callers show() first
+    // (display:none has zero size), then centre on its real dimensions.
+    const rect = target.el.getBoundingClientRect();
+    target.setPosition((window.innerWidth - rect.width) / 2, (window.innerHeight - rect.height) / 2);
+  }
+
+  function openMenuWindow(
+    target: { el: HTMLElement; show(): void; bringToFront(): void; setPosition(x: number, y: number): void },
+    handle: GridMenuHandle,
+  ): void {
+    activeMenu = handle;
+    target.show();
+    centerWindow(target);
+    target.bringToFront();
+  }
+
+  function enterMenuState(next: MenuState): void {
+    // The three entity-scoped states have nothing to show without a
+    // selection (an undo can drop the selected entity out from under an
+    // open GUI), so they collapse to the canvas rather than leaving an
+    // empty window behind.
+    if (next !== "default" && next !== "build" && !selectedEntity) next = "default";
+    menuState = next;
+    activeMenu = undefined;
+    paletteWindow.hide();
+    recipeWindow.hide();
+    moduleWindow.hide();
+    // The properties window is the machine-info state itself, so it closes
+    // for every other state — including while a picker it launched is open,
+    // keeping one menu on screen at a time.
+    if (next !== "machine-info") propertiesWindow.hide();
+
+    switch (next) {
+      case "default":
+        deselect();
+        return;
+      case "build":
+        openMenuWindow(paletteWindow, buildPaletteMenu());
+        return;
+      case "machine-info":
+        renderPropertiesPanel();
+        return;
+      case "recipe":
+        openMenuWindow(recipeWindow, buildRecipeMenuForSelection());
+        return;
+      case "module":
+        openMenuWindow(moduleWindow, buildModuleMenuForSlot(activeModuleSlot));
+        return;
+    }
+  }
+
+  /** Backs out of whichever menu is open — the reverse of the transition
+   *  that opened it. Both Escape and a selection-less 'E' route through
+   *  here, so the two can't disagree about where "back" goes. */
+  function exitCurrentMenuState(): void {
+    switch (menuState) {
+      case "build":
+      case "machine-info":
+        enterMenuState("default");
+        return;
+      case "recipe":
+        enterMenuState(recipeExitState());
+        return;
+      case "module":
+        enterMenuState("machine-info");
+        return;
+      case "default":
+        return;
+    }
+  }
+
+  function buildPaletteMenu(): GridMenuHandle {
+    return buildPalette(
+      paletteBody,
+      getData(),
+      getRenderCatalog(),
+      paletteQuality,
+      (entityName, quality) => {
+        setMode({ place: entityName, quality });
+        enterMenuState("default");
+        // Confirming changes paletteSelection without the pointer itself
+        // moving — pointermove won't refire on its own, so the cursor icon
+        // needs this explicit nudge to pick up the newly-picked item.
+        updateCursorIcon(lastPalettePointer.x, lastPalettePointer.y);
+      },
+      () => enterMenuState("default"),
+    );
+  }
+
+  function buildRecipeMenuForSelection(): GridMenuHandle {
+    const entity = selectedEntity;
+    const machine = entity ? getData().machines[entity.name] : undefined;
+    return buildRecipeMenu(
+      $<HTMLDivElement>("#recipe-body"),
+      getData(),
+      getRenderCatalog(),
+      machine?.categories ?? [],
+      entity?.recipe,
+      entity?.quality ?? "normal",
+      (recipeName, quality) => {
+        updateSelectedEntity((e) => {
+          e.recipe = recipeName;
+          e.quality = quality;
+        });
+        enterMenuState("machine-info");
+      },
+      () => enterMenuState(recipeExitState()),
+    );
+  }
+
+  /** Writes one module slot (a module, or null to empty it) back onto the
+   *  selected entity. Shared by the module menu's confirm and the
+   *  right-click-a-slot removal so both go through the same undoable edit. */
+  function setModuleSlot(slotIndex: number, module: { name: string; quality: QualityName } | null): void {
+    updateSelectedEntity((e) => {
+      const slots = expandModuleSlots(e.modules);
+      slots[slotIndex] = module;
+      e.modules = collapseModules(slots.filter((s): s is { name: string; quality: QualityName } => s !== null));
     });
   }
 
-  // Follows the cursor while it's over the Build window with something
-  // picked (place mode) — the canvas's own ghost preview only makes sense
-  // over the canvas itself, so this stands in for it while hovering the
-  // palette instead, matching the real game's own cursor-stack icon.
-  // Rebuilt on every pointermove entry into the window rather than kept
-  // live update-in-place, since paletteSelection can change while hovering
-  // (clicking a different cell) and the icon must follow suit.
+  /* ---------- held module ("module in cursor") ----------
+   *
+   * A module picked up with 'q' rides the cursor the same way a placeable
+   * entity does, and is spent by clicking a module slot (one slot) or
+   * Alt+right-clicking a machine (every slot at once). It's deliberately
+   * exclusive with the entity ghost: the cursor holds one thing, so picking
+   * up a module drops whatever entity was in hand and vice versa. */
+  let heldModule: { name: string; quality: QualityName } | null = null;
+
+  /** The open menu's quality tier, for picks that bypass its confirm button
+   *  (the 'q' pipette over a module cell) — "normal" with no menu open. */
+  function activeMenuQuality(): QualityName {
+    return activeMenu?.quality() ?? "normal";
+  }
+
+  function setHeldModule(module: { name: string; quality: QualityName } | null): void {
+    heldModule = module;
+    // Dropping the entity ghost keeps "what's in the cursor" single-valued
+    // — otherwise a left-click on the canvas would both place a building and
+    // still be carrying a module.
+    if (module) setMode("idle");
+    updateCursorIcon(lastPointerPos.x, lastPointerPos.y);
+  }
+
+  /** Fills every module slot of `entity` with the held module — the
+   *  Alt+right-click gesture. One edit for the whole machine, so it undoes
+   *  as a single step rather than per-slot. */
+  function fillAllModuleSlots(entity: PlacedEntity): void {
+    const module = heldModule;
+    if (!module) return;
+    const data = getData();
+    const slots = data.machines[entity.name]?.moduleSlots ?? data.beacons[entity.name]?.moduleSlots ?? 0;
+    if (slots === 0) return;
+    applyEdit(() => {
+      const target = entities.find((e) => e.entityNumber === entity.entityNumber);
+      if (!target) return;
+      target.modules = collapseModules(Array.from({ length: slots }, () => ({ ...module })));
+    });
+  }
+
+  function buildModuleMenuForSlot(slotIndex: number): GridMenuHandle {
+    // Only the quality carries over from whatever is in the slot — the
+    // module itself opens unselected (picking is the menu's only job now
+    // that removal is a right-click on the slot).
+    const current = selectedEntity ? expandModuleSlots(selectedEntity.modules)[slotIndex] ?? null : null;
+    return buildModuleMenu(
+      $<HTMLDivElement>("#module-body"),
+      getData(),
+      getRenderCatalog(),
+      current?.quality ?? "normal",
+      (module) => {
+        setModuleSlot(slotIndex, module);
+        enterMenuState("machine-info");
+      },
+      () => enterMenuState("machine-info"),
+    );
+  }
+
+  // The cursor-stack icon, matching the real game's own. Two things can put
+  // something in it, with different reach:
+  //   - a held MODULE follows the cursor everywhere, since a module has no
+  //     canvas ghost of its own and its targets (module slots, machines)
+  //     live in both the entity GUI and the canvas;
+  //   - a picked ENTITY only shows here while over the Build window, since
+  //     everywhere else the canvas already draws a real placement ghost and
+  //     a second floating icon would just double up on it.
   const cursorIcon = document.createElement("div");
   cursorIcon.className = "palette-cursor-icon";
   cursorIcon.hidden = true;
   document.body.appendChild(cursorIcon);
   let cursorIconFor: string | null = null;
+  let pointerOverPalette = false;
+  let lastPointerPos = { x: 0, y: 0 };
 
   function updateCursorIcon(clientX: number, clientY: number): void {
-    if (!paletteSelection) {
+    const held = heldModule?.name ?? (pointerOverPalette ? paletteSelection : null);
+    if (!held) {
       cursorIcon.hidden = true;
       cursorIconFor = null;
       return;
     }
-    if (cursorIconFor !== paletteSelection) {
-      cursorIcon.replaceChildren(icon(paletteSelection, paletteSelection, 28));
-      cursorIconFor = paletteSelection;
+    if (cursorIconFor !== held) {
+      cursorIcon.replaceChildren(icon(held, held, 28));
+      cursorIconFor = held;
     }
     cursorIcon.hidden = false;
     // Offset down-right of the cursor (matches the reference screenshot),
@@ -822,13 +1119,21 @@ export function mountBlueprintViewer(root: HTMLElement): () => void {
     cursorIcon.style.top = `${clientY + 12}px`;
   }
 
+  // Document-level so a held module's icon keeps up over the canvas and the
+  // entity GUI too, not just inside the Build window.
+  document.addEventListener("pointermove", (e) => {
+    lastPointerPos = { x: e.clientX, y: e.clientY };
+    if (heldModule) updateCursorIcon(e.clientX, e.clientY);
+  }, { signal });
+
   paletteWindow.el.addEventListener("pointermove", (e) => {
+    pointerOverPalette = true;
     lastPalettePointer = { x: e.clientX, y: e.clientY };
     updateCursorIcon(e.clientX, e.clientY);
   }, { signal });
   paletteWindow.el.addEventListener("pointerleave", () => {
-    cursorIcon.hidden = true;
-    cursorIconFor = null;
+    pointerOverPalette = false;
+    updateCursorIcon(lastPointerPos.x, lastPointerPos.y);
   }, { signal });
 
   function renderPropertiesPanel() {
@@ -836,21 +1141,31 @@ export function mountBlueprintViewer(root: HTMLElement): () => void {
       propertiesWindow.hide();
       return;
     }
+    // Every edit funnels through applyEdit, which re-renders this panel so
+    // it reflects the change — but an edit can land while a picker menu is
+    // open (confirming a recipe, an undo, rotating a hovered entity), and
+    // this must not pop the machine GUI up over that menu. Showing is the
+    // machine-info state's own job; from any other state this call only
+    // rebuilds the (hidden) panel for when that state is next entered.
+    if (menuState !== "machine-info") return;
     const wasHidden = propertiesWindow.el.hidden;
     const propertiesBody = $<HTMLDivElement>("#properties-body");
     buildPropertiesPanel(propertiesBody, selectedEntity, getData(), getRenderCatalog(), latestBottlenecks, {
-      onRecipeChange(recipeName) {
-        updateSelectedEntity((e) => {
-          e.recipe = recipeName;
-        });
+      onOpenRecipePicker: () => enterMenuState("recipe"),
+      onModuleSlotClick(slotIndex) {
+        // With a module in hand, clicking a slot stamps it straight in
+        // (and keeps holding it, so the remaining slots can be filled with
+        // more clicks) rather than opening the picker.
+        if (heldModule) {
+          setModuleSlot(slotIndex, { ...heldModule });
+          return;
+        }
+        activeModuleSlot = slotIndex;
+        enterMenuState("module");
       },
-      onModuleSlotChange(slotIndex, module) {
-        updateSelectedEntity((e) => {
-          const slots = expandModuleSlots(e.modules);
-          slots[slotIndex] = module;
-          e.modules = collapseModules(slots.filter((s): s is { name: string; quality: QualityName } => s !== null));
-        });
-      },
+      // Stays in machine-info: the panel rebuilds itself through applyEdit,
+      // so the emptied slot just re-renders in place.
+      onClearModuleSlot: (slotIndex) => setModuleSlot(slotIndex, null),
     });
     propertiesWindow.show();
     propertiesWindow.bringToFront();
@@ -869,7 +1184,7 @@ export function mountBlueprintViewer(root: HTMLElement): () => void {
 
   function recalculate() {
     const data = getData();
-    result = calculate(data, entities);
+    result = calculate(data, entities, options.researchLevels);
     const throughputCtx: ThroughputContext = {
       data,
       entities,
@@ -1173,11 +1488,11 @@ export function mountBlueprintViewer(root: HTMLElement): () => void {
     load(text);
   }, { signal });
 
-  // Set whenever Shift+Alt+scroll actually fires, checked (and cleared) by
-  // the Alt-keyup handler below — lets it skip the alt-mode toggle for the
-  // Alt release that ends this gesture, instead of reading as a plain
-  // "tap Alt by itself" toggle press.
-  let usedAltForQualityScroll = false;
+  // Set whenever Alt is used as a gesture MODIFIER rather than tapped on
+  // its own (Shift+Alt+scroll quality cycling, Alt+right-click module
+  // stamping), checked and cleared by the Alt-keyup handler above — without
+  // it, every such gesture would also toggle alt mode on release.
+  let usedAltAsModifier = false;
 
   // Shift+Alt+scroll while a ghost is in hand cycles its quality tier
   // (up on scroll-up, down on scroll-down) — matches the real game's own
@@ -1189,7 +1504,7 @@ export function mountBlueprintViewer(root: HTMLElement): () => void {
     if (!e.shiftKey || !e.altKey || !paletteSelection) return;
     e.preventDefault();
     e.stopImmediatePropagation();
-    usedAltForQualityScroll = true;
+    usedAltAsModifier = true;
     const i = QUALITY_TIERS.indexOf(paletteQuality);
     const next = QUALITY_TIERS[Math.min(QUALITY_TIERS.length - 1, Math.max(0, i + (e.deltaY < 0 ? 1 : -1)))]!;
     if (next === paletteQuality) return;
@@ -1197,7 +1512,9 @@ export function mountBlueprintViewer(root: HTMLElement): () => void {
     // ghost's current facing as long as the entity name itself doesn't
     // change, which it doesn't here (only the quality does).
     setMode({ place: paletteSelection, quality: next });
-    setPaletteQuality(next);
+    // Keeps a Build menu that happens to be open in sync, so its quality
+    // strip never disagrees with the ghost actually in hand.
+    activeMenu?.setQuality(next);
   }, { capture: true, signal });
 
   // 'r' rotates whatever you're currently "holding" — matches Factorio's
@@ -1225,39 +1542,36 @@ export function mountBlueprintViewer(root: HTMLElement): () => void {
     }
   }, { signal });
 
-  // Escape closes the entity GUI, matching the real game's own "back out of
-  // whatever's open" convention. No-op when nothing's selected (there's
-  // nothing to close), and guarded against firing while focus is in a text
-  // input the same way every other shortcut here is.
+  // Escape always backs out one menu state — the reverse of whatever
+  // opened the current one (see enterMenuState's own transition map). The
+  // text-input guard is deliberately NOT applied to Escape the way it is to
+  // the letter shortcuts: backing out of a menu while the cursor sits in
+  // its filter box is exactly when Escape is most wanted.
   window.addEventListener("keydown", (e) => {
     if (e.key !== "Escape") return;
-    if (document.activeElement instanceof HTMLInputElement || document.activeElement instanceof HTMLTextAreaElement) return;
-    if (!selectedEntity) return;
+    if (menuState === "default") return;
     e.preventDefault();
-    deselect();
+    exitCurrentMenuState();
   }, { signal });
 
-  // 'e' opens/closes the Build menu, matching the real game's own "e opens
-  // your inventory/crafting screen" convention — repurposed here for the
-  // build palette, this app's equivalent. Opens centered on screen each
-  // time (rather than remembering wherever it was last dragged to), since
-  // that's the one window meant to pop up front-and-center on demand
-  // instead of staying docked/positioned like the others.
+  // 'e' is the one key that walks the whole menu graph: it opens the Build
+  // menu from the canvas, confirms an open menu's selection when it has one
+  // (the same thing that menu's green check button does), and otherwise
+  // backs out exactly like Escape. Matches the real game's own "e opens
+  // your inventory/crafting screen, e closes it again" convention.
   window.addEventListener("keydown", (e) => {
     if (e.key.toLowerCase() !== "e" || e.metaKey || e.ctrlKey || e.altKey) return;
     if (document.activeElement instanceof HTMLInputElement || document.activeElement instanceof HTMLTextAreaElement) return;
     e.preventDefault();
-    if (paletteWindow.el.hidden) {
-      // Measuring needs the element actually laid out — show() first
-      // (display:none has zero size), then centre using its real
-      // rendered dimensions, then bring to front.
-      paletteWindow.show();
-      const rect = paletteWindow.el.getBoundingClientRect();
-      paletteWindow.setPosition((window.innerWidth - rect.width) / 2, (window.innerHeight - rect.height) / 2);
-      paletteWindow.bringToFront();
-    } else {
-      paletteWindow.hide();
+    if (menuState === "default") {
+      enterMenuState("build");
+      return;
     }
+    if (activeMenu?.hasSelection()) {
+      activeMenu.confirm();
+      return;
+    }
+    exitCurrentMenuState();
   }, { signal });
 
   // 'q' is the smart pipette AND the "clear cursor" gesture, matching the
@@ -1279,13 +1593,40 @@ export function mountBlueprintViewer(root: HTMLElement): () => void {
     // suppress, and calling it was triggering macOS's own "hide pointer
     // while typing" heuristic, leaving the system cursor invisible until
     // the next mousemove.
+    // A module under the cursor — either a cell in the module menu or a
+    // filled slot in the machine GUI — goes into the cursor as a held
+    // module rather than an entity ghost: a module isn't placeable on the
+    // ground, its targets are slots and machines (see setHeldModule).
+    const underPointer = document.elementFromPoint(lastPointerPos.x, lastPointerPos.y);
+    const moduleCell = underPointer?.closest<HTMLElement>("#module-window .palette-cell");
+    if (moduleCell?.dataset.value) {
+      setHeldModule({ name: moduleCell.dataset.value, quality: activeMenuQuality() });
+      return;
+    }
+    const moduleSlot = underPointer?.closest<HTMLElement>(".module-slot-cell");
+    if (moduleSlot && selectedEntity) {
+      const slotIndex = [...(moduleSlot.parentElement?.children ?? [])].indexOf(moduleSlot);
+      const inSlot = expandModuleSlots(selectedEntity.modules)[slotIndex];
+      // Pipetting an empty slot clears the cursor instead of picking up
+      // "nothing", matching how 'q' over empty ground clears it.
+      setHeldModule(inSlot ? { ...inSlot } : null);
+      return;
+    }
+
     const hoveredCell = !paletteWindow.el.hidden
       ? document.elementFromPoint(lastPalettePointer.x, lastPalettePointer.y)?.closest<HTMLElement>(".palette-cell")
       : null;
     if (hoveredCell?.dataset.entityName) {
+      setHeldModule(null);
       setMode({ place: hoveredCell.dataset.entityName, quality: paletteQuality });
       deselect();
       updateCursorIcon(lastPalettePointer.x, lastPalettePointer.y);
+      return;
+    }
+    if (heldModule) {
+      // 'q' with a module in hand and nothing pipette-able under the cursor
+      // drops it, the same way it drops an entity ghost.
+      setHeldModule(null);
       return;
     }
     const entity = hoveredEntityNumber !== undefined ? entities.find((en) => en.entityNumber === hoveredEntityNumber) : undefined;
@@ -1425,7 +1766,6 @@ export function mountBlueprintViewer(root: HTMLElement): () => void {
   // site's own generated dataset as soon as it loads and recompute so real
   // blueprints don't miss recipes.
   populateMeasureOptions();
-  refreshPalette();
   // A saved autosave (see persistEntities' own doc comment) takes priority
   // over a fresh random example — restoring whatever the user was last
   // working on beats replacing it with something else every reload.
@@ -1459,12 +1799,15 @@ export function mountBlueprintViewer(root: HTMLElement): () => void {
     renderer = mountRenderer(canvas, getData(), getRenderCatalog());
     renderer.onHover(onSchematicHover);
     renderer.setAltMode(altModeOn);
+    visualLookup = buildVisualLookup(getData(), getRenderCatalog());
     wireEditCallbacks();
     if (entities.length) renderer.loadBlueprint(entities);
 
     populateMeasureOptions();
     updateMeasure();
-    refreshPalette();
+    // A menu open across the dataset swap is rebuilt against the new data
+    // rather than left showing the vanilla fallback's much smaller set.
+    if (menuState !== "default") enterMenuState(menuState);
     // Only re-parse the textarea if nothing's loaded yet (entities.length
     // still empty means the vanilla-dataset render above at line 926 had
     // nothing to hand off) — entities.length itself already survived the
@@ -1570,6 +1913,8 @@ export function mountBlueprintViewer(root: HTMLElement): () => void {
     aboutWindow.destroy();
     paletteWindow.destroy();
     propertiesWindow.destroy();
+    recipeWindow.destroy();
+    moduleWindow.destroy();
     debugWindow.destroy();
     clearInterval(debugPollHandle);
     cursorIcon.remove();

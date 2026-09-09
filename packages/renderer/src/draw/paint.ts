@@ -1,6 +1,6 @@
 import { Layer } from "@factoriotools/engine";
 import type { SpriteAtlas } from "../spriteAtlas.js";
-import { compareDrawCommands, PIXELS_PER_TILE, type DrawCommand } from "./commands.js";
+import { compareDrawCommands, type DrawCommand } from "./commands.js";
 
 /** Factorio ships shadow art as near-opaque grayscale (its engine composites
  *  shadows with a multiply blend, not plain alpha); painted with drawImage's
@@ -23,14 +23,19 @@ export const TINT_ALPHA = 0.55;
  *  already holds whatever unrelated content (floor, neighbouring entities)
  *  sits behind that command's own transparent pixels, and source-atop washes
  *  over all of it, not just this sprite's own silhouette. */
-export function paint(ctx: CanvasRenderingContext2D, atlas: SpriteAtlas, commands: DrawCommand[]): void {
+export function paint(
+  ctx: CanvasRenderingContext2D,
+  atlas: SpriteAtlas,
+  commands: DrawCommand[],
+  tintedOffscreenRes: number,
+): void {
   // A ghost's shadow stays untinted — the green/red wash marks the
   // building itself, not the ground shadow it casts, which should keep
   // reading as a plain shadow regardless of placement validity.
   const untinted = commands.filter((c) => !c.tint || c.layer === Layer.Shadow);
   const tinted = commands.filter((c) => c.tint && c.layer !== Layer.Shadow);
   paintPlain(ctx, atlas, untinted);
-  if (tinted.length > 0) paintTinted(ctx, atlas, tinted);
+  if (tinted.length > 0) paintTinted(ctx, atlas, tinted, tintedOffscreenRes);
 }
 
 function paintPlain(ctx: CanvasRenderingContext2D, atlas: SpriteAtlas, commands: DrawCommand[]): void {
@@ -62,7 +67,7 @@ function paintPlain(ctx: CanvasRenderingContext2D, atlas: SpriteAtlas, commands:
  *  own silhouettes — then blits the tinted composite onto the main canvas in
  *  one call. All the given commands share one tint (the placement ghost is
  *  one colour throughout), read from the first command. */
-function paintTinted(ctx: CanvasRenderingContext2D, atlas: SpriteAtlas, commands: DrawCommand[]): void {
+function paintTinted(ctx: CanvasRenderingContext2D, atlas: SpriteAtlas, commands: DrawCommand[], res: number): void {
   commands.sort(compareDrawCommands);
   let left = Infinity, top = Infinity, right = -Infinity, bottom = -Infinity;
   for (const c of commands) {
@@ -75,16 +80,18 @@ function paintTinted(ctx: CanvasRenderingContext2D, atlas: SpriteAtlas, commands
   const spanH = bottom - top;
   if (!(spanW > 0 && spanH > 0)) return;
 
-  // World units -> offscreen pixels: PIXELS_PER_TILE gives plenty of
-  // resolution for a ghost preview without needing to match the live
-  // camera's own current zoom (matches inserter.ts's own tinted-offscreen
-  // convention).
-  const res = PIXELS_PER_TILE;
+  // World units -> offscreen pixels, at `res` (the caller's current
+  // camera.state.pixelsPerTile, i.e. the SAME resolution a placed entity
+  // draws at right now) rather than a fixed constant — a hardcoded 32px/tile
+  // buffer stretched to fill the screen at, say, 4x zoom looked visibly
+  // blurrier/blockier than every placed entity around it, which draws
+  // straight from the full-resolution sprite atlas at whatever zoom is
+  // current. Smoothing left on (the default) so any residual scaling still
+  // blends like the rest of the canvas instead of looking pixelated.
   const off = document.createElement("canvas");
   off.width = Math.max(1, Math.ceil(spanW * res));
   off.height = Math.max(1, Math.ceil(spanH * res));
   const offCtx = off.getContext("2d")!;
-  offCtx.imageSmoothingEnabled = false;
 
   let alpha = 1;
   let compositeIsMultiply = false;

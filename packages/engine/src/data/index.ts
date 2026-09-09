@@ -1,7 +1,14 @@
 import type { GameData, RenderCatalog } from "../types.js";
 import { vanilla } from "./vanilla.js";
 
-const EMPTY_CATALOG: RenderCatalog = { version: "none", entities: {}, menuGroups: [], menuPositions: {} };
+const EMPTY_CATALOG: RenderCatalog = {
+  version: "none",
+  entities: {},
+  menuGroups: [],
+  menuPositions: {},
+  itemMenuPositions: {},
+  recipeMenuPositions: {},
+};
 
 let active: GameData = vanilla;
 let activeCatalog: RenderCatalog = EMPTY_CATALOG;

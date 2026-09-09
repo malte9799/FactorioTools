@@ -100,6 +100,30 @@ function extractIconAtlas(): void {
     // alt-mode's per-entity quality badge, both wanting the real diamond
     // icon Factorio itself uses rather than a plain colored dot.
     "quality",
+    // Factorio splits "things that go in an inventory slot" across several
+    // prototype types beyond plain `item` — confirmed by spike: science
+    // packs are `tool`, not `item`, which is why automation-science-pack's
+    // icon was missing entirely despite `item` already being in this list.
+    // Every one of these tables is referenced by at least one recipe's
+    // ingredients/results in the vanilla+Space Age dump (guns, ammo,
+    // capsules, armor, science packs, blueprints/planners, vehicles-as-
+    // items), so all are real gaps, not speculative additions.
+    "tool",
+    "ammo",
+    "capsule",
+    "gun",
+    "armor",
+    "repair-tool",
+    "rail-planner",
+    "spidertron-remote",
+    "item-with-entity-data",
+    "selection-tool",
+    "copy-paste-tool",
+    "deconstruction-item",
+    "upgrade-item",
+    "blueprint",
+    "blueprint-book",
+    "space-platform-starter-pack",
   ];
 
   const entries: { id: string; file: string }[] = [];

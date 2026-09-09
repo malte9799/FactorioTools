@@ -76,7 +76,11 @@ export function mountEntityPreview(container: HTMLElement, entityName: string, d
         { grid: new NeighbourGrid(), fluidNetwork: new FluidNetwork(), heatNetwork: new HeatNetwork(), isPipeLike: never, isHeatPipeLike: never, isWallLike: never, isBeltLike: never, platformBoxes: [], animationFrame: 0 },
         1,
       );
-      paint(ctx, atlas, commands);
+      // Never actually used — this preview's commands carry no .tint, so
+      // paint() never reaches the code path that reads it — but paint()
+      // still wants a resolution argument, so this passes its own current
+      // scale for consistency rather than a magic number.
+      paint(ctx, atlas, commands, dpr * pixelsPerTile);
     }
     ctx.restore();
   }

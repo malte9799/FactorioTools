@@ -53,7 +53,26 @@ export interface RecipeProto {
   results: ProductProto[];
   /** 2.0 productivity ceiling, as a fraction. Infinity when uncapped. */
   maximumProductivity?: number;
+  /** Name of the (infinitely-repeatable) technology that raises this
+   *  recipe's productivity, e.g. "steel-plate-productivity" — undefined for
+   *  recipes with no such research. A blueprint doesn't record what's been
+   *  researched, so the UI asks the user for a level per technology. */
+  productivityTechnology?: string;
   localised: string;
+}
+
+/** One recipe-productivity technology (2.0's `change-recipe-productivity`
+ *  effect) — "Steel plate productivity", "Processing unit productivity",
+ *  etc. Infinitely repeatable; each level adds changePerLevel to every
+ *  recipe it names. Surfaced separately from RecipeProto so the UI can list
+ *  "what research applies to what's actually in this blueprint" without
+ *  scanning every recipe. */
+export interface ProductivityTechnology {
+  name: string;
+  localised: string;
+  changePerLevel: number;
+  /** Recipe names this technology's level applies productivity to. */
+  recipes: string[];
 }
 
 export type MachineKind = "crafting" | "lab" | "mining-drill" | "generator";
@@ -262,14 +281,21 @@ export interface ModuleProto {
 
 export interface BeaconProto {
   name: string;
-  /** Fraction of each module's effect transmitted, per beacon. */
+  /** Fraction of each module's effect transmitted, per beacon, at normal
+   *  quality. */
   distributionEffectiveness: number;
+  /** Added to distributionEffectiveness per quality level of the beacon
+   *  itself (2.0's `distribution_effectivity_bonus_per_quality_level`) —
+   *  additive, unlike the ×(1+0.3×level) multiplier every other quality
+   *  bonus uses; e.g. base 1.5 + 0.2/level gives 1.5/1.7/1.9/2.1/2.5. */
+  distributionEffectivenessBonusPerQualityLevel: number;
   /** Tiles beyond the beacon's own footprint that it supplies. */
   supplyAreaDistance: number;
   moduleSlots: number;
   size: [number, number];
   /** 2.0 diminishing returns by beacon count. profile[n-1] for n beacons.
-   *  Falls back to 1/sqrt(n) past the end of the array. */
+   *  Past the end of the array, the last entry is reused (engine-documented
+   *  behaviour), not a recomputed formula. */
   profile?: number[];
   energyUsage: number;
   /** Just the base pad layer — beacons' full graphics_set is a multi-layer
@@ -319,6 +345,14 @@ export interface GameData {
   qualityMachineSpeed: Record<QualityName, number>;
   /** Multiplier applied to a module's positive effects, by quality tier. */
   qualityModuleEffect: Record<QualityName, number>;
+  /** Integer quality level per tier (normal 0 .. legendary 5, note the jump
+   *  from epic's 3) — used for beacon distribution effectiveness, which
+   *  scales additively per level rather than via qualityModuleEffect's
+   *  multiplier. */
+  qualityLevel: Record<QualityName, number>;
+  /** Infinitely-repeatable recipe-productivity technologies, keyed by name —
+   *  see ProductivityTechnology. */
+  productivityTechnologies: Record<string, ProductivityTechnology>;
 }
 
 /** Entities that appear in blueprints but have no rate of their own — poles,
@@ -429,6 +463,23 @@ export interface RenderCatalog {
   /** Build-menu slot per entity name, spanning both this catalog and
    *  GameData. Absent means not directly placeable. */
   menuPositions: Record<string, MenuPosition>;
+  /** Same item-group/subgroup/order scheme as menuPositions, but keyed by
+   *  ITEM name rather than by the entity an item places — what the module
+   *  picker groups/sorts by (a module isn't placeable, so it never gets a
+   *  menuPositions entry). */
+  itemMenuPositions: Record<string, MenuPosition>;
+  /** Same item-group/subgroup/order scheme as menuPositions, but keyed by
+   *  RECIPE name and resolved from the recipe's own main product item
+   *  (which usually isn't itself placeable — a science pack has no
+   *  place_result, so it never gets a menuPositions entry) rather than
+   *  place_result. This is what the recipe-picker window's category tabs
+   *  use, matching the real game's own recipe-selection GUI grouping recipes
+   *  by resulting-item category (the same Logistics/Production/... tabs the
+   *  build menu shows), not Factorio's internal crafting_category field
+   *  (RecipeProto.category — "crafting", "smelting", ...), which the recipe
+   *  window used before this and doesn't correspond to any real in-game UI
+   *  grouping the user would recognise. */
+  recipeMenuPositions: Record<string, MenuPosition>;
 }
 
 /* ---------- Blueprint string shapes (as exported by the game) ---------- */

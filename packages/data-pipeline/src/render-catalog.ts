@@ -641,15 +641,79 @@ const SIMPLE_STATIC_TABLES = [...new Set([...Object.keys(PICTURE_FIELD), ...Obje
  *  style of explicit per-kind lists over blind traversal. */
 const ITEM_TABLES = ["item", "item-with-entity-data", "capsule", "gun", "armor", "module", "rail-planner"];
 
+/** Every prototype table an item that a recipe can PRODUCE might belong to
+ *  — broader than ITEM_TABLES above (that one only needs tables that can
+ *  carry `place_result`; this one needs every item-ish table at all, since
+ *  a recipe's product is often something with no place_result whatsoever —
+ *  science packs are `tool`, ammo is `ammo`, etc). Mirrors dump-to-
+ *  gamedata.ts's own mapItems table list. */
+const RECIPE_PRODUCT_ITEM_TABLES = [
+  "item",
+  "item-with-entity-data",
+  "module",
+  "tool",
+  "ammo",
+  "capsule",
+  "gun",
+  "armor",
+  "repair-tool",
+  "rail-planner",
+  "spidertron-remote",
+  "selection-tool",
+  "copy-paste-tool",
+  "deconstruction-item",
+  "upgrade-item",
+  "blueprint",
+  "blueprint-book",
+  "space-platform-starter-pack",
+];
+
+function resolvePosition(
+  subgroupToGroup: Map<string, { group: string; subgroupOrder: string }>,
+  menuGroups: MenuGroup[],
+  subgroupName: unknown,
+  order: unknown,
+): MenuPosition {
+  const resolved = typeof subgroupName === "string" ? subgroupToGroup.get(subgroupName) : undefined;
+  // No subgroup, or a subgroup naming a group this dump's item-group table
+  // doesn't have an icon for (matches the game's own "Other" catch-all
+  // tab) — confirmed by spike this is a real, if uncommon, case rather
+  // than a data gap to work around.
+  const group = resolved && menuGroups.some((g) => g.name === resolved.group) ? resolved.group : "other";
+  return {
+    group,
+    subgroup: typeof subgroupName === "string" ? subgroupName : "other",
+    subgroupOrder: resolved?.subgroupOrder ?? "",
+    order: typeof order === "string" ? order : "",
+  };
+}
+
 /** Resolves the real game's own build-menu structure (item-group ->
  *  item-subgroup -> item.order) from the raw dump — confirmed by spike this
  *  is exactly what the in-game build menu itself sorts by, not a guessed
- *  categorization. Returns menuGroups sorted by their own order, and one
+ *  categorization. Returns menuGroups sorted by their own order, one
  *  menuPositions entry per placeable entity name (resolved from whichever
  *  item has `place_result === entityName`; an entity with no such item, or
  *  whose item has no subgroup, is simply absent — the palette skips it
- *  rather than inventing a slot). */
-function buildMenuIndex(raw: Raw, locale: LocaleTables): { menuGroups: MenuGroup[]; menuPositions: Record<string, MenuPosition> } {
+ *  rather than inventing a slot), and one recipeMenuPositions entry per
+ *  recipe name — resolved from the recipe's own main (first) product item's
+ *  subgroup, NOT place_result, since a recipe's product (a science pack, an
+ *  ammo type, ...) is usually not itself a placeable entity. This is what
+ *  the recipe-picker window's category tabs use, matching the real game's
+ *  own recipe-selection GUI, which groups recipes by the SAME item-group
+ *  tabs the build menu shows — confirmed by the user against their own
+ *  in-game reference — not RecipeProto.category (Factorio's internal
+ *  crafting_category field: "crafting", "smelting", ...), which doesn't
+ *  correspond to any real in-game UI grouping. */
+function buildMenuIndex(
+  raw: Raw,
+  locale: LocaleTables,
+): {
+  menuGroups: MenuGroup[];
+  menuPositions: Record<string, MenuPosition>;
+  itemMenuPositions: Record<string, MenuPosition>;
+  recipeMenuPositions: Record<string, MenuPosition>;
+} {
   const subgroupToGroup = new Map<string, { group: string; subgroupOrder: string }>();
   for (const sg of Object.values(raw["item-subgroup"] ?? {})) {
     subgroupToGroup.set(sg.name, { group: sg.group, subgroupOrder: sg.order ?? "" });
@@ -671,23 +735,43 @@ function buildMenuIndex(raw: Raw, locale: LocaleTables): { menuGroups: MenuGroup
     for (const item of Object.values(raw[table] ?? {}) as any[]) {
       const entityName = item.place_result;
       if (typeof entityName !== "string" || menuPositions[entityName]) continue;
-      const subgroupName = item.subgroup;
-      const resolved = typeof subgroupName === "string" ? subgroupToGroup.get(subgroupName) : undefined;
-      // No subgroup, or a subgroup naming a group this dump's item-group
-      // table doesn't have an icon for (matches the game's own "Other"
-      // catch-all tab) — confirmed by spike this is a real, if uncommon,
-      // case rather than a data gap to work around.
-      const group = resolved && menuGroups.some((g) => g.name === resolved.group) ? resolved.group : "other";
-      menuPositions[entityName] = {
-        group,
-        subgroup: subgroupName ?? "other",
-        subgroupOrder: resolved?.subgroupOrder ?? "",
-        order: item.order ?? "",
-      };
+      menuPositions[entityName] = resolvePosition(subgroupToGroup, menuGroups, item.subgroup, item.order);
     }
   }
 
-  return { menuGroups, menuPositions };
+  const itemSubgroupByName = new Map<string, unknown>();
+  const itemOrderByName = new Map<string, unknown>();
+  const itemMenuPositions: Record<string, MenuPosition> = {};
+  for (const table of RECIPE_PRODUCT_ITEM_TABLES) {
+    for (const item of Object.values(raw[table] ?? {}) as any[]) {
+      if (itemSubgroupByName.has(item.name)) continue;
+      itemSubgroupByName.set(item.name, item.subgroup);
+      itemOrderByName.set(item.name, item.order);
+      itemMenuPositions[item.name] = resolvePosition(subgroupToGroup, menuGroups, item.subgroup, item.order);
+    }
+  }
+  // Fluids have their own subgroup too (usually "fluid" itself) — a
+  // fluid-producing recipe (e.g. sulfuric-acid) needs the same lookup.
+  for (const fluid of Object.values(raw.fluid ?? {}) as any[]) {
+    if (itemSubgroupByName.has(fluid.name)) continue;
+    itemSubgroupByName.set(fluid.name, fluid.subgroup);
+    itemOrderByName.set(fluid.name, fluid.order);
+  }
+
+  const recipeMenuPositions: Record<string, MenuPosition> = {};
+  for (const recipe of Object.values(raw.recipe ?? {}) as any[]) {
+    const results = Array.isArray(recipe.results) ? recipe.results : [];
+    const mainProduct = results[0]?.name;
+    if (typeof mainProduct !== "string") continue;
+    recipeMenuPositions[recipe.name] = resolvePosition(
+      subgroupToGroup,
+      menuGroups,
+      itemSubgroupByName.get(mainProduct),
+      itemOrderByName.get(mainProduct),
+    );
+  }
+
+  return { menuGroups, menuPositions, itemMenuPositions, recipeMenuPositions };
 }
 
 export function buildRenderCatalog(raw: Raw, locale: LocaleTables, version: string): RenderCatalog {
@@ -810,6 +894,6 @@ export function buildRenderCatalog(raw: Raw, locale: LocaleTables, version: stri
     add(proto, undefined);
   }
 
-  const { menuGroups, menuPositions } = buildMenuIndex(raw, locale);
-  return { version, entities, menuGroups, menuPositions };
+  const { menuGroups, menuPositions, itemMenuPositions, recipeMenuPositions } = buildMenuIndex(raw, locale);
+  return { version, entities, menuGroups, menuPositions, itemMenuPositions, recipeMenuPositions };
 }

@@ -12,9 +12,10 @@ export interface LocaleTables {
   recipeName: Map<string, string>;
   fluidName: Map<string, string>;
   itemGroupName: Map<string, string>;
+  technologyName: Map<string, string>;
 }
 
-const SECTIONS_WANTED = new Set(["entity-name", "item-name", "recipe-name", "fluid-name", "item-group-name"]);
+const SECTIONS_WANTED = new Set(["entity-name", "item-name", "recipe-name", "fluid-name", "item-group-name", "technology-name"]);
 
 function parseCfg(contents: string, into: LocaleTables): void {
   let section: string | null = null;
@@ -24,6 +25,7 @@ function parseCfg(contents: string, into: LocaleTables): void {
     "recipe-name": into.recipeName,
     "fluid-name": into.fluidName,
     "item-group-name": into.itemGroupName,
+    "technology-name": into.technologyName,
   };
 
   for (const rawLine of contents.split(/\r?\n/)) {
@@ -53,6 +55,7 @@ export function loadLocale(dataRoot: string): LocaleTables {
     recipeName: new Map(),
     fluidName: new Map(),
     itemGroupName: new Map(),
+    technologyName: new Map(),
   };
 
   const mods = ["core", "base", "space-age", "quality", "elevated-rails"];
