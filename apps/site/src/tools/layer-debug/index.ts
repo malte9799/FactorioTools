@@ -500,9 +500,7 @@ export function mountLayerDebug(root: HTMLElement): () => void {
       lastClientY = e.clientY;
     });
     renderer.onSelect(() => {
-      console.log("DEBUG onSelect", lastClientX, lastClientY);
       const picked = pickLayerAt(lastClientX, lastClientY);
-      console.log("DEBUG picked", picked ? spriteForLayer(picked)?.sheet : null);
       if (picked) {
         selectedLayer = picked;
         markSelectedCard();

@@ -463,15 +463,25 @@ export function mountBlueprintViewer(root: HTMLElement): () => void {
     return result.groups.find((g) => g.entityNumbers.includes(entityNumber)) ?? null;
   }
 
+  /** Identifies what the tooltip is currently showing, so a pointer move over
+   *  the same machine group doesn't rebuild the card — and, more importantly,
+   *  doesn't have to re-measure it. Measuring right after replacing the
+   *  tooltip's children forces a synchronous layout, and that was happening on
+   *  every single hover move. */
+  let tooltipContentKey: string | null = null;
+  let tooltipSize = { width: 0, height: 0 };
+
+  /** Positions the tooltip from the cached size — pure arithmetic, no layout
+   *  read. Uses transform rather than left/top so the browser can skip layout
+   *  and paint entirely and just re-composite. */
   function positionTooltip(event: PointerEvent) {
     const margin = 16;
-    const rect = tooltip.getBoundingClientRect();
+    const { width, height } = tooltipSize;
     let x = event.clientX + margin;
     let y = event.clientY + margin;
-    if (x + rect.width > window.innerWidth - margin) x = event.clientX - rect.width - margin;
-    if (y + rect.height > window.innerHeight - margin) y = event.clientY - rect.height - margin;
-    tooltip.style.left = `${Math.max(margin, x)}px`;
-    tooltip.style.top = `${Math.max(margin, y)}px`;
+    if (x + width > window.innerWidth - margin) x = event.clientX - width - margin;
+    if (y + height > window.innerHeight - margin) y = event.clientY - height - margin;
+    tooltip.style.transform = `translate(${Math.max(margin, x)}px, ${Math.max(margin, y)}px)`;
   }
 
   function onSchematicHover(entityNumber: number | undefined, event: PointerEvent) {
@@ -483,17 +493,30 @@ export function mountBlueprintViewer(root: HTMLElement): () => void {
     const group = entityNumber === undefined ? null : groupForEntity(entityNumber);
     if (!group || entityNumber === undefined) {
       tooltip.hidden = true;
+      tooltipContentKey = null;
       renderer.setHighlight(null);
       return;
     }
 
-    tooltip.replaceChildren();
-    const card = buildRecipeCard(group, getData(), options);
-    const window_ = document.createElement("div");
-    window_.className = "gui-body";
-    window_.appendChild(card);
-    tooltip.appendChild(window_);
-    tooltip.hidden = false;
+    // Two machines of the same group render the identical card, so key on what
+    // the card actually shows rather than on the entity: moving along a row of
+    // identical assemblers then costs no rebuild and no measurement at all.
+    const contentKey = `${group.machineName}|${group.recipeLabel}|${group.machineLabel}|${group.count}|${group.quality}|${group.moduleLabel}|${options.timescale}|${options.multiplier}|${options.scaleFactor}`;
+    if (contentKey !== tooltipContentKey) {
+      tooltipContentKey = contentKey;
+      const card = buildRecipeCard(group, getData(), options);
+      const window_ = document.createElement("div");
+      window_.className = "gui-body";
+      window_.appendChild(card);
+      tooltip.replaceChildren(window_);
+      tooltip.hidden = false;
+      // The one layout read, and only when the content actually changed. Width
+      // is fixed in CSS (.machine-tooltip), so only the height really varies.
+      const rect = tooltip.getBoundingClientRect();
+      tooltipSize = { width: rect.width, height: rect.height };
+    } else {
+      tooltip.hidden = false;
+    }
     positionTooltip(event);
 
     const beacons = new Set(result!.beaconsInRange.get(entityNumber) ?? []);

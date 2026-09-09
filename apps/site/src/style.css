@@ -726,6 +726,11 @@ button.ghost:hover, select:hover { border-color: var(--frame-light); }
 
 .machine-tooltip {
   position: fixed;
+  /* Positioned via transform (see positionTooltip) rather than left/top, so a
+     pointer move only re-composites instead of triggering layout. The anchor
+     has to sit at the origin for that translate to be absolute. */
+  top: 0;
+  left: 0;
   z-index: 40;
   width: 300px;
   max-width: calc(100vw - 24px);
