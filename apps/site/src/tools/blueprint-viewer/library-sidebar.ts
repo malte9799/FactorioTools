@@ -7,6 +7,7 @@ import {
   renameInLibrary,
   type SavedBlueprint,
 } from "./blueprint-library.js";
+import { html } from "./html.js";
 
 export interface LibraryCallbacks {
   /** Load this blueprint string as the active one in the viewer. */
@@ -50,7 +51,10 @@ function makeCategory(key: string, title: string): { section: HTMLElement; body:
   header.className = "library-category-header";
   const isOpen = expanded.has(key);
   header.classList.toggle("is-open", isOpen);
-  header.innerHTML = `<span class="library-disclosure" aria-hidden="true">▸</span><span>${title}</span>`;
+  // `title` carries a blueprint book's own label for book categories (see
+  // the `📘 ${book.label}` call site) — attacker-controlled, and persisted in
+  // localStorage, so it must never reach innerHTML unescaped.
+  header.innerHTML = html`<span class="library-disclosure" aria-hidden="true">▸</span><span>${title}</span>`;
 
   const body = document.createElement("div");
   body.className = "library-category-body";

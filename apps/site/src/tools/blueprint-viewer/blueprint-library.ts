@@ -20,12 +20,42 @@ export interface SavedBlueprint {
 
 const STORAGE_KEY = "factoriotools.blueprint-viewer.library";
 
+/** Upper bounds for a stored entry. A label longer than this is not something
+ *  the rename UI can produce, and a blueprint string past 5 MB is far beyond
+ *  the largest real book (the bundled example set peaks around 1.4 MB for 176
+ *  blueprints) — both only occur in a hand-written storage entry. */
+const MAX_LABEL_LENGTH = 200;
+const MAX_BP_STRING_LENGTH = 5_000_000;
+
+/** localStorage is writable by anything running on this origin — including a
+ *  payload that got in before the escaping fix landed, or hand-edited devtools
+ *  content. `Array.isArray` alone said nothing about the entries themselves, so
+ *  malformed objects reached the sidebar and the loader. Entries that do not
+ *  match the stored shape are dropped rather than repaired: a half-valid entry
+ *  has no meaningful blueprint behind it. */
+function isSavedBlueprint(value: unknown): value is SavedBlueprint {
+  if (typeof value !== "object" || value === null) return false;
+  const e = value as Partial<SavedBlueprint>;
+  return (
+    typeof e.id === "string" &&
+    typeof e.label === "string" &&
+    typeof e.bpString === "string" &&
+    typeof e.savedAt === "number" &&
+    Number.isFinite(e.savedAt) &&
+    e.label.length <= MAX_LABEL_LENGTH &&
+    e.bpString.length <= MAX_BP_STRING_LENGTH &&
+    (e.category === undefined || e.category === "debug") &&
+    (e.bookId === undefined || typeof e.bookId === "string") &&
+    (e.bookLabel === undefined || (typeof e.bookLabel === "string" && e.bookLabel.length <= MAX_LABEL_LENGTH))
+  );
+}
+
 function readAll(): SavedBlueprint[] {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (!raw) return [];
     const parsed = JSON.parse(raw);
-    return Array.isArray(parsed) ? parsed : [];
+    return Array.isArray(parsed) ? parsed.filter(isSavedBlueprint) : [];
   } catch {
     return [];
   }

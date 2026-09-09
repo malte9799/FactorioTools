@@ -9,6 +9,7 @@ import {
   formatSigned,
 } from "@factoriotools/engine";
 import { icon } from "./icons.js";
+import { html, raw } from "../html.js";
 
 export type Measure =
   | { kind: "none" }
@@ -71,13 +72,13 @@ function measureLine(kind: "item" | "fluid", ratePerSecond: number, data: GameDa
   if (measure.kind === "belt") {
     const perBelt = measure.belt.throughput * Math.max(measure.stackSize, 1);
     const count = Math.abs(ratePerSecond) / perBelt;
-    return `<span class="sub measure-sub">${count.toFixed(2)} × ${measure.belt.localised}${measure.stackSize > 1 ? ` (×${measure.stackSize} stack)` : ""}</span>`;
+    return html`<span class="sub measure-sub">${count.toFixed(2)} × ${measure.belt.localised}${measure.stackSize > 1 ? ` (×${measure.stackSize} stack)` : ""}</span>`;
   }
   if (measure.kind === "inserter") {
     const qualityRatio = data.qualityMachineSpeed[measure.quality] ?? 1;
     const perInserter = measure.inserter.throughput * qualityRatio;
     const count = Math.abs(ratePerSecond) / perInserter;
-    return `<span class="sub measure-sub">${count.toFixed(2)} × ${measure.inserter.localised}${measure.quality !== "normal" ? ` (${measure.quality})` : ""}</span>`;
+    return html`<span class="sub measure-sub">${count.toFixed(2)} × ${measure.inserter.localised}${measure.quality !== "normal" ? ` (${measure.quality})` : ""}</span>`;
   }
   return "";
 }
@@ -93,14 +94,14 @@ function recipeLineRow(
   const scaled = line.ratePerMachine * count * factor;
   const row = document.createElement("div");
   row.className = "flow";
-  row.innerHTML = `
+  row.innerHTML = html`
     <div class="flow-name">
       <span class="dot dot-${line.kind}"></span>
       <span>${line.label}</span>
     </div>
     <div class="flow-rate">
       <span class="value">${sign}${formatRate(scaled)}<span class="unit">${UNIT[options.timescale]}</span></span>
-      ${measureLine(line.kind, line.ratePerMachine * count * options.multiplier * options.scaleFactor, data, options.measure)}
+      ${raw(measureLine(line.kind, line.ratePerMachine * count * options.multiplier * options.scaleFactor, data, options.measure))}
     </div>
   `;
   row.querySelector(".flow-name")!.prepend(icon(line.name, line.label, 22));
@@ -126,7 +127,7 @@ export function buildRecipeCard(group: MachineGroup, data: GameData, options: Vi
 
   const card = document.createElement("div");
   card.className = "recipe-card";
-  card.innerHTML = `
+  card.innerHTML = html`
     <div class="recipe-card-header">
       <div>
         <span class="recipe-card-title">${group.recipeLabel}</span>
@@ -173,18 +174,18 @@ function flowRow(
   const machines = flow.producers.reduce((sum, p) => sum + p.group.count, 0);
   const netMachines =
     showNet && flow.netMachines !== undefined
-      ? `<span class="net-machines">${formatMachines(flow.netMachines)}</span>`
+      ? html`<span class="net-machines">${formatMachines(flow.netMachines)}</span>`
       : "";
 
-  row.innerHTML = `
+  row.innerHTML = html`
     <div class="flow-name">
       <span class="dot dot-${flow.kind}"></span>
       <span>${flow.label}</span>
-      ${machines ? `<span class="count">×${machines}${netMachines}</span>` : ""}
+      ${raw(machines ? html`<span class="count">×${machines}${raw(netMachines)}</span>` : "")}
     </div>
     <div class="flow-rate">
       <span class="value">${showNet ? formatSigned(scaled) : formatRate(scaled)}<span class="unit">${UNIT[options.timescale]}</span></span>
-      ${measureLine(flow.kind, value * options.multiplier * options.scaleFactor, data, options.measure)}
+      ${raw(measureLine(flow.kind, value * options.multiplier * options.scaleFactor, data, options.measure))}
     </div>
   `;
   row.querySelector(".flow-name")!.prepend(icon(flow.name, flow.label, 26));
@@ -224,7 +225,7 @@ function section(
   if (flows.length === 0) return null;
   const el = document.createElement("section");
   el.className = "panel";
-  el.innerHTML = `<h2>${title}<span class="hint">${hint}</span></h2>`;
+  el.innerHTML = html`<h2>${title}<span class="hint">${hint}</span></h2>`;
   const list = document.createElement("div");
   list.className = "flow-list";
   for (const flow of flows) list.appendChild(flowRow(flow, data, options, onHover));
@@ -387,12 +388,12 @@ export function renderResults(
   if (scaleWarnings && scaleWarnings.length > 0) {
     const banner = document.createElement("section");
     banner.className = "panel scale-warning";
-    banner.innerHTML = `
+    banner.innerHTML = html`
       <h2>Target may not be met<span class="hint">these machines, fed as currently placed, would fall short of their scaled-up share</span></h2>
       <div class="flow-list">
-        ${scaleWarnings
+        ${raw(scaleWarnings
           .map(
-            (w) => `
+            (w) => html`
           <div class="flow warning">
             <div class="flow-name"><span>${w.recipeLabel}</span><span class="sub">${w.machinesNeeded}× sized for this target</span></div>
             <div class="flow-rate">
@@ -402,7 +403,7 @@ export function renderResults(
           </div>
         `,
           )
-          .join("")}
+          .join(""))}
       </div>
     `;
     container.appendChild(banner);
@@ -444,7 +445,7 @@ export function renderResults(
         const theoreticalRate = group.craftsPerSecond * group.count * factor;
         const isBottlenecked = sub && sub.bottleneck.limitedBy !== "machine";
         const actualRate = sub ? sub.bottleneck.actualCraftsPerSecond * group.count * factor : theoreticalRate;
-        row.innerHTML = `
+        row.innerHTML = html`
           <div class="flow-name">
             <div>
               <span>${group.recipeLabel}</span>
@@ -452,10 +453,10 @@ export function renderResults(
             </div>
           </div>
           <div class="flow-rate">
-            ${isBottlenecked ? `<span class="value bottleneck-actual">${formatRate(actualRate)}<span class="unit">${UNIT[options.timescale]}</span></span>
+            ${raw(isBottlenecked ? html`<span class="value bottleneck-actual">${formatRate(actualRate)}<span class="unit">${UNIT[options.timescale]}</span></span>
             <span class="sub bottleneck-theoretical">theoretical ${formatRate(theoreticalRate)}${UNIT[options.timescale]} · limited by ${sub!.bottleneck.limitingItem ?? sub!.bottleneck.limitedBy}</span>`
-            : `<span class="value">${formatRate(theoreticalRate)}<span class="unit">${UNIT[options.timescale]}</span></span>
-            <span class="sub">crafts</span>`}
+            : html`<span class="value">${formatRate(theoreticalRate)}<span class="unit">${UNIT[options.timescale]}</span></span>
+            <span class="sub">crafts</span>`)}
           </div>
         `;
         row.querySelector(".flow-name")!.prepend(icon(group.machineName, group.machineLabel, 26));
@@ -480,7 +481,7 @@ export function renderResults(
         const theoreticalRate = group.craftsPerSecond * count * factor;
         const actualRate = sub.bottleneck.actualCraftsPerSecond * count * factor;
         const isBottlenecked = sub.bottleneck.limitedBy !== "machine";
-        row.innerHTML = `
+        row.innerHTML = html`
           <div class="flow-name">
             <div>
               <span>${group.recipeLabel}</span>
@@ -488,10 +489,10 @@ export function renderResults(
             </div>
           </div>
           <div class="flow-rate">
-            ${isBottlenecked ? `<span class="value bottleneck-actual">${formatRate(actualRate)}<span class="unit">${UNIT[options.timescale]}</span></span>
+            ${raw(isBottlenecked ? html`<span class="value bottleneck-actual">${formatRate(actualRate)}<span class="unit">${UNIT[options.timescale]}</span></span>
             <span class="sub bottleneck-theoretical">theoretical ${formatRate(theoreticalRate)}${UNIT[options.timescale]} · limited by ${sub.bottleneck.limitingItem ?? sub.bottleneck.limitedBy}</span>`
-            : `<span class="value">${formatRate(theoreticalRate)}<span class="unit">${UNIT[options.timescale]}</span></span>
-            <span class="sub">crafts</span>`}
+            : html`<span class="value">${formatRate(theoreticalRate)}<span class="unit">${UNIT[options.timescale]}</span></span>
+            <span class="sub">crafts</span>`)}
           </div>
         `;
         row.querySelector(".flow-name")!.prepend(icon(group.machineName, group.machineLabel, 26));
@@ -521,7 +522,7 @@ export function renderResults(
     for (const warning of result.warnings) {
       const row = document.createElement("div");
       row.className = "flow warning";
-      row.innerHTML = `
+      row.innerHTML = html`
         <div class="flow-name">
           <span>${warning.entityName}</span>
           <span class="sub">${warning.detail}</span>

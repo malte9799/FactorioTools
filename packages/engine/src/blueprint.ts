@@ -73,6 +73,24 @@ function asQuality(value: string | undefined): QualityName {
 }
 
 /** Read module requests. Handles both the 1.1 map form and the 2.0 array form. */
+/** Factorio prototype names are lowercase alphanumerics with dashes — that is
+ *  the whole alphabet the game itself uses. Anything else cannot name a real
+ *  prototype and only ever arrives from a hand-crafted blueprint string.
+ *
+ *  Such a name is kept (so the entity still shows up in the "not counted"
+ *  warnings rather than silently disappearing, which is this engine's
+ *  established degrade-don't-crash behaviour) but stripped down to the
+ *  characters a prototype name may contain. That way a name can never carry
+ *  markup into the app layer, independent of whether a given render path
+ *  remembers to escape it. */
+const PROTOTYPE_NAME = /^[a-z0-9-]+$/;
+
+function safeName(name: string): string {
+  if (PROTOTYPE_NAME.test(name)) return name;
+  const stripped = name.replace(/[^a-z0-9-]/gi, "").toLowerCase();
+  return stripped.length > 0 ? stripped : "unknown-entity";
+}
+
 export function readModules(entity: BpEntity): ModuleStack[] {
   const items = entity.items;
   if (!items) return [];
@@ -80,7 +98,7 @@ export function readModules(entity: BpEntity): ModuleStack[] {
   // 1.1: { "speed-module-3": 4 }
   if (!Array.isArray(items)) {
     return Object.entries(items).map(([name, count]) => ({
-      name,
+      name: safeName(name),
       quality: "normal" as const,
       count,
     }));
@@ -89,8 +107,9 @@ export function readModules(entity: BpEntity): ModuleStack[] {
   // 2.0: [{ id: { name, quality }, items: { in_inventory: [{ inventory, stack, count? }] } }]
   const merged = new Map<string, ModuleStack>();
   for (const request of items) {
-    const name = request.id?.name;
-    if (!name) continue;
+    const rawName = request.id?.name;
+    if (!rawName) continue;
+    const name = safeName(rawName);
     const quality = asQuality(request.id?.quality);
     const stacks = request.items?.in_inventory ?? [];
     const count = stacks.length
@@ -115,13 +134,13 @@ function readFilterItems(entity: BpEntity): string[] {
   const flat: BpItemFilter[] = entity.filters ?? entity.request_filters?.sections?.[0]?.filters ?? [];
   return [...flat]
     .sort((a, b) => a.index - b.index)
-    .map((f) => f.name);
+    .map((f) => safeName(f.name));
 }
 
 export function normaliseEntities(blueprint: Blueprint): PlacedEntity[] {
   return (blueprint.entities ?? []).map((entity) => ({
     entityNumber: entity.entity_number,
-    name: entity.name,
+    name: safeName(entity.name),
     x: entity.position.x,
     y: entity.position.y,
     direction: entity.direction ?? 0,
