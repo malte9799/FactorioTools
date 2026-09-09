@@ -92,6 +92,35 @@ export function buildVisualLookup(data: GameData, catalog: RenderCatalog): Map<s
 
 /** tileFootprint is stored north-facing; a rotatesFootprint entity swaps
  *  width and depth when it faces east or west. */
+/** Whether any of this entity's layers pick their frame by the animation
+ *  clock. The render loop uses it to decide whether the next frame would even
+ *  look different: a scene with no animated entity on screen is static, and
+ *  redrawing it 60 times a second changes nothing.
+ *
+ *  Cached per visual because the answer depends only on the catalog, which
+ *  does not change while a renderer is mounted, and this is asked once per
+ *  visible entity per frame. */
+const animatedCache = new WeakMap<ResolvedVisual, boolean>();
+
+export function hasAnimatedLayer(visual: ResolvedVisual): boolean {
+  const cached = animatedCache.get(visual);
+  if (cached !== undefined) return cached;
+
+  let animated = false;
+  for (const layer of visual.graphics?.layers ?? []) {
+    // Both axes can carry the animation clock, and a `per`-keyed layer
+    // (module slots, heat patches) nests its own sprites but keeps the
+    // layer-level axes, so checking the axes covers every shape.
+    const axes = [(layer as { column?: { by?: string } }).column, (layer as { row?: { by?: string } }).row];
+    if (axes.some((axis) => axis?.by === "animation")) {
+      animated = true;
+      break;
+    }
+  }
+  animatedCache.set(visual, animated);
+  return animated;
+}
+
 export function effectiveFootprint(visual: ResolvedVisual, direction: number): [number, number] {
   const [w, h] = visual.tileFootprint;
   if (!visual.rotatesFootprint) return [w, h];

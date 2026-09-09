@@ -27,10 +27,24 @@ const DEFAULT_LIMITS: CameraLimits = {
 export class Camera {
   state: CameraState;
   private limits: CameraLimits;
+  private onChange: (() => void) | null = null;
 
   constructor(initial: CameraState, limits: Partial<CameraLimits> = {}) {
     this.state = { ...initial };
     this.limits = { ...DEFAULT_LIMITS, ...limits };
+  }
+
+  /** Called whenever the camera actually moves or zooms. The renderer uses
+   *  this to mark the frame dirty: making the camera announce its own changes
+   *  is what keeps every pan/zoom/pinch/frame call site from having to
+   *  remember to do it, which is exactly the kind of thing that gets missed
+   *  when a new gesture is added later. */
+  setOnChange(callback: (() => void) | null): void {
+    this.onChange = callback;
+  }
+
+  private changed(): void {
+    this.onChange?.();
   }
 
   private clampZoom(pixelsPerTile: number): number {
@@ -66,14 +80,17 @@ export class Camera {
     // back under the cursor after the zoom.
     this.state.x += before.x - after.x;
     this.state.y += before.y - after.y;
+    this.changed();
   }
 
   /** Pan by a screen-space pixel delta (e.g. pointer movement since last
    *  frame). Scaling by 1/pixelsPerTile keeps the drag speed 1:1 with the
    *  cursor regardless of zoom level. */
   panByScreenDelta(dxScreen: number, dyScreen: number): void {
+    if (dxScreen === 0 && dyScreen === 0) return;
     this.state.x -= dxScreen / this.state.pixelsPerTile;
     this.state.y -= dyScreen / this.state.pixelsPerTile;
+    this.changed();
   }
 
   /** Frame a world-space bounding box (e.g. "fit the whole blueprint"),
@@ -84,6 +101,7 @@ export class Camera {
     this.state.x = (box.minX + box.maxX) / 2;
     this.state.y = (box.minY + box.maxY) / 2;
     this.state.pixelsPerTile = this.clampZoom(Math.min(viewportWidth / w, viewportHeight / h));
+    this.changed();
   }
 }
 

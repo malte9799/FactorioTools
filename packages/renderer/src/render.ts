@@ -2,7 +2,7 @@ import type { GameData, PlacedEntity, QualityName, RenderCatalog } from "@factor
 import { Camera } from "./camera.js";
 import { getSharedSpriteAtlas } from "./spriteAtlas.js";
 import { getSharedIconAtlas } from "./iconAtlas.js";
-import { activeFluidConnections, buildVisualLookup, effectiveFootprint, isPoleLike, isTwoDirectionOnly, isUndergroundLike, makeConnectorPredicates, rotationStep, type ResolvedVisual } from "./entityLookup.js";
+import { activeFluidConnections, buildVisualLookup, effectiveFootprint, hasAnimatedLayer, isPoleLike, isTwoDirectionOnly, isUndergroundLike, makeConnectorPredicates, rotationStep, type ResolvedVisual } from "./entityLookup.js";
 import { drawAltModeOverlay, drawQualityBadge } from "./entityDraw.js";
 import { buildGrid, NeighbourGrid } from "./neighbours/grid.js";
 import { buildFluidNetwork, FluidNetwork } from "./neighbours/fluid.js";
@@ -176,6 +176,23 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
   let animationFrame = 0;
   let dpr = window.devicePixelRatio || 1;
   let rafHandle = 0;
+  /** Set whenever something that affects the picture changes; cleared once
+   *  the frame is drawn. Without it draw() ran unconditionally 60 times a
+   *  second — a full spatial query, classification and sort pass — even on a
+   *  completely static view where every frame was identical to the last. */
+  let needsRedraw = true;
+  /** How many entities in the last drawn frame pick a sprite by the animation
+   *  clock. Zero means advancing that clock cannot change anything on screen,
+   *  so the loop leaves it alone and stops redrawing entirely. */
+  let animatedVisibleCount = 0;
+
+  function invalidate(): void {
+    needsRedraw = true;
+  }
+
+  // The camera announces its own pans/zooms rather than every gesture handler
+  // remembering to invalidate (see Camera.setOnChange).
+  camera.setOnChange(invalidate);
   let isPanning = false;
   let lastPointer = { x: 0, y: 0 };
   let destroyed = false;
@@ -239,6 +256,9 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
     dpr = window.devicePixelRatio || 1;
     canvas.width = Math.max(1, Math.round(rect.width * dpr));
     canvas.height = Math.max(1, Math.round(rect.height * dpr));
+    // Setting canvas.width/height also clears the canvas, so the frame must
+    // be redrawn whatever else is going on.
+    invalidate();
   }
 
   function visualFor(name: string): ResolvedVisual | undefined {
@@ -403,9 +423,13 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
     const collectCtx: CollectContext = { grid, fluidNetwork, heatNetwork, ...connectors, platformBoxes, animationFrame };
     const commands: DrawCommand[] = [];
     const procedural: PlacedEntity[] = [];
+    // Counted while collecting rather than in a separate pass: this is what
+    // tells tick() whether the next frame could differ from this one.
+    let animatedVisible = 0;
     for (const entity of visibleEntities) {
       const visual = visualFor(entity.name);
       if (!visual) continue;
+      if (hasAnimatedLayer(visual)) animatedVisible++;
       if (visual.inserterGraphics) {
         procedural.push(entity);
       } else if (visual.graphics) {
@@ -416,6 +440,7 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
       }
     }
     lastDrawCommandCount = commands.length;
+    animatedVisibleCount = animatedVisible;
     // Device pixels per world tile — matches the resolution every placed
     // entity already draws at via the ctx transform above (dpr * zoom), so
     // a tinted ghost's offscreen buffer (paintTinted) is exactly as sharp
@@ -511,6 +536,7 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
     if (isErasing) eraseAtScreenPoint(lastPointer.x, lastPointer.y);
     if (mode.kind === "place") {
       ghostWorldPos = worldAtScreenPoint(lastPointer.x, lastPointer.y);
+      invalidate();
       if (isPlacingDrag) placeAtGhost();
     }
   }
@@ -523,12 +549,21 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
       if (frameTimes.length > FRAME_HISTORY) frameTimes.shift();
     }
     lastTickAt = now;
-    if (!animationFrozen) animationFrame = (animationFrame + 1) % 1_000_000;
-    applyKeyboardPan(16);
-    const drawStart = performance.now();
-    draw();
-    renderTimes.push(performance.now() - drawStart);
-    if (renderTimes.length > FRAME_HISTORY) renderTimes.shift();
+    // Advance the belt clock only while something on screen actually reads
+    // it. On a scene with no animated entity visible this leaves the frame
+    // clean, and nothing is redrawn until the user does something.
+    if (!animationFrozen && animatedVisibleCount > 0) {
+      animationFrame = (animationFrame + 1) % 1_000_000;
+      needsRedraw = true;
+    }
+    applyKeyboardPan(16); // pans through the camera, which invalidates itself
+    if (needsRedraw) {
+      const drawStart = performance.now();
+      draw();
+      renderTimes.push(performance.now() - drawStart);
+      if (renderTimes.length > FRAME_HISTORY) renderTimes.shift();
+      needsRedraw = false;
+    }
     rafHandle = requestAnimationFrame(tick);
   }
 
@@ -685,6 +720,7 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
     }
     if (mode.kind === "place") {
       ghostWorldPos = worldAtPointer(e);
+      invalidate(); // the ghost follows the cursor, so the picture changed
       if (isPlacingDrag) placeAtGhost();
     }
     if (isPanning) {
@@ -835,6 +871,7 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
       if (connectors.isPlatformLike(e.name)) platformBoxes.push(box);
     }
     spatialIndex = new SpatialIndex(boxes);
+    invalidate();
 
     // Preload every sheet the visible entities reference, so nothing flashes
     // as an outline on first paint.
@@ -857,7 +894,9 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
         atlas.get(ins.handOpen.sheet);
       }
     }
-    void atlas.whenIdle().then(() => draw());
+    // A sheet finishing its load changes what the next frame can paint, so
+    // mark dirty rather than drawing straight away — the loop picks it up.
+    void atlas.whenIdle().then(invalidate);
   }
 
   function loadBlueprint(newEntities: PlacedEntity[]): void {
@@ -874,6 +913,7 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
     updateEntities: rebuildIndices,
     setHighlight(role) {
       highlight = role;
+      invalidate();
     },
     /** Dev-only: freeze/unfreeze the belt animation clock and step it by an
      *  exact frame count, for deterministic frame-by-frame comparison
@@ -881,16 +921,19 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
      *  live 60fps animation. */
     setAnimationFrozen(frozen: boolean) {
       animationFrozen = frozen;
+      invalidate();
     },
     stepAnimationFrame(delta = 1) {
       animationFrame = (animationFrame + delta + 1_000_000) % 1_000_000;
       draw();
+      needsRedraw = false;
     },
     getAnimationFrame() {
       return animationFrame;
     },
     setAltMode(enabled) {
       altMode = enabled;
+      invalidate();
     },
     setInteractionMode(newMode) {
       if (newMode.kind === "place") {
@@ -904,6 +947,7 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
         }
       }
       mode = newMode;
+      invalidate();
       if (mode.kind !== "place") {
         ghostWorldPos = null;
       } else {
@@ -932,10 +976,12 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
         // toggles between them, `reverse` is a no-op (there's no
         // meaningful "other way" between only two choices).
         ghostDirection = ghostDirection === 0 ? 4 : 0;
+        invalidate();
         return;
       }
       const step = rotationStep(mode.entityName);
       ghostDirection = (ghostDirection + (reverse ? -step : step) + 16) % 16;
+      invalidate();
     },
     hitTest(clientX, clientY) {
       const rect = canvas.getBoundingClientRect();
@@ -991,6 +1037,7 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
       window.removeEventListener("keyup", onKeyUp);
       window.removeEventListener("blur", onBlur);
       atlas.setOnPendingChange(null);
+      camera.setOnChange(null);
     },
   };
 }
