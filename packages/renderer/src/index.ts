@@ -11,3 +11,4 @@ export * from "./sprites/inserter.js";
 export * from "./entityDraw.js";
 export * from "./entityPreview.js";
 export * from "./render.js";
+export * from "./recordingSummary.js";

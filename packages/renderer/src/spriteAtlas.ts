@@ -149,6 +149,19 @@ export class SpriteAtlas {
     return undefined;
   }
 
+  /** A snapshot of what the atlas is doing right now, for the frame recorder.
+   *  A stalled frame that coincides with a non-zero `decoding`/`queued` is a
+   *  very different problem from one that stalls with the atlas fully idle,
+   *  and without these counters the two are indistinguishable in a log. */
+  stats(): { ready: number; pending: number; decoding: number; queued: number } {
+    return {
+      ready: this.images.size,
+      pending: this.pendingCount,
+      decoding: this.activeDecodes,
+      queued: this.decodeQueue.length,
+    };
+  }
+
   /** Resolves once every currently-known sheet load settles (success or
    *  failure) — used to trigger one redraw after the initial burst of loads
    *  a freshly-rendered blueprint kicks off, so entities don't stay as

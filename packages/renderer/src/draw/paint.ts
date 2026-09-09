@@ -38,22 +38,60 @@ export function paint(
   if (tinted.length > 0) paintTinted(ctx, atlas, tinted, tintedOffscreenRes);
 }
 
+/** What one paintPlain pass actually put on the canvas. A command whose sheet
+ *  has not finished loading is skipped silently, so "1401 commands" alone says
+ *  nothing about how much drawing really happened — a frame can report a full
+ *  command list while painting almost nothing. Recorded per frame so a spike
+ *  can be told apart from a frame that merely *looked* busy. */
+export interface PaintTally {
+  /** Commands whose sheet was ready and which reached drawImage. */
+  drawn: number;
+  /** Commands skipped because their sheet was still loading. */
+  skipped: number;
+  /** Distinct sheets sampled — a proxy for how much texture the frame touched. */
+  sheets: number;
+  /** Sum of |dw*dh| over drawn commands, in CSS pixels squared. Blend cost
+   *  scales with covered area, not with the number of calls. */
+  area: number;
+  /** How often globalCompositeOperation flipped (shadow multiply passes). */
+  compositeSwitches: number;
+}
+
 /** Paints an already-untinted command list. The main scene pass calls this
  *  directly: only the placement ghost ever carries a tint, and it is painted
  *  by its own separate paint() call, so splitting the scene list into tinted
  *  and untinted halves every frame allocated two arrays to discover that one
- *  of them is always empty. Sorts in place, same as paint(). */
-export function paintPlain(ctx: CanvasRenderingContext2D, atlas: SpriteAtlas, commands: DrawCommand[]): void {
+ *  of them is always empty. Sorts in place, same as paint().
+ *
+ *  Returns a tally when `tally` is passed. Collecting it costs a handful of
+ *  adds per command and one Set of sheet names, so the caller only asks for
+ *  it while a recording is running. */
+export function paintPlain(
+  ctx: CanvasRenderingContext2D,
+  atlas: SpriteAtlas,
+  commands: DrawCommand[],
+  tally?: PaintTally,
+): void {
   commands.sort(compareDrawCommands);
   let alpha = 1;
   let compositeIsMultiply = false;
+  const sheets = tally ? new Set<string>() : null;
   for (const c of commands) {
     const img = atlas.get(c.sheet);
-    if (!img) continue;
+    if (!img) {
+      if (tally) tally.skipped++;
+      continue;
+    }
+    if (tally) {
+      tally.drawn++;
+      tally.area += Math.abs(c.dw * c.dh);
+      sheets!.add(c.sheet);
+    }
     const isShadow = c.layer === Layer.Shadow;
     if (isShadow !== compositeIsMultiply) {
       ctx.globalCompositeOperation = isShadow ? "multiply" : "source-over";
       compositeIsMultiply = isShadow;
+      if (tally) tally.compositeSwitches++;
     }
     const wantAlpha = isShadow ? c.alpha * SHADOW_ALPHA : c.alpha;
     if (wantAlpha !== alpha) {
@@ -63,7 +101,11 @@ export function paintPlain(ctx: CanvasRenderingContext2D, atlas: SpriteAtlas, co
     ctx.drawImage(img, c.sx, c.sy, c.sw, c.sh, c.dx, c.dy, c.dw, c.dh);
   }
   if (alpha !== 1) ctx.globalAlpha = 1;
-  if (compositeIsMultiply) ctx.globalCompositeOperation = "source-over";
+  if (compositeIsMultiply) {
+    ctx.globalCompositeOperation = "source-over";
+    if (tally) tally.compositeSwitches++;
+  }
+  if (tally && sheets) tally.sheets = sheets.size;
 }
 
 /** Composites every tinted command onto its own offscreen canvas (isolated

@@ -19,7 +19,7 @@ import {
   overlaps,
 } from "@factoriotools/engine";
 import type { CalculationResult, Timescale, Blueprint, PlacedEntity, QualityName, MachineGroup, ModuleStack, ThroughputContext, BottleneckSubgroup } from "@factoriotools/engine";
-import { mountRenderer, isPoleLike, isTwoDirectionOnly, rotationStep, effectiveFootprint, type BlueprintRenderer, type HighlightRole } from "@factoriotools/renderer";
+import { mountRenderer, isPoleLike, isTwoDirectionOnly, rotationStep, effectiveFootprint, summariseRecording, slowestFrames, worstPhase, type BlueprintRenderer, type HighlightRole } from "@factoriotools/renderer";
 import { buildRecipeCard, renderResults, type ViewOptions } from "./legacy-view/panels.js";
 import { icon } from "./legacy-view/icons.js";
 import { makeFloatingWindow } from "../../window-manager.js";
@@ -266,8 +266,8 @@ const TEMPLATE = `
         </div>
         <div id="debug-record-summary"></div>
         <table class="debug-stats-table debug-record-table">
-          <thead><tr><th>t</th><th>Frame</th><th>Render</th><th>Slowest phase</th><th></th></tr></thead>
-          <tbody id="debug-record-rows"><tr><td colspan="5" class="debug-empty">Nothing recorded yet.</td></tr></tbody>
+          <thead><tr><th>t</th><th>Frame</th><th>Render</th><th>Outside</th><th>Slowest phase</th><th>Painted</th><th>Atlas</th><th>Rebuild</th></tr></thead>
+          <tbody id="debug-record-rows"><tr><td colspan="8" class="debug-empty">Nothing recorded yet.</td></tr></tbody>
         </table>
       </section>
     </div>
@@ -547,7 +547,13 @@ export function mountBlueprintViewer(root: HTMLElement): () => void {
     if (debugTab === "record") updateRecordPane();
   }
 
-  const PHASE_NAMES = ["grid", "cull", "collect", "animate", "paint", "inserters", "overlays", "ghost"] as const;
+  /** CSS-pixel area of the canvas, for turning painted area into an overdraw
+   *  factor. Zero (the summary then omits overdraw) if the canvas has no
+   *  layout yet. */
+  function viewportArea(): number {
+    const rect = renderer.canvas.getBoundingClientRect();
+    return rect.width * rect.height;
+  }
 
   function updateRecordPane(): void {
     const recording = renderer.isRecording();
@@ -560,46 +566,74 @@ export function mountBlueprintViewer(root: HTMLElement): () => void {
 
     if (recording || log.length === 0) return;
 
-    // Summary first: the median says how it normally feels, the worst frames
-    // are what the user actually notices.
-    const sorted = [...log].map((f) => f.frameMs).sort((a, b) => a - b);
-    const median = sorted[Math.floor(sorted.length / 2)] ?? 0;
-    const p95 = sorted[Math.floor(sorted.length * 0.95)] ?? 0;
-    const worst = sorted[sorted.length - 1] ?? 0;
-    const over16 = log.filter((f) => f.frameMs > 16.7).length;
-    const rebuilt = log.filter((f) => f.sceneRebuilt).length;
+    const summary = summariseRecording(log, viewportArea());
     debugRecordSummary.replaceChildren();
-    const summary = document.createElement("table");
-    summary.className = "debug-stats-table";
+    const table = document.createElement("table");
+    table.className = "debug-stats-table";
     const body = document.createElement("tbody");
-    for (const [label, value] of [
-      ["Median frame", `${median.toFixed(1)} ms`],
-      ["p95 frame", `${p95.toFixed(1)} ms`],
-      ["Worst frame", `${worst.toFixed(1)} ms`],
-      ["Frames over 16.7 ms", `${over16} of ${log.length}`],
-      ["Scene rebuilds", `${rebuilt} of ${log.length}`],
-    ] as [string, string][]) {
+
+    const pct = (n: number) => `${(n * 100).toFixed(1)} %`;
+    const rows: [string, string][] = [
+      ["Frame (med / p95 / max)",
+        `${summary.frameMs.median.toFixed(1)} / ${summary.frameMs.p95.toFixed(1)} / ${summary.frameMs.max.toFixed(1)} ms`],
+      ["Render (med / p95 / max)",
+        `${summary.renderMs.median.toFixed(2)} / ${summary.renderMs.p95.toFixed(2)} / ${summary.renderMs.max.toFixed(1)} ms`],
+      // The single most diagnostic line: time the browser spent NOT in our
+      // draw call. Large here with a small render means the stall is decode,
+      // GC or compositing, not the renderer.
+      ["Outside draw (med / max)",
+        `${summary.outsideMs.median.toFixed(1)} / ${summary.outsideMs.max.toFixed(1)} ms`],
+      ["Janky frames (>16.7 ms)",
+        `${summary.janky} of ${summary.frames} — ${summary.jankyMs.toFixed(0)} ms total`],
+      ["Frames skipped (idle)", `${summary.framesSkipped}`],
+      ["Peak draw commands", `${summary.peakDrawCommands}`],
+      ["Peak visible entities", `${summary.peakVisibleEntities}`],
+    ];
+    if (summary.framesWithMissingSprites > 0) {
+      rows.push(["Frames with unloaded sprites",
+        `${summary.framesWithMissingSprites} — paint times not representative`]);
+    }
+    if (summary.peakOverdraw > 0) rows.push(["Peak overdraw", `${summary.peakOverdraw.toFixed(2)}×`]);
+    if (summary.peakHeapMB !== null) rows.push(["Peak JS heap", `${summary.peakHeapMB} MB`]);
+
+    const topPhases = summary.phaseTotals.filter((p) => p.ms > 0).slice(0, 3);
+    if (topPhases.length > 0) {
+      rows.push(["Cost by phase",
+        topPhases.map((p) => `${p.phase} ${p.ms.toFixed(0)} ms (${pct(p.share)})`).join(", ")]);
+    }
+    const realRebuilds = summary.rebuilds.filter((r) => r.reason !== "none");
+    if (realRebuilds.length > 0) {
+      rows.push(["Scene rebuilds",
+        realRebuilds.map((r) => `${r.reason} ×${r.count}`).join(", ")]);
+    }
+
+    for (const [label, value] of rows) {
       const tr = document.createElement("tr");
       const th = document.createElement("td"); th.textContent = label;
       const td = document.createElement("td"); td.textContent = value;
       tr.append(th, td);
       body.appendChild(tr);
     }
-    summary.appendChild(body);
-    debugRecordSummary.appendChild(summary);
+    table.appendChild(body);
+    debugRecordSummary.appendChild(table);
 
-    // The ten slowest frames, worst first — where a stutter actually lives.
-    const slowest = [...log].sort((a, b) => b.frameMs - a.frameMs).slice(0, 10);
     debugRecordRows.replaceChildren(
-      ...slowest.map((frame) => {
-        const worstPhase = PHASE_NAMES.reduce((a, b) => (frame.phases[b] > frame.phases[a] ? b : a), PHASE_NAMES[0]);
+      ...slowestFrames(log, 10).map((frame) => {
+        const phase = worstPhase(frame);
         const tr = document.createElement("tr");
+        const painted = frame.paint.skipped > 0
+          ? `${frame.paint.drawn}/${frame.paint.drawn + frame.paint.skipped}`
+          : `${frame.paint.drawn}`;
+        const atlasBusy = frame.atlas.decoding + frame.atlas.queued;
         for (const text of [
           `${(frame.t / 1000).toFixed(1)}s`,
           `${frame.frameMs.toFixed(1)} ms`,
           `${frame.renderMs.toFixed(2)} ms`,
-          `${worstPhase} ${frame.phases[worstPhase].toFixed(2)} ms`,
-          frame.sceneRebuilt ? "rebuild" : "",
+          `${frame.outsideMs.toFixed(1)} ms`,
+          `${phase} ${frame.phases[phase].toFixed(2)} ms`,
+          painted,
+          atlasBusy > 0 ? `${atlasBusy} busy` : "idle",
+          frame.rebuildReason === "none" ? "" : frame.rebuildReason,
         ]) {
           const td = document.createElement("td");
           td.textContent = text;
@@ -614,17 +648,23 @@ export function mountBlueprintViewer(root: HTMLElement): () => void {
     if (renderer.isRecording()) renderer.stopFrameRecording();
     else {
       renderer.startFrameRecording(30);
-      debugRecordRows.replaceChildren(emptyRow(5, "Recording…"));
+      debugRecordRows.replaceChildren(emptyRow(8, "Recording…"));
       debugRecordSummary.replaceChildren();
     }
     updateRecordPane();
   }, { signal });
 
   debugRecordCopy.addEventListener("click", () => {
+    const log = renderer.getFrameLog();
     const payload = JSON.stringify({
       capturedAt: new Date().toISOString(),
       totalEntities: renderer.getDebugStats().totalEntities,
-      frames: renderer.getFrameLog(),
+      viewport: { width: renderer.canvas.getBoundingClientRect().width, height: renderer.canvas.getBoundingClientRect().height, dpr: window.devicePixelRatio },
+      userAgent: navigator.userAgent,
+      // The same aggregate the panel shows, so whoever reads the JSON does
+      // not have to recompute it before knowing where to look.
+      summary: summariseRecording(log, viewportArea()),
+      frames: log,
     }, null, 2);
     void navigator.clipboard?.writeText(payload).then(
       () => { debugRecordStatus.textContent = "copied to clipboard"; },

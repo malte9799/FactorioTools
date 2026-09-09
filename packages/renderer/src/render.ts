@@ -9,7 +9,7 @@ import { buildFluidNetwork, FluidNetwork } from "./neighbours/fluid.js";
 import { buildHeatNetwork, HeatNetwork } from "./neighbours/heat.js";
 import type { PlatformBox } from "./neighbours/platform.js";
 import { collectEntity, type CollectContext } from "./draw/collect.js";
-import { paint, paintPlain, drawOutline } from "./draw/paint.js";
+import { paint, paintPlain, drawOutline, type PaintTally } from "./draw/paint.js";
 import { compareDrawCommands, type DrawCommand } from "./draw/commands.js";
 import { drawInserter } from "./sprites/inserter.js";
 import { SpatialIndex, type IndexedBox } from "./spatialIndex.js";
@@ -35,23 +35,120 @@ export interface FramePhases {
   ghost: number;
 }
 
+/** What the sprite atlas was doing during a recorded frame. Decoding a large
+ *  sheet blocks the main thread outside draw(), so a frame can be slow with a
+ *  cheap `renderMs`; without these a log cannot tell "expensive to draw" apart
+ *  from "the browser was busy decoding". */
+export interface FrameAtlasState {
+  /** Sheets fully decoded and ready to draw from. */
+  ready: number;
+  /** Loads started but not yet settled. */
+  pending: number;
+  /** Loads actively fetching/decoding (capped by DECODE_CONCURRENCY). */
+  decoding: number;
+  /** Loads waiting for a decode slot. */
+  queued: number;
+}
+
+/** What a frame actually put on the canvas, as opposed to what it intended
+ *  to. See PaintTally in draw/paint.ts. */
+export interface FramePaint {
+  drawn: number;
+  skipped: number;
+  sheets: number;
+  /** Painted area in CSS px², i.e. how much pixel-pushing the frame asked
+   *  for. Divided by the viewport area this is the overdraw factor. */
+  area: number;
+  compositeSwitches: number;
+}
+
 /** One recorded frame. */
 export interface FrameRecord {
   /** Milliseconds since the recording started. */
   t: number;
-  /** Wall-clock gap since the previous drawn frame — what the user feels. */
+  /** Wall-clock gap since the previous drawn frame — what the user feels.
+   *  This is the gap BEFORE this frame, i.e. how long the browser took to
+   *  get back to us after the previous one. */
   frameMs: number;
   /** Time inside draw(). */
   renderMs: number;
+  /** frameMs minus renderMs: time the browser spent on everything that is
+   *  not our drawing — its own compositing, image decoding, GC, other tabs.
+   *  A large gap here with a small renderMs is the signature of a stall that
+   *  the renderer is not causing. */
+  outsideMs: number;
   phases: FramePhases;
   visibleEntities: number;
   drawCommands: number;
+  paint: FramePaint;
+  atlas: FrameAtlasState;
   sceneRebuilt: boolean;
+  /** Why the scene cache missed, when it did — the single most useful field
+   *  for telling a legitimate rebuild from a cache that is thrashing. */
+  rebuildReason: RebuildReason;
+  /** Frames the loop deliberately skipped since the previous record because
+   *  nothing was dirty. High values here are healthy: it means the dirty-flag
+   *  optimisation is working. */
+  skippedSince: number;
+  /** JS heap in MB where the browser exposes it (Chromium only), so a
+   *  recording can show a leak or a GC pause building up. */
+  heapMB: number | null;
   /** What the camera was doing, so a spike can be attributed to panning,
    *  zooming or neither. */
   cameraX: number;
   cameraY: number;
   pixelsPerTile: number;
+}
+
+/** Why buildSceneCache ran for a frame. "none" means the cache was reused. */
+export type RebuildReason =
+  | "none"
+  | "first"
+  /** The blueprint's entities changed (edit, undo, load). */
+  | "entities"
+  /** setHighlight changed which entities are dimmed. */
+  | "highlight"
+  /** The set of visible entities changed — pan, zoom, or a resize. */
+  | "visibility";
+
+/** A statistical summary of a finished recording. Computed from the frame log
+ *  rather than accumulated live, so it costs nothing while recording and can
+ *  be recomputed over any subset later. */
+export interface RecordingSummary {
+  frames: number;
+  /** Wall-clock span the recording covers, in ms. */
+  durationMs: number;
+  /** Frames the loop skipped because nothing was dirty. */
+  framesSkipped: number;
+  frameMs: Percentiles;
+  renderMs: Percentiles;
+  /** Time spent outside draw() — browser compositing, decoding, GC. */
+  outsideMs: Percentiles;
+  /** Total ms per phase across the whole recording, worst phase first. */
+  phaseTotals: { phase: keyof FramePhases; ms: number; share: number }[];
+  /** Frames slower than one 60 Hz vsync interval. */
+  janky: number;
+  /** Sum of frameMs over janky frames — how much of the session felt bad. */
+  jankyMs: number;
+  rebuilds: { reason: RebuildReason; count: number }[];
+  /** Frames whose sheets were not all loaded — their paint is not
+   *  representative, and their `skipped` count says how much was missing. */
+  framesWithMissingSprites: number;
+  /** Peak values worth knowing at a glance. */
+  peakDrawCommands: number;
+  peakVisibleEntities: number;
+  peakHeapMB: number | null;
+  /** Highest overdraw seen: painted area divided by viewport area. */
+  peakOverdraw: number;
+}
+
+export interface Percentiles {
+  min: number;
+  median: number;
+  p95: number;
+  p99: number;
+  max: number;
+  mean: number;
 }
 
 /** Aggregated cost of one entity name in the last scene rebuild. */
@@ -283,6 +380,13 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
   });
   let phases: FramePhases = emptyPhases();
   let sceneRebuiltThisFrame = false;
+  let rebuildReasonThisFrame: RebuildReason = "none";
+  /** Filled by the paint pass while a recording runs; null otherwise so an
+   *  unrecorded frame pays nothing for the accounting. */
+  let paintTally: PaintTally | null = null;
+  /** framesSkipped as of the previous recorded frame, so each record can
+   *  report how many frames the loop skipped in between. */
+  let skippedAtLastRecord = 0;
   let sceneRebuildCount = 0;
   let framesDrawn = 0;
   let framesSkipped = 0;
@@ -450,6 +554,10 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
     if (destroyed) return;
     phases = emptyPhases();
     sceneRebuiltThisFrame = false;
+    rebuildReasonThisFrame = "none";
+    paintTally = recording
+      ? { drawn: 0, skipped: 0, sheets: 0, area: 0, compositeSwitches: 0 }
+      : null;
     const tGrid = performance.now();
     const w = canvas.width / dpr;
     const h = canvas.height / dpr;
@@ -636,6 +744,19 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
     const lastVisible = visibleIds.size > 0 ? visibleEntities[visibleEntities.length - 1]?.entityNumber ?? 0 : 0;
     const sceneKey = `${entitiesVersion}|${highlightVersion}|${visibleIds.size}|${firstVisible}|${lastVisible}`;
     if (!sceneCache || sceneCache.key !== sceneKey) {
+      // Attribute the miss before overwriting the cache. The key's three
+      // parts are independent, so comparing them one at a time says which
+      // one actually moved — the difference between "the user panned" and
+      // "something is invalidating the cache needlessly", which a boolean
+      // sceneRebuilt flag alone cannot express.
+      if (!sceneCache) {
+        rebuildReasonThisFrame = "first";
+      } else {
+        const [prevEntities, prevHighlight] = sceneCache.key.split("|");
+        if (prevEntities !== String(entitiesVersion)) rebuildReasonThisFrame = "entities";
+        else if (prevHighlight !== String(highlightVersion)) rebuildReasonThisFrame = "highlight";
+        else rebuildReasonThisFrame = "visibility";
+      }
       sceneCache = buildSceneCache(sceneKey, visibleEntities, {
         grid, fluidNetwork, heatNetwork, ...connectors, platformBoxes, animationFrame: 0,
       });
@@ -661,7 +782,7 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
     // its own paint() call below — so skip paint()'s tinted/untinted split.
     phases.animate = performance.now() - tAnimate;
     const tPaint = performance.now();
-    paintPlain(ctx, atlas, commands);
+    paintPlain(ctx, atlas, commands, paintTally ?? undefined);
     phases.paint = performance.now() - tPaint;
 
     const tInserters = performance.now();
@@ -932,18 +1053,33 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
    *  nothing for the feature. */
   function recordFrame(now: number, renderMs: number): void {
     if (frameLog.length < FRAME_LOG_CAPACITY) {
+      const frameMs = frameTimes.length > 0 ? frameTimes[frameTimes.length - 1]! : 0;
+      // Chromium-only; every other browser leaves performance.memory undefined.
+      const heap = (performance as unknown as { memory?: { usedJSHeapSize: number } }).memory;
       frameLog.push({
         t: now - recordingStartedAt,
-        frameMs: frameTimes.length > 0 ? frameTimes[frameTimes.length - 1]! : 0,
+        frameMs,
         renderMs,
+        // Never negative: frameMs is measured at the top of the tick and
+        // renderMs inside it, so on the very first recorded frame (frameMs 0)
+        // the subtraction would otherwise report a nonsensical deficit.
+        outsideMs: Math.max(0, frameMs - renderMs),
         phases: { ...phases },
         visibleEntities: lastVisibleEntityCount,
         drawCommands: lastDrawCommandCount,
+        paint: paintTally
+          ? { ...paintTally }
+          : { drawn: 0, skipped: 0, sheets: 0, area: 0, compositeSwitches: 0 },
+        atlas: atlas.stats(),
         sceneRebuilt: sceneRebuiltThisFrame,
+        rebuildReason: rebuildReasonThisFrame,
+        skippedSince: framesSkipped - skippedAtLastRecord,
+        heapMB: heap ? Math.round(heap.usedJSHeapSize / 1e6) : null,
         cameraX: camera.state.x,
         cameraY: camera.state.y,
         pixelsPerTile: camera.state.pixelsPerTile,
       });
+      skippedAtLastRecord = framesSkipped;
     }
     if (now >= recordingStopsAt || frameLog.length >= FRAME_LOG_CAPACITY) recording = false;
   }
@@ -1426,6 +1562,9 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
       frameLog = [];
       recordingStartedAt = performance.now();
       recordingStopsAt = recordingStartedAt + seconds * 1000;
+      // Baseline the skip counter, so the first record reports frames
+      // skipped since the recording began rather than since page load.
+      skippedAtLastRecord = framesSkipped;
       recording = true;
       // A recording is only interesting if frames are actually being drawn.
       invalidate();
