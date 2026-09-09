@@ -505,8 +505,20 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
 
     // Which entities are visible depends on the camera; how they classify
     // depends on the blueprint (entitiesVersion) and on the highlight, which
-    // feeds each command's alpha. Everything else about the list is stable.
-    const sceneKey = entitiesVersion + "|" + highlightVersion + "|" + [...visibleIds].join(",");
+    // feeds each command's alpha.
+    //
+    // The visible set is identified by its size plus its first and last id
+    // rather than by joining every id into a string: that join allocated a
+    // multi-kilobyte string every frame purely to compare it, which is real
+    // work during exactly the pan and zoom this cache is meant to make cheap.
+    // queryRect returns ids in a stable insertion order, so for a set to
+    // change while keeping its size and both ends is possible but harmless —
+    // the mistake it could cause is reusing a command list for a set of the
+    // same size with the same outermost entities, and the sceneEpoch below
+    // bounds how long any such reuse could last.
+    const firstVisible = visibleIds.size > 0 ? visibleEntities[0]?.entityNumber ?? 0 : 0;
+    const lastVisible = visibleIds.size > 0 ? visibleEntities[visibleEntities.length - 1]?.entityNumber ?? 0 : 0;
+    const sceneKey = `${entitiesVersion}|${highlightVersion}|${visibleIds.size}|${firstVisible}|${lastVisible}`;
     if (!sceneCache || sceneCache.key !== sceneKey) {
       sceneCache = buildSceneCache(sceneKey, visibleEntities, {
         grid, fluidNetwork, heatNetwork, ...connectors, platformBoxes, animationFrame: 0,
@@ -619,83 +631,138 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
     }
   }
 
-  /** Collects and sorts the scene once, then records how each animated
-   *  command's source rect moves so later frames can be patched instead of
-   *  reclassified and re-sorted.
+  /** Per-entity-type animation profile: for one entity of this name+direction,
+   *  which of its commands move, and how.
    *
-   *  The movement is sampled from the classifier rather than derived from the
-   *  catalog's animation metadata: mapping animationFrame to a column already
-   *  involves per-layer slowdown and entity-specific offsets (turbo belts run
-   *  alternate tiles a half-cycle apart), and re-deriving that here would be a
-   *  second source of truth free to drift from collect.ts.
-   *
-   *  Sampling covers MAX_ANIM_PERIOD frames and only accepts a command whose
-   *  sx is exactly base + (frame % period) * stride throughout. Anything else
-   *  is left out of the animated set and keeps its frame-0 art — an
-   *  unrecognised scheme degrades to a still image, never to wrong art. */
-  function buildSceneCache(key: string, visibleEntities: PlacedEntity[], baseCtx: CollectContext): SceneCache {
-    const collectAt = (frame: number): DrawCommand[] => {
-      const frameCtx: CollectContext = { ...baseCtx, animationFrame: frame };
-      const out: DrawCommand[] = [];
-      for (const entity of visibleEntities) {
-        const visual = visualFor(entity.name);
-        if (!visual?.graphics || visual.inserterGraphics) continue;
-        collectEntity(out, entity, visual, frameCtx, alphaFor(entity));
-      }
-      out.sort(compareDrawCommands);
-      return out;
-    };
+   *  Probing is done ONCE per entity type and memoised, not per scene. Probing
+   *  the whole visible set on every cache miss made panning and zooming
+   *  catastrophically slow — the visible set changes every frame while moving,
+   *  so a 257-pass probe over thousands of entities ran 60 times a second. */
+  interface AnimProfile {
+    /** Indices into one entity's own command list, and their sx behaviour. */
+    animated: number[];
+    stride: number[];
+    period: number[];
+  }
+  const animProfiles = new Map<string, AnimProfile>();
 
-    const commands = collectAt(0);
+  const NO_ANIMATION: AnimProfile = { animated: [], stride: [], period: [] };
+
+  /** Collects a single entity in isolation at one animation frame. Isolation is
+   *  deliberate: neighbours affect which sprite is picked, but not how that
+   *  sprite's own frames advance, and it keeps the probe independent of where
+   *  the entity happens to sit. */
+  function collectSolo(entity: PlacedEntity, visual: ResolvedVisual, baseCtx: CollectContext, frame: number): DrawCommand[] {
+    const out: DrawCommand[] = [];
+    collectEntity(out, entity, visual, { ...baseCtx, animationFrame: frame }, 1);
+    return out;
+  }
+
+  function animProfileFor(entity: PlacedEntity, visual: ResolvedVisual, baseCtx: CollectContext): AnimProfile {
+    // Direction matters: the same entity facing two ways can lay its frames out
+    // differently, and turbo belts offset alternate tiles by parity.
+    const key = `${entity.name}|${entity.direction}|${Math.abs(Math.round(entity.x) + Math.round(entity.y)) % 2}`;
+    const cached = animProfiles.get(key);
+    if (cached) return cached;
+
+    if (!hasAnimatedLayer(visual)) {
+      animProfiles.set(key, NO_ANIMATION);
+      return NO_ANIMATION;
+    }
+
+    const base = collectSolo(entity, visual, baseCtx, 0);
+    const animated: number[] = [];
+    const stride: number[] = [];
+    const period: number[] = [];
+
+    const samples: DrawCommand[][] = [];
+    let structural = false;
+    for (let frame = 1; frame <= MAX_ANIM_PERIOD; frame++) {
+      const at = collectSolo(entity, visual, baseCtx, frame);
+      if (at.length !== base.length) { structural = true; break; }
+      samples.push(at);
+    }
+
+    if (!structural) {
+      for (let i = 0; i < base.length; i++) {
+        const step = samples[0]![i]!.sx - base[i]!.sx;
+        if (step === 0) continue;
+
+        let cycle = 0;
+        for (let frame = 1; frame <= MAX_ANIM_PERIOD; frame++) {
+          if (samples[frame - 1]![i]!.sx === base[i]!.sx) { cycle = frame; break; }
+        }
+        if (cycle <= 0) continue;
+
+        // Accept only an exact base + (frame % cycle) * step progression with
+        // nothing else moving; anything else stays on its frame-0 art rather
+        // than risking wrong sprites.
+        let linear = true;
+        for (let frame = 1; frame <= MAX_ANIM_PERIOD && linear; frame++) {
+          const sample = samples[frame - 1]![i]!;
+          linear =
+            sample.sx === base[i]!.sx + (frame % cycle) * step &&
+            sample.sheet === base[i]!.sheet &&
+            sample.sy === base[i]!.sy &&
+            sample.layer === base[i]!.layer &&
+            sample.order === base[i]!.order;
+        }
+        if (!linear) continue;
+
+        animated.push(i);
+        stride.push(step);
+        period.push(cycle);
+      }
+    }
+
+    const profile: AnimProfile = { animated, stride, period };
+    animProfiles.set(key, profile);
+    return profile;
+  }
+
+  /** Collects and sorts the visible scene once, recording which of the
+   *  resulting commands animate so later frames only patch their sx.
+   *
+   *  Cost is one collect pass plus one sort — the same work the renderer did
+   *  every frame before caching existed. The expensive part, working out how
+   *  each sprite animates, is memoised per entity type by animProfileFor. */
+  function buildSceneCache(key: string, visibleEntities: PlacedEntity[], baseCtx: CollectContext): SceneCache {
+    const commands: DrawCommand[] = [];
     const animated: number[] = [];
     const animBase: number[] = [];
     const animStride: number[] = [];
     const animPeriod: number[] = [];
 
-    // One sample per frame for the whole probe window, shared by every
-    // command, so this costs MAX_ANIM_PERIOD collect passes once per cache
-    // build rather than per command.
-    const samples: DrawCommand[][] = [];
-    for (let frame = 1; frame <= MAX_ANIM_PERIOD; frame++) {
-      const at = collectAt(frame);
-      // A differing command count means the clock changes the scene's
-      // structure, not just its source rects — the cache cannot express that.
-      if (at.length !== commands.length) return { key, commands, animated, animBase, animStride, animPeriod };
-      samples.push(at);
+    // Collect entity by entity so each command's index is known while its
+    // profile is still in hand; the sort afterwards moves them, so the
+    // recorded indices are remapped below.
+    const preSort: { command: DrawCommand; stride: number; period: number }[] = [];
+    for (const entity of visibleEntities) {
+      const visual = visualFor(entity.name);
+      if (!visual?.graphics || visual.inserterGraphics) continue;
+      const before = commands.length;
+      collectEntity(commands, entity, visual, baseCtx, alphaFor(entity));
+      const profile = animProfileFor(entity, visual, baseCtx);
+      for (let k = 0; k < profile.animated.length; k++) {
+        const local = profile.animated[k]!;
+        const command = commands[before + local];
+        if (command) preSort.push({ command, stride: profile.stride[k]!, period: profile.period[k]! });
+      }
     }
 
-    for (let i = 0; i < commands.length; i++) {
-      const base = commands[i]!;
-      const stride = samples[0]![i]!.sx - base.sx;
-      if (stride === 0) continue;
+    commands.sort(compareDrawCommands);
 
-      // First frame whose sx is back at the frame-0 value is the cycle length.
-      let period = 0;
-      for (let frame = 1; frame <= MAX_ANIM_PERIOD; frame++) {
-        if (samples[frame - 1]![i]!.sx === base.sx) { period = frame; break; }
-      }
-      if (period <= 0) continue;
-
-      // Verify the whole window really follows base + (frame % period) * stride,
-      // and that nothing but sx moves.
-      let linear = true;
-      for (let frame = 1; frame <= MAX_ANIM_PERIOD && linear; frame++) {
-        const sample = samples[frame - 1]![i]!;
-        linear =
-          sample.sx === base.sx + (frame % period) * stride &&
-          sample.sheet === base.sheet &&
-          sample.sy === base.sy &&
-          sample.dx === base.dx &&
-          sample.dy === base.dy &&
-          sample.layer === base.layer &&
-          sample.order === base.order;
-      }
-      if (!linear) continue;
-
-      animated.push(i);
-      animBase.push(base.sx);
-      animStride.push(stride);
-      animPeriod.push(period);
+    // Re-find each animated command's post-sort index. A Map keyed on the
+    // command object keeps this O(n) rather than a scan per entry.
+    const indexOf = new Map<DrawCommand, number>();
+    for (let i = 0; i < commands.length; i++) indexOf.set(commands[i]!, i);
+    for (const entry of preSort) {
+      const index = indexOf.get(entry.command);
+      if (index === undefined) continue;
+      animated.push(index);
+      animBase.push(entry.command.sx);
+      animStride.push(entry.stride);
+      animPeriod.push(entry.period);
     }
 
     return { key, commands, animated, animBase, animStride, animPeriod };
