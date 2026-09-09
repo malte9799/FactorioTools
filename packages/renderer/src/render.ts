@@ -10,7 +10,7 @@ import { buildHeatNetwork, HeatNetwork } from "./neighbours/heat.js";
 import type { PlatformBox } from "./neighbours/platform.js";
 import { collectEntity, type CollectContext } from "./draw/collect.js";
 import { paint, paintPlain, drawOutline } from "./draw/paint.js";
-import type { DrawCommand } from "./draw/commands.js";
+import { compareDrawCommands, type DrawCommand } from "./draw/commands.js";
 import { drawInserter } from "./sprites/inserter.js";
 import { SpatialIndex, type IndexedBox } from "./spatialIndex.js";
 
@@ -114,6 +114,11 @@ export interface BlueprintRenderer {
 
 const FALLBACK_FOOTPRINT: [number, number] = [1, 1];
 
+/** Upper bound on how far the scene cache probes for an animation's cycle
+ *  length. Vanilla's longest belt cycle is well under this; anything that
+ *  does not repeat within it is treated as non-animating and left static. */
+const MAX_ANIM_PERIOD = 256;
+
 /** Placement-ghost valid/invalid tint — matches the real game's own
  *  green-means-go, red-means-blocked cursor-item convention. */
 const GHOST_VALID_TINT = "#4caf50";
@@ -193,11 +198,53 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
    *  ghost lands on a different cell, turns, becomes a different entity, or
    *  the blueprint itself is edited, so they are cached against exactly that.
    *  entitiesVersion is bumped by rebuildIndices. */
+  /** The collected, sorted scene commands, reused across frames.
+   *
+   *  Everything that decides this list — which entities are visible, how they
+   *  classify, their sort order — is unchanged from frame to frame while the
+   *  camera and blueprint sit still. The only field that moves is `sx`, the
+   *  belt animation's column offset, so the list is built once and those
+   *  entries are patched in place instead of reclassifying and re-sorting the
+   *  whole scene 60 times a second.
+   *
+   *  Each animated command carries its OWN period: a blueprint mixing belt
+   *  tiers has several (turbo/express/fast run at different rates via the
+   *  layer's `slowdown`), and patching them all on one shared cycle would
+   *  visibly desynchronise the slower tiers. base/stride/period are measured
+   *  per command when the cache is built, from the classifier itself, so no
+   *  assumption about the animation scheme is baked in here. */
+  interface SceneCache {
+    key: string;
+    commands: DrawCommand[];
+    /** Indices into `commands` of the entries whose sx moves. */
+    animated: number[];
+    /** sx at animationFrame 0, the per-frame sx increment, and how many
+     *  frames before the cycle repeats — parallel to `animated`. */
+    animBase: number[];
+    animStride: number[];
+    animPeriod: number[];
+  }
+  let sceneCache: SceneCache | null = null;
+
   let ghostPreviewKey: string | null = null;
   let ghostPreviewGrid: NeighbourGrid | null = null;
   let ghostPreviewFluid: FluidNetwork | null = null;
   let ghostPreviewHeat: HeatNetwork | null = null;
   let entitiesVersion = 0;
+  let highlightVersion = 0;
+
+  /** Dimming factor for an entity while a highlight is active. Lives out here
+   *  rather than inside draw() because buildSceneCache bakes it into each
+   *  command's alpha, and highlightVersion is what tells the cache to rebuild
+   *  when the highlight changes. */
+  function alphaFor(entity: PlacedEntity): number {
+    if (highlight === null) return 1;
+    const lit =
+      highlight.producers.has(entity.entityNumber) ||
+      highlight.consumers.has(entity.entityNumber) ||
+      (highlight.beacons?.has(entity.entityNumber) ?? false);
+    return lit ? 1 : 0.28;
+  }
 
   function invalidate(): void {
     needsRedraw = true;
@@ -326,12 +373,6 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
     lastVisibleEntityCount = visibleEntities.length;
 
     const hasHighlight = highlight !== null;
-    const alphaFor = (entity: PlacedEntity): number => {
-      if (!hasHighlight) return 1;
-      const h = highlight!;
-      const lit = h.producers.has(entity.entityNumber) || h.consumers.has(entity.entityNumber) || (h.beacons?.has(entity.entityNumber) ?? false);
-      return lit ? 1 : 0.28;
-    };
 
     // A belt-family ghost needs to know about its own real neighbours to
     // classify itself correctly (curve into an existing run, no spurious
@@ -440,11 +481,9 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
     // previewGrid — an already-placed belt must not change how it looks
     // just because a ghost is hovering nearby; only the ghost itself (drawn
     // separately below, against previewGrid) shows the connected preview.
-    const collectCtx: CollectContext = { grid, fluidNetwork, heatNetwork, ...connectors, platformBoxes, animationFrame };
-    const commands: DrawCommand[] = [];
     const procedural: PlacedEntity[] = [];
-    // Counted while collecting rather than in a separate pass: this is what
-    // tells tick() whether the next frame could differ from this one.
+    // Counted while walking the visible set: this is what tells tick()
+    // whether the next frame could differ from this one.
     let animatedVisible = 0;
     for (const entity of visibleEntities) {
       const visual = visualFor(entity.name);
@@ -452,15 +491,29 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
       if (hasAnimatedLayer(visual)) animatedVisible++;
       if (visual.inserterGraphics) {
         procedural.push(entity);
-      } else if (visual.graphics) {
-        collectEntity(commands, entity, visual, collectCtx, alphaFor(entity));
-      } else {
+      } else if (!visual.graphics) {
         const [fw, fh] = effectiveFootprint(visual, entity.direction);
         drawOutline(ctx, entity.x, entity.y, fw, fh);
       }
     }
-    lastDrawCommandCount = commands.length;
     animatedVisibleCount = animatedVisible;
+
+    // Which entities are visible depends on the camera; how they classify
+    // depends on the blueprint (entitiesVersion) and on the highlight, which
+    // feeds each command's alpha. Everything else about the list is stable.
+    const sceneKey = entitiesVersion + "|" + highlightVersion + "|" + [...visibleIds].join(",");
+    if (!sceneCache || sceneCache.key !== sceneKey) {
+      sceneCache = buildSceneCache(sceneKey, visibleEntities, {
+        grid, fluidNetwork, heatNetwork, ...connectors, platformBoxes, animationFrame: 0,
+      });
+    }
+    const commands = sceneCache.commands;
+    for (let i = 0; i < sceneCache.animated.length; i++) {
+      const command = commands[sceneCache.animated[i]!]!;
+      const period = sceneCache.animPeriod[i]!;
+      command.sx = sceneCache.animBase[i]! + (animationFrame % period) * sceneCache.animStride[i]!;
+    }
+    lastDrawCommandCount = commands.length;
     // Device pixels per world tile — matches the resolution every placed
     // entity already draws at via the ctx transform above (dpr * zoom), so
     // a tinted ghost's offscreen buffer (paintTinted) is exactly as sharp
@@ -559,6 +612,88 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
       invalidate();
       if (isPlacingDrag) placeAtGhost();
     }
+  }
+
+  /** Collects and sorts the scene once, then records how each animated
+   *  command's source rect moves so later frames can be patched instead of
+   *  reclassified and re-sorted.
+   *
+   *  The movement is sampled from the classifier rather than derived from the
+   *  catalog's animation metadata: mapping animationFrame to a column already
+   *  involves per-layer slowdown and entity-specific offsets (turbo belts run
+   *  alternate tiles a half-cycle apart), and re-deriving that here would be a
+   *  second source of truth free to drift from collect.ts.
+   *
+   *  Sampling covers MAX_ANIM_PERIOD frames and only accepts a command whose
+   *  sx is exactly base + (frame % period) * stride throughout. Anything else
+   *  is left out of the animated set and keeps its frame-0 art — an
+   *  unrecognised scheme degrades to a still image, never to wrong art. */
+  function buildSceneCache(key: string, visibleEntities: PlacedEntity[], baseCtx: CollectContext): SceneCache {
+    const collectAt = (frame: number): DrawCommand[] => {
+      const frameCtx: CollectContext = { ...baseCtx, animationFrame: frame };
+      const out: DrawCommand[] = [];
+      for (const entity of visibleEntities) {
+        const visual = visualFor(entity.name);
+        if (!visual?.graphics || visual.inserterGraphics) continue;
+        collectEntity(out, entity, visual, frameCtx, alphaFor(entity));
+      }
+      out.sort(compareDrawCommands);
+      return out;
+    };
+
+    const commands = collectAt(0);
+    const animated: number[] = [];
+    const animBase: number[] = [];
+    const animStride: number[] = [];
+    const animPeriod: number[] = [];
+
+    // One sample per frame for the whole probe window, shared by every
+    // command, so this costs MAX_ANIM_PERIOD collect passes once per cache
+    // build rather than per command.
+    const samples: DrawCommand[][] = [];
+    for (let frame = 1; frame <= MAX_ANIM_PERIOD; frame++) {
+      const at = collectAt(frame);
+      // A differing command count means the clock changes the scene's
+      // structure, not just its source rects — the cache cannot express that.
+      if (at.length !== commands.length) return { key, commands, animated, animBase, animStride, animPeriod };
+      samples.push(at);
+    }
+
+    for (let i = 0; i < commands.length; i++) {
+      const base = commands[i]!;
+      const stride = samples[0]![i]!.sx - base.sx;
+      if (stride === 0) continue;
+
+      // First frame whose sx is back at the frame-0 value is the cycle length.
+      let period = 0;
+      for (let frame = 1; frame <= MAX_ANIM_PERIOD; frame++) {
+        if (samples[frame - 1]![i]!.sx === base.sx) { period = frame; break; }
+      }
+      if (period <= 0) continue;
+
+      // Verify the whole window really follows base + (frame % period) * stride,
+      // and that nothing but sx moves.
+      let linear = true;
+      for (let frame = 1; frame <= MAX_ANIM_PERIOD && linear; frame++) {
+        const sample = samples[frame - 1]![i]!;
+        linear =
+          sample.sx === base.sx + (frame % period) * stride &&
+          sample.sheet === base.sheet &&
+          sample.sy === base.sy &&
+          sample.dx === base.dx &&
+          sample.dy === base.dy &&
+          sample.layer === base.layer &&
+          sample.order === base.order;
+      }
+      if (!linear) continue;
+
+      animated.push(i);
+      animBase.push(base.sx);
+      animStride.push(stride);
+      animPeriod.push(period);
+    }
+
+    return { key, commands, animated, animBase, animStride, animPeriod };
   }
 
   function tick(): void {
@@ -894,6 +1029,7 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
     // Any edit changes what the ghost previews against, so drop its cache.
     entitiesVersion++;
     ghostPreviewKey = null;
+    sceneCache = null;
     invalidate();
 
     // Preload every sheet the visible entities reference, so nothing flashes
@@ -936,6 +1072,9 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
     updateEntities: rebuildIndices,
     setHighlight(role) {
       highlight = role;
+      // Alpha is baked into the cached commands, so the scene must be
+      // recollected when the highlight changes.
+      highlightVersion++;
       invalidate();
     },
     /** Dev-only: freeze/unfreeze the belt animation clock and step it by an
