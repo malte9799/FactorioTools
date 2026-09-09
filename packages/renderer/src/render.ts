@@ -109,6 +109,11 @@ export interface BlueprintRenderer {
      *  including Safari/Firefox, which don't expose it at all. */
     jsHeapUsedMb: number | undefined;
   };
+  /** The renderer's own resolved-visual table, so the app layer can answer
+   *  "how big is this entity, what does it look like" without building a
+   *  second copy from the same inputs — which then had to be rebuilt in
+   *  lockstep whenever the dataset was swapped. */
+  getVisualLookup(): ReadonlyMap<string, ResolvedVisual>;
   destroy(): void;
 }
 
@@ -1167,6 +1172,9 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
     },
     onLoadingChange(callback) {
       atlas.setOnPendingChange((pending) => callback(pending > 0));
+    },
+    getVisualLookup() {
+      return visualLookup;
     },
     getDebugStats() {
       const avg = (values: number[]) => (values.length === 0 ? 0 : values.reduce((a, b) => a + b, 0) / values.length);

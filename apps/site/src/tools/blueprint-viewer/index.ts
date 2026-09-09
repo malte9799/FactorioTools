@@ -19,7 +19,7 @@ import {
   overlaps,
 } from "@factoriotools/engine";
 import type { CalculationResult, Timescale, Blueprint, PlacedEntity, QualityName, MachineGroup, ModuleStack, ThroughputContext, BottleneckSubgroup } from "@factoriotools/engine";
-import { mountRenderer, isPoleLike, isTwoDirectionOnly, rotationStep, buildVisualLookup, effectiveFootprint, type BlueprintRenderer, type HighlightRole } from "@factoriotools/renderer";
+import { mountRenderer, isPoleLike, isTwoDirectionOnly, rotationStep, effectiveFootprint, type BlueprintRenderer, type HighlightRole } from "@factoriotools/renderer";
 import { buildRecipeCard, renderResults, type ViewOptions } from "./legacy-view/panels.js";
 import { icon } from "./legacy-view/icons.js";
 import { makeFloatingWindow } from "../../window-manager.js";
@@ -417,7 +417,10 @@ export function mountBlueprintViewer(root: HTMLElement): () => void {
   // Rebuilt alongside every renderer remount (loadData() resolving with the
   // real dataset, or a later dataset swap) — placeEntity's collision check
   // reads this rather than calling buildVisualLookup per click.
-  let visualLookup = buildVisualLookup(getData(), getRenderCatalog());
+  // Read from the renderer rather than built here: the renderer already has
+  // exactly this table, and keeping a second copy meant remembering to
+  // rebuild both whenever the dataset was swapped.
+  const visualLookup = () => renderer.getVisualLookup();
 
   // Alt mode: Factorio's own alt-key view — recipe icons on machines,
   // module icons on machines/beacons. A persistent toggle (button or the
@@ -702,11 +705,11 @@ export function mountBlueprintViewer(root: HTMLElement): () => void {
     // overlaps any already-placed entity's box, the same box math the rate
     // calculator's beacon-range check already uses. Unknown-footprint
     // entities fall back to 1x1, matching buildVisualLookup's own default.
-    const newVisual = visualLookup.get(name);
+    const newVisual = visualLookup().get(name);
     const newFootprint = newVisual ? effectiveFootprint(newVisual, direction) : ([1, 1] as [number, number]);
     const newBox = boxOf(worldX, worldY, newFootprint);
     const collides = entities.some((e) => {
-      const visual = visualLookup.get(e.name);
+      const visual = visualLookup().get(e.name);
       const footprint = visual ? effectiveFootprint(visual, e.direction) : ([1, 1] as [number, number]);
       return overlaps(newBox, boxOf(e.x, e.y, footprint));
     });
@@ -1838,7 +1841,6 @@ export function mountBlueprintViewer(root: HTMLElement): () => void {
     renderer = mountRenderer(canvas, getData(), getRenderCatalog());
     renderer.onHover(onSchematicHover);
     renderer.setAltMode(altModeOn);
-    visualLookup = buildVisualLookup(getData(), getRenderCatalog());
     wireEditCallbacks();
     if (entities.length) renderer.loadBlueprint(entities);
 
