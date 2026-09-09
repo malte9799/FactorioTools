@@ -422,21 +422,24 @@ export function mountLayerDebug(root: HTMLElement): () => void {
       const localV = (world.y - box.y) / box.h;
       const px = Math.floor((c.sprite.x ?? 0) + localU * c.sprite.frameWidth);
       const py = Math.floor((c.sprite.y ?? 0) + localV * c.sprite.frameHeight);
-      if (isOpaqueAt(img, px, py)) return c.layer;
+      if (isOpaqueAt(img, c.sprite.sheet, px, py)) return c.layer;
     }
     return null;
   }
 
   const pixelSampleCache = new Map<string, CanvasRenderingContext2D>();
-  function isOpaqueAt(img: HTMLImageElement, px: number, py: number): boolean {
-    let sampleCtx = pixelSampleCache.get(img.src);
+  /** `key` identifies the sheet for the cache: the atlas now hands back an
+   *  ImageBitmap, which has no `src` to key on (and, unlike an <img>, exposes
+   *  its size as plain width/height). */
+  function isOpaqueAt(img: CanvasImageSource, key: string, px: number, py: number): boolean {
+    let sampleCtx = pixelSampleCache.get(key);
     if (!sampleCtx) {
       const off = document.createElement("canvas");
-      off.width = img.naturalWidth;
-      off.height = img.naturalHeight;
+      off.width = img instanceof HTMLImageElement ? img.naturalWidth : (img as ImageBitmap).width;
+      off.height = img instanceof HTMLImageElement ? img.naturalHeight : (img as ImageBitmap).height;
       sampleCtx = off.getContext("2d", { willReadFrequently: true })!;
       sampleCtx.drawImage(img, 0, 0);
-      pixelSampleCache.set(img.src, sampleCtx);
+      pixelSampleCache.set(key, sampleCtx);
     }
     if (px < 0 || py < 0 || px >= sampleCtx.canvas.width || py >= sampleCtx.canvas.height) return false;
     return sampleCtx.getImageData(px, py, 1, 1).data[3]! > 10;

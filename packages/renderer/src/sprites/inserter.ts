@@ -1,5 +1,5 @@
 import type { InserterGraphics, PlacedEntity } from "@factoriotools/engine";
-import type { SpriteAtlas } from "../spriteAtlas.js";
+import type { SpriteAtlas, SpriteSurface } from "../spriteAtlas.js";
 import { toCardinal } from "../neighbours/grid.js";
 import { PIXELS_PER_TILE } from "../draw/commands.js";
 import { drawOutline, TINT_ALPHA } from "../draw/paint.js";
@@ -140,9 +140,9 @@ function drawTintedInserter(
   ctx: CanvasRenderingContext2D,
   entity: PlacedEntity,
   g: InserterGraphics,
-  platform: HTMLImageElement,
-  handBase: HTMLImageElement,
-  handOpen: HTMLImageElement,
+  platform: SpriteSurface,
+  handBase: SpriteSurface,
+  handOpen: SpriteSurface,
   tint: string,
   res: number,
 ): void {
@@ -182,7 +182,7 @@ function drawTintedInserter(
 function drawArmSegment(
   ctx: CanvasRenderingContext2D,
   entity: PlacedEntity,
-  img: HTMLImageElement,
+  img: SpriteSurface,
   sprite: { frameWidth: number; frameHeight: number; scale?: number },
   seg: ArmSegment,
 ): void {
@@ -199,9 +199,9 @@ function drawInserterParts(
   ctx: CanvasRenderingContext2D,
   entity: PlacedEntity,
   g: InserterGraphics,
-  platform: HTMLImageElement,
-  handBase: HTMLImageElement,
-  handOpen: HTMLImageElement,
+  platform: SpriteSurface,
+  handBase: SpriteSurface,
+  handOpen: SpriteSurface,
 ): void {
   const cardinal = toCardinal(entity.direction);
   const column = Math.round(cardinal / 4) % g.platformDirections;

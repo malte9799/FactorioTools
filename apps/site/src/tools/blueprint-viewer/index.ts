@@ -214,18 +214,62 @@ const TEMPLATE = `
       <span>Debug</span>
       <span class="grip" aria-hidden="true"></span>
     </div>
-    <div class="gui-body">
-      <table class="debug-stats-table">
-        <tbody>
-          <tr><td>FPS</td><td id="debug-fps">–</td></tr>
-          <tr><td>Frame time</td><td id="debug-frame-time">–</td></tr>
-          <tr><td>Render time</td><td id="debug-render-time">–</td></tr>
-          <tr><td>Entities (total)</td><td id="debug-total-entities">–</td></tr>
-          <tr><td>Entities (visible)</td><td id="debug-visible-entities">–</td></tr>
-          <tr><td>Draw commands</td><td id="debug-draw-commands">–</td></tr>
-          <tr><td>JS heap</td><td id="debug-heap">–</td></tr>
-        </tbody>
-      </table>
+    <div class="gui-body debug-body">
+      <div class="debug-tabs" role="tablist">
+        <button type="button" class="debug-tab is-active" data-debug-tab="overview">Overview</button>
+        <button type="button" class="debug-tab" data-debug-tab="phases">Frame</button>
+        <button type="button" class="debug-tab" data-debug-tab="entities">Entities</button>
+        <button type="button" class="debug-tab" data-debug-tab="record">Record</button>
+      </div>
+
+      <section class="debug-pane is-active" data-debug-pane="overview">
+        <table class="debug-stats-table">
+          <tbody>
+            <tr><td>FPS</td><td id="debug-fps">–</td></tr>
+            <tr><td>Frame time</td><td id="debug-frame-time">–</td></tr>
+            <tr><td>Render time</td><td id="debug-render-time">–</td></tr>
+            <tr><td>Entities (total)</td><td id="debug-total-entities">–</td></tr>
+            <tr><td>Entities (visible)</td><td id="debug-visible-entities">–</td></tr>
+            <tr><td>Draw commands</td><td id="debug-draw-commands">–</td></tr>
+            <tr><td>Scene cache</td><td id="debug-cache">–</td></tr>
+            <tr><td>Frames drawn / skipped</td><td id="debug-frame-counts">–</td></tr>
+            <tr><td>JS heap</td><td id="debug-heap">–</td></tr>
+          </tbody>
+        </table>
+      </section>
+
+      <section class="debug-pane" data-debug-pane="phases">
+        <p class="debug-hint">Where the last frame's time went. A bar that grows while
+        you pan is the one to look at.</p>
+        <div id="debug-phase-bars" class="debug-bars"></div>
+      </section>
+
+      <section class="debug-pane" data-debug-pane="entities">
+        <p class="debug-hint">Cost per entity type in the last scene rebuild. Timing each
+        entity separately slows rebuilds down, so this is off until you switch it on.</p>
+        <label class="debug-check">
+          <input type="checkbox" id="debug-entity-accounting" /> Measure per entity
+        </label>
+        <table class="debug-stats-table debug-entity-table">
+          <thead><tr><th>Entity</th><th>×</th><th>Cmds</th><th>Collect</th></tr></thead>
+          <tbody id="debug-entity-rows"><tr><td colspan="4" class="debug-empty">Not measuring.</td></tr></tbody>
+        </table>
+      </section>
+
+      <section class="debug-pane" data-debug-pane="record">
+        <p class="debug-hint">Records one row per drawn frame. Start it, reproduce the
+        stutter, then read the slowest frames or copy the whole log.</p>
+        <div class="debug-actions">
+          <button type="button" id="debug-record-toggle">Record 30 s</button>
+          <button type="button" id="debug-record-copy" disabled>Copy JSON</button>
+          <span id="debug-record-status" class="debug-hint"></span>
+        </div>
+        <div id="debug-record-summary"></div>
+        <table class="debug-stats-table debug-record-table">
+          <thead><tr><th>t</th><th>Frame</th><th>Render</th><th>Slowest phase</th><th></th></tr></thead>
+          <tbody id="debug-record-rows"><tr><td colspan="5" class="debug-empty">Nothing recorded yet.</td></tr></tbody>
+        </table>
+      </section>
     </div>
   </div>
 `;
@@ -380,18 +424,220 @@ export function mountBlueprintViewer(root: HTMLElement): () => void {
   const debugVisibleEntities = $<HTMLTableCellElement>("#debug-visible-entities");
   const debugDrawCommands = $<HTMLTableCellElement>("#debug-draw-commands");
   const debugHeap = $<HTMLTableCellElement>("#debug-heap");
-  const DEBUG_POLL_MS = 500;
-  const debugPollHandle = setInterval(() => {
+  const debugCache = $<HTMLTableCellElement>("#debug-cache");
+  const debugFrameCounts = $<HTMLTableCellElement>("#debug-frame-counts");
+  const debugPhaseBars = $<HTMLDivElement>("#debug-phase-bars");
+  const debugEntityRows = $<HTMLTableSectionElement>("#debug-entity-rows");
+  const debugEntityAccounting = $<HTMLInputElement>("#debug-entity-accounting");
+  const debugRecordToggle = $<HTMLButtonElement>("#debug-record-toggle");
+  const debugRecordCopy = $<HTMLButtonElement>("#debug-record-copy");
+  const debugRecordStatus = $<HTMLSpanElement>("#debug-record-status");
+  const debugRecordSummary = $<HTMLDivElement>("#debug-record-summary");
+  const debugRecordRows = $<HTMLTableSectionElement>("#debug-record-rows");
+
+  /** Which pane is showing. Only the visible one is refreshed — the whole
+   *  point of this panel is to diagnose slow frames, so it must not itself
+   *  do avoidable per-tick DOM work. */
+  let debugTab: "overview" | "phases" | "entities" | "record" = "overview";
+  const debugPanes = [...root.querySelectorAll<HTMLElement>("[data-debug-pane]")];
+  const debugTabs = [...root.querySelectorAll<HTMLButtonElement>("[data-debug-tab]")];
+  for (const tab of debugTabs) {
+    tab.addEventListener("click", () => {
+      debugTab = tab.dataset.debugTab as typeof debugTab;
+      for (const t of debugTabs) t.classList.toggle("is-active", t === tab);
+      for (const pane of debugPanes) pane.classList.toggle("is-active", pane.dataset.debugPane === debugTab);
+      refreshDebug();
+    }, { signal });
+  }
+
+  debugEntityAccounting.addEventListener("change", () => {
+    renderer.setEntityAccounting(debugEntityAccounting.checked);
+    if (!debugEntityAccounting.checked) {
+      debugEntityRows.replaceChildren(emptyRow(4, "Not measuring."));
+    }
+  }, { signal });
+
+  function emptyRow(columns: number, text: string): HTMLTableRowElement {
+    const tr = document.createElement("tr");
+    const td = document.createElement("td");
+    td.colSpan = columns;
+    td.className = "debug-empty";
+    td.textContent = text;
+    tr.appendChild(td);
+    return tr;
+  }
+
+  /** Rows of "label — bar — value", built with textContent throughout: these
+   *  labels are fixed strings, but the entity pane below shows blueprint-
+   *  derived names, and one escaping convention across the panel is safer
+   *  than two. */
+  function renderBars(host: HTMLElement, rows: { label: string; value: number; unit: string }[]): void {
+    const max = Math.max(...rows.map((r) => r.value), 0.0001);
+    host.replaceChildren(
+      ...rows.map((row) => {
+        const line = document.createElement("div");
+        line.className = "debug-bar-row";
+        const label = document.createElement("span");
+        label.className = "debug-bar-label";
+        label.textContent = row.label;
+        const track = document.createElement("span");
+        track.className = "debug-bar-track";
+        const fill = document.createElement("span");
+        fill.className = "debug-bar-fill";
+        fill.style.width = `${Math.min(100, (row.value / max) * 100)}%`;
+        track.appendChild(fill);
+        const value = document.createElement("span");
+        value.className = "debug-bar-value";
+        value.textContent = `${row.value.toFixed(2)}${row.unit}`;
+        line.append(label, track, value);
+        return line;
+      }),
+    );
+  }
+
+  function refreshDebug(): void {
     if (debugWindow.el.hidden) return;
     const stats = renderer.getDebugStats();
-    debugFps.textContent = stats.fps.toFixed(0);
-    debugFrameTime.textContent = `${stats.frameTimeMs.toFixed(1)} ms`;
-    debugRenderTime.textContent = `${stats.renderTimeMs.toFixed(2)} ms`;
-    debugTotalEntities.textContent = String(stats.totalEntities);
-    debugVisibleEntities.textContent = String(stats.visibleEntities);
-    debugDrawCommands.textContent = String(stats.drawCommands);
-    debugHeap.textContent = stats.jsHeapUsedMb !== undefined ? `${stats.jsHeapUsedMb.toFixed(1)} MB` : "n/a (not Chrome)";
-  }, DEBUG_POLL_MS);
+
+    if (debugTab === "overview") {
+      debugFps.textContent = stats.fps.toFixed(0);
+      debugFrameTime.textContent = `${stats.frameTimeMs.toFixed(1)} ms`;
+      debugRenderTime.textContent = `${stats.renderTimeMs.toFixed(2)} ms`;
+      debugTotalEntities.textContent = String(stats.totalEntities);
+      debugVisibleEntities.textContent = String(stats.visibleEntities);
+      debugDrawCommands.textContent = String(stats.drawCommands);
+      const total = stats.framesDrawn || 1;
+      debugCache.textContent = `${stats.sceneRebuildCount} rebuilds (${((1 - stats.sceneRebuildCount / total) * 100).toFixed(0)}% reused)`;
+      debugFrameCounts.textContent = `${stats.framesDrawn} / ${stats.framesSkipped}`;
+      debugHeap.textContent = stats.jsHeapUsedMb !== undefined ? `${stats.jsHeapUsedMb.toFixed(1)} MB` : "n/a (not Chrome)";
+    }
+
+    if (debugTab === "phases") {
+      renderBars(debugPhaseBars, [
+        { label: "grid", value: stats.phases.grid, unit: " ms" },
+        { label: "cull", value: stats.phases.cull, unit: " ms" },
+        { label: "collect", value: stats.phases.collect, unit: " ms" },
+        { label: "animate", value: stats.phases.animate, unit: " ms" },
+        { label: "paint", value: stats.phases.paint, unit: " ms" },
+        { label: "inserters", value: stats.phases.inserters, unit: " ms" },
+        { label: "overlays", value: stats.phases.overlays, unit: " ms" },
+        { label: "ghost", value: stats.phases.ghost, unit: " ms" },
+      ]);
+    }
+
+    if (debugTab === "entities" && debugEntityAccounting.checked) {
+      const costs = renderer.getEntityCostBreakdown();
+      if (costs.length === 0) {
+        debugEntityRows.replaceChildren(emptyRow(4, "Pan or zoom once to trigger a rebuild."));
+      } else {
+        debugEntityRows.replaceChildren(
+          ...costs.slice(0, 25).map((cost) => {
+            const tr = document.createElement("tr");
+            for (const text of [cost.name, String(cost.count), String(cost.drawCommands), `${cost.collectMs.toFixed(2)} ms`]) {
+              const td = document.createElement("td");
+              td.textContent = text;
+              tr.appendChild(td);
+            }
+            return tr;
+          }),
+        );
+      }
+    }
+
+    if (debugTab === "record") updateRecordPane();
+  }
+
+  const PHASE_NAMES = ["grid", "cull", "collect", "animate", "paint", "inserters", "overlays", "ghost"] as const;
+
+  function updateRecordPane(): void {
+    const recording = renderer.isRecording();
+    const log = renderer.getFrameLog();
+    debugRecordToggle.textContent = recording ? "Stop" : "Record 30 s";
+    debugRecordCopy.disabled = recording || log.length === 0;
+    debugRecordStatus.textContent = recording
+      ? `recording… ${log.length} frames`
+      : log.length > 0 ? `${log.length} frames captured` : "";
+
+    if (recording || log.length === 0) return;
+
+    // Summary first: the median says how it normally feels, the worst frames
+    // are what the user actually notices.
+    const sorted = [...log].map((f) => f.frameMs).sort((a, b) => a - b);
+    const median = sorted[Math.floor(sorted.length / 2)] ?? 0;
+    const p95 = sorted[Math.floor(sorted.length * 0.95)] ?? 0;
+    const worst = sorted[sorted.length - 1] ?? 0;
+    const over16 = log.filter((f) => f.frameMs > 16.7).length;
+    const rebuilt = log.filter((f) => f.sceneRebuilt).length;
+    debugRecordSummary.replaceChildren();
+    const summary = document.createElement("table");
+    summary.className = "debug-stats-table";
+    const body = document.createElement("tbody");
+    for (const [label, value] of [
+      ["Median frame", `${median.toFixed(1)} ms`],
+      ["p95 frame", `${p95.toFixed(1)} ms`],
+      ["Worst frame", `${worst.toFixed(1)} ms`],
+      ["Frames over 16.7 ms", `${over16} of ${log.length}`],
+      ["Scene rebuilds", `${rebuilt} of ${log.length}`],
+    ] as [string, string][]) {
+      const tr = document.createElement("tr");
+      const th = document.createElement("td"); th.textContent = label;
+      const td = document.createElement("td"); td.textContent = value;
+      tr.append(th, td);
+      body.appendChild(tr);
+    }
+    summary.appendChild(body);
+    debugRecordSummary.appendChild(summary);
+
+    // The ten slowest frames, worst first — where a stutter actually lives.
+    const slowest = [...log].sort((a, b) => b.frameMs - a.frameMs).slice(0, 10);
+    debugRecordRows.replaceChildren(
+      ...slowest.map((frame) => {
+        const worstPhase = PHASE_NAMES.reduce((a, b) => (frame.phases[b] > frame.phases[a] ? b : a), PHASE_NAMES[0]);
+        const tr = document.createElement("tr");
+        for (const text of [
+          `${(frame.t / 1000).toFixed(1)}s`,
+          `${frame.frameMs.toFixed(1)} ms`,
+          `${frame.renderMs.toFixed(2)} ms`,
+          `${worstPhase} ${frame.phases[worstPhase].toFixed(2)} ms`,
+          frame.sceneRebuilt ? "rebuild" : "",
+        ]) {
+          const td = document.createElement("td");
+          td.textContent = text;
+          tr.appendChild(td);
+        }
+        return tr;
+      }),
+    );
+  }
+
+  debugRecordToggle.addEventListener("click", () => {
+    if (renderer.isRecording()) renderer.stopFrameRecording();
+    else {
+      renderer.startFrameRecording(30);
+      debugRecordRows.replaceChildren(emptyRow(5, "Recording…"));
+      debugRecordSummary.replaceChildren();
+    }
+    updateRecordPane();
+  }, { signal });
+
+  debugRecordCopy.addEventListener("click", () => {
+    const payload = JSON.stringify({
+      capturedAt: new Date().toISOString(),
+      totalEntities: renderer.getDebugStats().totalEntities,
+      frames: renderer.getFrameLog(),
+    }, null, 2);
+    void navigator.clipboard?.writeText(payload).then(
+      () => { debugRecordStatus.textContent = "copied to clipboard"; },
+      () => { debugRecordStatus.textContent = "clipboard blocked — see console"; console.log(payload); },
+    );
+  }, { signal });
+
+  // Polls at a fixed rate independent of the draw loop's own frame rate
+  // (updating the DOM every rAF tick would itself be wasted layout/paint
+  // work, and defeats the point of a panel meant to diagnose a SLOW frame
+  // rate) — only while the panel is actually visible.
+  const DEBUG_POLL_MS = 500;
+  const debugPollHandle = setInterval(refreshDebug, DEBUG_POLL_MS);
 
   let blueprints: Blueprint[] = [];
   let entities: PlacedEntity[] = [];

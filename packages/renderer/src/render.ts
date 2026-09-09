@@ -14,6 +14,55 @@ import { compareDrawCommands, type DrawCommand } from "./draw/commands.js";
 import { drawInserter } from "./sprites/inserter.js";
 import { SpatialIndex, type IndexedBox } from "./spatialIndex.js";
 
+/** Milliseconds spent in each phase of one draw(). */
+export interface FramePhases {
+  /** Clearing the canvas and painting the tile grid. */
+  grid: number;
+  /** Spatial-index query plus turning ids back into entities. */
+  cull: number;
+  /** Classifying entities into draw commands and sorting them. 0 on a frame
+   *  that reused the cached list. */
+  collect: number;
+  /** Patching the animated commands' source rects. */
+  animate: number;
+  /** drawImage calls for the scene sprites. */
+  paint: number;
+  /** Procedurally drawn inserters. */
+  inserters: number;
+  /** Highlight tint and alt-mode badge passes. */
+  overlays: number;
+  /** The placement ghost, including its preview networks. */
+  ghost: number;
+}
+
+/** One recorded frame. */
+export interface FrameRecord {
+  /** Milliseconds since the recording started. */
+  t: number;
+  /** Wall-clock gap since the previous drawn frame — what the user feels. */
+  frameMs: number;
+  /** Time inside draw(). */
+  renderMs: number;
+  phases: FramePhases;
+  visibleEntities: number;
+  drawCommands: number;
+  sceneRebuilt: boolean;
+  /** What the camera was doing, so a spike can be attributed to panning,
+   *  zooming or neither. */
+  cameraX: number;
+  cameraY: number;
+  pixelsPerTile: number;
+}
+
+/** Aggregated cost of one entity name in the last scene rebuild. */
+export interface EntityCost {
+  name: string;
+  count: number;
+  drawCommands: number;
+  /** Total classification time for all instances of this name, in ms. */
+  collectMs: number;
+}
+
 export interface HighlightRole {
   producers: Set<number>;
   consumers: Set<number>;
@@ -108,7 +157,38 @@ export interface BlueprintRenderer {
     /** Chrome-only (performance.memory); undefined everywhere else,
      *  including Safari/Firefox, which don't expose it at all. */
     jsHeapUsedMb: number | undefined;
+    /** Where the last frame's time actually went, in milliseconds. These are
+     *  the phases of draw(); they sum to a little under renderTimeMs (the
+     *  remainder is bookkeeping between them). */
+    phases: FramePhases;
+    /** How the last frame was served. A frame that rebuilt the scene did the
+     *  full classify-and-sort; a reused one only patched animation. Watching
+     *  this while panning is how you tell whether the cache is helping. */
+    sceneRebuilt: boolean;
+    /** Rebuilds since the blueprint was loaded, and frames drawn — their ratio
+     *  is the cache's hit rate. */
+    sceneRebuildCount: number;
+    framesDrawn: number;
+    /** Frames the loop skipped entirely because nothing had changed. */
+    framesSkipped: number;
   };
+  /** Starts recording one entry per drawn frame, for at most `seconds`.
+   *  Recording is off by default and costs nothing when off: a profiling tool
+   *  that is always on distorts what it measures, and this one is meant to be
+   *  aimed at a specific stutter. Returns immediately; poll isRecording(). */
+  startFrameRecording(seconds?: number): void;
+  stopFrameRecording(): void;
+  isRecording(): boolean;
+  /** The recorded frames, oldest first. Empty until a recording has run. */
+  getFrameLog(): readonly FrameRecord[];
+  /** Per-entity-name cost from the last full scene rebuild: how many of each
+   *  were visible, how many draw commands they produced, and how long their
+   *  classification took. Answers "which machine is expensive here".
+   *  Empty until a rebuild happens while accounting is enabled. */
+  getEntityCostBreakdown(): EntityCost[];
+  /** Per-entity accounting makes a scene rebuild measurably slower, so it is
+   *  opt-in and off by default. */
+  setEntityAccounting(enabled: boolean): void;
   /** The renderer's own resolved-visual table, so the app layer can answer
    *  "how big is this entity, what does it look like" without building a
    *  second copy from the same inputs — which then had to be rebuilt in
@@ -195,6 +275,31 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
    *  clock. Zero means advancing that clock cannot change anything on screen,
    *  so the loop leaves it alone and stops redrawing entirely. */
   let animatedVisibleCount = 0;
+
+  /* ---------- profiling (see startFrameRecording / getDebugStats) ---------- */
+
+  const emptyPhases = (): FramePhases => ({
+    grid: 0, cull: 0, collect: 0, animate: 0, paint: 0, inserters: 0, overlays: 0, ghost: 0,
+  });
+  let phases: FramePhases = emptyPhases();
+  let sceneRebuiltThisFrame = false;
+  let sceneRebuildCount = 0;
+  let framesDrawn = 0;
+  let framesSkipped = 0;
+
+  /** Fixed-capacity ring so a forgotten recording cannot grow without bound:
+   *  30 s at 60 fps is 1800 frames, and the cap is generous over that. */
+  const FRAME_LOG_CAPACITY = 4000;
+  let frameLog: FrameRecord[] = [];
+  let recording = false;
+  let recordingStartedAt = 0;
+  let recordingStopsAt = 0;
+
+  /** Per-entity-name accounting, opt-in: timing every entity separately makes
+   *  a rebuild noticeably slower, which would distort the very thing the
+   *  panel is measuring. */
+  let entityAccounting = false;
+  let entityCosts: EntityCost[] = [];
 
   /** The three neighbour networks the placement ghost previews against.
    *  Rebuilding them means walking every entity in the blueprint, and they
@@ -343,6 +448,9 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
 
   function draw(): void {
     if (destroyed) return;
+    phases = emptyPhases();
+    sceneRebuiltThisFrame = false;
+    const tGrid = performance.now();
     const w = canvas.width / dpr;
     const h = canvas.height / dpr;
 
@@ -358,6 +466,9 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
     ctx.translate(-camera.state.x, -camera.state.y);
 
     drawGrid(ctx, camera, w, h);
+    phases.grid = performance.now() - tGrid;
+
+    const tCull = performance.now();
 
     // Only entities overlapping the viewport are drawn; the padding covers
     // sprites that overhang their own footprint.
@@ -376,6 +487,7 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
       if (e) visibleEntities.push(e);
     }
     lastVisibleEntityCount = visibleEntities.length;
+    phases.cull = performance.now() - tCull;
 
     const hasHighlight = highlight !== null;
 
@@ -388,6 +500,7 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
     // placed, however the ghost hovering nearby would connect to it, right
     // up until it's actually placed — only the ghost previews the
     // hypothetical connected result.
+    const tGhost = performance.now();
     let ghost: PlacedEntity | undefined;
     let ghostCanPlace = true;
     let previewGrid = grid;
@@ -516,6 +629,9 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
     // the mistake it could cause is reusing a command list for a set of the
     // same size with the same outermost entities, and the sceneEpoch below
     // bounds how long any such reuse could last.
+    phases.ghost = performance.now() - tGhost;
+
+    const tCollect = performance.now();
     const firstVisible = visibleIds.size > 0 ? visibleEntities[0]?.entityNumber ?? 0 : 0;
     const lastVisible = visibleIds.size > 0 ? visibleEntities[visibleEntities.length - 1]?.entityNumber ?? 0 : 0;
     const sceneKey = `${entitiesVersion}|${highlightVersion}|${visibleIds.size}|${firstVisible}|${lastVisible}`;
@@ -523,7 +639,12 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
       sceneCache = buildSceneCache(sceneKey, visibleEntities, {
         grid, fluidNetwork, heatNetwork, ...connectors, platformBoxes, animationFrame: 0,
       });
+      sceneRebuiltThisFrame = true;
+      sceneRebuildCount++;
     }
+    phases.collect = performance.now() - tCollect;
+
+    const tAnimate = performance.now();
     const commands = sceneCache.commands;
     for (let i = 0; i < sceneCache.animated.length; i++) {
       const command = commands[sceneCache.animated[i]!]!;
@@ -538,14 +659,20 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
     const tintedRes = dpr * camera.state.pixelsPerTile;
     // Scene commands are never tinted — only the ghost is, and it paints via
     // its own paint() call below — so skip paint()'s tinted/untinted split.
+    phases.animate = performance.now() - tAnimate;
+    const tPaint = performance.now();
     paintPlain(ctx, atlas, commands);
+    phases.paint = performance.now() - tPaint;
 
+    const tInserters = performance.now();
     for (const entity of procedural) {
       const visual = visualFor(entity.name)!;
       ctx.globalAlpha = alphaFor(entity);
       drawInserter(ctx, atlas, entity, visual.inserterGraphics);
     }
     ctx.globalAlpha = 1;
+    phases.inserters = performance.now() - tInserters;
+    const tOverlays = performance.now();
 
     if (hasHighlight) {
       for (const entity of visibleEntities) {
@@ -574,6 +701,9 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
       }
     }
 
+    phases.overlays = performance.now() - tOverlays;
+
+    const tGhostDraw = performance.now();
     if (ghost) {
       const visual = visualFor(ghost.name);
       const ghostTint = ghostCanPlace ? GHOST_VALID_TINT : GHOST_INVALID_TINT;
@@ -595,6 +725,8 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
         drawQualityBadge(ctx, iconAtlas, ghost, visual);
       }
     }
+
+    phases.ghost += performance.now() - tGhostDraw;
 
     ctx.restore();
   }
@@ -737,11 +869,21 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
     // profile is still in hand; the sort afterwards moves them, so the
     // recorded indices are remapped below.
     const preSort: { command: DrawCommand; stride: number; period: number }[] = [];
+    // Only allocated when the panel asked for it — see setEntityAccounting.
+    const costByName = entityAccounting ? new Map<string, EntityCost>() : null;
     for (const entity of visibleEntities) {
       const visual = visualFor(entity.name);
       if (!visual?.graphics || visual.inserterGraphics) continue;
       const before = commands.length;
+      const tEntity = costByName ? performance.now() : 0;
       collectEntity(commands, entity, visual, baseCtx, alphaFor(entity));
+      if (costByName) {
+        let cost = costByName.get(entity.name);
+        if (!cost) costByName.set(entity.name, (cost = { name: entity.name, count: 0, drawCommands: 0, collectMs: 0 }));
+        cost.count++;
+        cost.drawCommands += commands.length - before;
+        cost.collectMs += performance.now() - tEntity;
+      }
       const profile = animProfileFor(entity, visual, baseCtx);
       for (let k = 0; k < profile.animated.length; k++) {
         const local = profile.animated[k]!;
@@ -765,7 +907,45 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
       animPeriod.push(entry.period);
     }
 
+    if (costByName) {
+      entityCosts = [...costByName.values()].sort((a, b) => b.collectMs - a.collectMs);
+    }
+
     return { key, commands, animated, animBase, animStride, animPeriod };
+  }
+
+  /** The one place a frame is drawn and accounted for. Both the rAF loop and
+   *  stepAnimationFrame go through it, so a recording captures manually
+   *  stepped frames too rather than silently missing them. */
+  function drawAndAccount(): void {
+    const drawStart = performance.now();
+    draw();
+    const renderMs = performance.now() - drawStart;
+    renderTimes.push(renderMs);
+    if (renderTimes.length > FRAME_HISTORY) renderTimes.shift();
+    framesDrawn++;
+    if (recording) recordFrame(performance.now(), renderMs);
+  }
+
+  /** Appends one entry to the frame log, and stops the recording once its
+   *  time is up. Called only while recording, so an idle renderer pays
+   *  nothing for the feature. */
+  function recordFrame(now: number, renderMs: number): void {
+    if (frameLog.length < FRAME_LOG_CAPACITY) {
+      frameLog.push({
+        t: now - recordingStartedAt,
+        frameMs: frameTimes.length > 0 ? frameTimes[frameTimes.length - 1]! : 0,
+        renderMs,
+        phases: { ...phases },
+        visibleEntities: lastVisibleEntityCount,
+        drawCommands: lastDrawCommandCount,
+        sceneRebuilt: sceneRebuiltThisFrame,
+        cameraX: camera.state.x,
+        cameraY: camera.state.y,
+        pixelsPerTile: camera.state.pixelsPerTile,
+      });
+    }
+    if (now >= recordingStopsAt || frameLog.length >= FRAME_LOG_CAPACITY) recording = false;
   }
 
   function tick(): void {
@@ -785,11 +965,10 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
     }
     applyKeyboardPan(16); // pans through the camera, which invalidates itself
     if (needsRedraw) {
-      const drawStart = performance.now();
-      draw();
-      renderTimes.push(performance.now() - drawStart);
-      if (renderTimes.length > FRAME_HISTORY) renderTimes.shift();
+      drawAndAccount();
       needsRedraw = false;
+    } else {
+      framesSkipped++;
     }
     rafHandle = requestAnimationFrame(tick);
   }
@@ -1159,7 +1338,7 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
     },
     stepAnimationFrame(delta = 1) {
       animationFrame = (animationFrame + delta + 1_000_000) % 1_000_000;
-      draw();
+      drawAndAccount();
       needsRedraw = false;
     },
     getAnimationFrame() {
@@ -1243,6 +1422,34 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
     getVisualLookup() {
       return visualLookup;
     },
+    startFrameRecording(seconds = 30) {
+      frameLog = [];
+      recordingStartedAt = performance.now();
+      recordingStopsAt = recordingStartedAt + seconds * 1000;
+      recording = true;
+      // A recording is only interesting if frames are actually being drawn.
+      invalidate();
+    },
+    stopFrameRecording() {
+      recording = false;
+    },
+    isRecording() {
+      return recording;
+    },
+    getFrameLog() {
+      return frameLog;
+    },
+    getEntityCostBreakdown() {
+      return entityCosts;
+    },
+    setEntityAccounting(enabled: boolean) {
+      entityAccounting = enabled;
+      entityCosts = [];
+      // The breakdown is filled during a rebuild, so force one rather than
+      // leaving the panel empty until the user happens to pan.
+      sceneCache = null;
+      invalidate();
+    },
     getDebugStats() {
       const avg = (values: number[]) => (values.length === 0 ? 0 : values.reduce((a, b) => a + b, 0) / values.length);
       const avgFrameMs = avg(frameTimes);
@@ -1257,6 +1464,11 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
         visibleEntities: lastVisibleEntityCount,
         drawCommands: lastDrawCommandCount,
         jsHeapUsedMb: memory ? memory.usedJSHeapSize / (1024 * 1024) : undefined,
+        phases: { ...phases },
+        sceneRebuilt: sceneRebuiltThisFrame,
+        sceneRebuildCount,
+        framesDrawn,
+        framesSkipped,
       };
     },
     destroy() {

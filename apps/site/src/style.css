@@ -665,6 +665,145 @@ button.ghost:hover, select:hover { border-color: var(--frame-light); }
   text-align: right;
 }
 
+.debug-stats-table th {
+  padding: 3px 8px 3px 0;
+  text-align: left;
+  font-weight: 500;
+  color: var(--text-dim, #a89f8f);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+/* ---------- debug panel: tabs, phase bars, tables ----------
+   The panel is a diagnostic tool, so it stays deliberately plain: no
+   animation or transition anywhere in here, because a panel that animates
+   while you are measuring frame times is measuring itself. */
+.debug-body {
+  min-width: 340px;
+  max-width: 460px;
+}
+
+/* The record pane's table can get long; cap the pane rather than let the
+   whole window grow past the viewport, which pushed its titlebar off-screen
+   and made it undraggable. */
+.debug-pane.is-active {
+  max-height: min(60vh, 460px);
+  overflow-y: auto;
+}
+
+.debug-tabs {
+  display: flex;
+  gap: 2px;
+  margin-bottom: 10px;
+}
+
+.debug-tab {
+  flex: 1;
+  padding: 4px 6px;
+  font-size: 12px;
+  color: var(--text-dim, #a89f8f);
+  background: rgba(0, 0, 0, 0.25);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  cursor: pointer;
+}
+
+.debug-tab.is-active {
+  color: var(--text, #e6ddce);
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.debug-pane { display: none; }
+.debug-pane.is-active { display: block; }
+
+.debug-hint {
+  margin: 0 0 8px;
+  font-size: 11px;
+  line-height: 1.45;
+  color: var(--text-dim, #a89f8f);
+}
+
+.debug-check {
+  display: block;
+  margin-bottom: 8px;
+  font-size: 12px;
+}
+
+.debug-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.debug-actions button {
+  padding: 4px 10px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.debug-actions button:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.debug-bars {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.debug-bar-row {
+  display: grid;
+  grid-template-columns: 68px 1fr 64px;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+}
+
+.debug-bar-label { color: var(--text-dim, #a89f8f); }
+
+.debug-bar-track {
+  height: 9px;
+  background: rgba(0, 0, 0, 0.35);
+}
+
+.debug-bar-fill {
+  display: block;
+  height: 100%;
+  background: var(--accent, #e9b96e);
+}
+
+.debug-bar-value {
+  font-family: var(--mono, monospace);
+  text-align: right;
+}
+
+.debug-entity-table,
+.debug-record-table {
+  width: 100%;
+  margin-top: 8px;
+}
+
+.debug-entity-table td,
+.debug-record-table td {
+  font-family: var(--mono, monospace);
+  font-size: 11px;
+  text-align: right;
+}
+
+.debug-entity-table td:first-child,
+.debug-record-table td:last-child {
+  font-family: inherit;
+  text-align: left;
+  color: var(--text, #e6ddce);
+}
+
+.debug-empty {
+  color: var(--text-dim, #a89f8f);
+  font-family: inherit !important;
+  text-align: left !important;
+  padding-top: 8px;
+}
+
 /* ---------- the game-panel chrome, shared by every floating window ---------- */
 /* Matches the real game's own GUI frame (confirmed against the user's own
    reference screenshots of "Set ghost cursor" / "Select a recipe" /

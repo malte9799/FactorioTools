@@ -4,6 +4,11 @@
  *  spritesheet per entity, not a single packed atlas (unlike the icon
  *  sheet), since these are already large multi-frame sheets on their own. */
 
+/** What the draw loop receives for a sheet. An ImageBitmap in every browser
+ *  that has createImageBitmap; an <img> only on the fallback path. Both are
+ *  valid drawImage sources, so callers never need to tell them apart. */
+export type SpriteSurface = ImageBitmap | HTMLImageElement;
+
 const ENTITY_SPRITE_BASE = "/data/sprites/entities/";
 
 /** Mirrors dump-to-gamedata.ts's mod-path convention: a GameData/RenderCatalog
@@ -20,8 +25,16 @@ export class SpriteAtlas {
   // every frame, so resolving sheetUrl()'s string split/concat on every
   // call (only ever needed once per sheet, at first load) would be wasted
   // work in the hot path.
-  private images = new Map<string, HTMLImageElement>();
-  private loading = new Map<string, Promise<HTMLImageElement>>();
+  // ImageBitmap, not HTMLImageElement: an <img> keeps its pixels in the
+  // browser's own compressed form and decodes lazily, and img.decode() only
+  // promises it CAN be decoded — the real work still lands on the first
+  // drawImage that samples it, on the main thread, mid-frame. A recorded
+  // session on a real machine showed exactly that: 42% of 30 seconds spent
+  // inside drawImage, with single frames of 1.4-2.0 s, including 108 ms to
+  // paint THREE commands. createImageBitmap decodes once, off-thread, and
+  // hands back an already-decoded surface that drawImage samples directly.
+  private images = new Map<string, SpriteSurface>();
+  private loading = new Map<string, Promise<SpriteSurface>>();
   // How many of `loading`'s promises haven't settled yet — used instead of
   // `loading.size` directly so a caller (render.ts's small loading-spinner
   // badge) can tell "actively fetching/decoding right now" apart from
@@ -78,15 +91,12 @@ export class SpriteAtlas {
    *  entity draws as its outline fallback, mirroring the calc engine's
    *  graceful-degradation philosophy for unrecognised entities.
    *
-   *  Waits on img.decode() before making the image available, rather than
-   *  onload alone: onload fires once bytes are downloaded, but the actual
-   *  pixel decode of a multi-MB sheet (some of these are 10MB+) otherwise
-   *  happens lazily on the first drawImage() call — right on the main
-   *  thread, right when a pan brings a bunch of never-before-seen entities
-   *  into view at once. decode() forces that work off onto the browser's
-   *  own decode path ahead of time so the draw loop's drawImage calls hit
-   *  an already-decoded bitmap instead of jank-inducing synchronous work. */
-  get(modPath: string): HTMLImageElement | undefined {
+   *  Decodes to an ImageBitmap before making the sheet available. An <img>
+   *  with img.decode() was not enough: decode() only promises the image CAN
+   *  be decoded, and browsers still re-decode at draw resolution on the first
+   *  drawImage that samples it — synchronously, mid-frame. An ImageBitmap is
+   *  already-decoded pixels, so drawImage just samples them. */
+  get(modPath: string): SpriteSurface | undefined {
     const existing = this.images.get(modPath);
     if (existing) return existing;
     if (!this.loading.has(modPath)) {
@@ -98,8 +108,27 @@ export class SpriteAtlas {
         this.onPendingChange?.(this.pendingCount);
         this.decodeSettled();
       };
-      const promise = new Promise<HTMLImageElement>((resolve, reject) => {
+      const promise = new Promise<SpriteSurface>((resolve, reject) => {
         this.runOrQueueDecode(() => {
+          // fetch + createImageBitmap rather than <img>: this decodes once,
+          // on a worker thread, and yields a surface drawImage can sample
+          // without decoding again. The <img> fallback below covers browsers
+          // without createImageBitmap, where the old lazy-decode behaviour
+          // is still better than no sprite at all.
+          if (typeof createImageBitmap === "function") {
+            fetch(url)
+              .then((res) => {
+                if (!res.ok) throw new Error(`sprite failed to load: ${url} (${res.status})`);
+                return res.blob();
+              })
+              .then((blob) => createImageBitmap(blob))
+              .then((bitmap) => {
+                this.images.set(modPath, bitmap);
+                resolve(bitmap);
+              })
+              .catch(reject);
+            return;
+          }
           const img = new Image();
           img.decoding = "async";
           img.onload = () => {
