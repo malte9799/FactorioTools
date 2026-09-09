@@ -1,0 +1,30 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+
+      - run: npm ci
+
+      # Type-checks every workspace (~3s). The site build runs tsc again, but
+      # this reports engine/renderer/data-pipeline errors too, which the site
+      # build alone would not surface.
+      - run: npm run check
+
+      - run: npm test
+
+      # The dataset the site fetches at runtime is generated from a local
+      # Factorio install and is gitignored, so the build runs without it —
+      # that is fine, it is a static build and never reads those files.
+      - run: npm run build
