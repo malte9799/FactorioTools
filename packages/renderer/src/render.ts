@@ -186,6 +186,19 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
    *  so the loop leaves it alone and stops redrawing entirely. */
   let animatedVisibleCount = 0;
 
+  /** The three neighbour networks the placement ghost previews against.
+   *  Rebuilding them means walking every entity in the blueprint, and they
+   *  were rebuilt on every single frame while something was in hand — even
+   *  with the pointer completely still. They only actually change when the
+   *  ghost lands on a different cell, turns, becomes a different entity, or
+   *  the blueprint itself is edited, so they are cached against exactly that.
+   *  entitiesVersion is bumped by rebuildIndices. */
+  let ghostPreviewKey: string | null = null;
+  let ghostPreviewGrid: NeighbourGrid | null = null;
+  let ghostPreviewFluid: FluidNetwork | null = null;
+  let ghostPreviewHeat: HeatNetwork | null = null;
+  let entitiesVersion = 0;
+
   function invalidate(): void {
     needsRedraw = true;
   }
@@ -359,20 +372,27 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
           // type, not by constructing a fresh one as "output".
           undergroundType: isUndergroundLike(mode.entityName) ? "input" : undefined,
         };
-        if (connectors.isBeltLike(mode.entityName)) previewGrid = buildGrid([...entities, ghost]);
+        const previewKey = `${entitiesVersion}|${mode.entityName}|${snapped.x},${snapped.y}|${ghostDirection}`;
+        if (previewKey !== ghostPreviewKey) {
+          ghostPreviewKey = previewKey;
+          const withGhost = [...entities, ghost];
+          ghostPreviewGrid = connectors.isBeltLike(mode.entityName) ? buildGrid(withGhost) : null;
+          ghostPreviewFluid = buildFluidNetwork(withGhost, (e) => {
+            const points = visualFor(e.name)?.pipeConnections;
+            return points && activeFluidConnections(points, e.recipe, data);
+          });
+          ghostPreviewHeat = buildHeatNetwork(withGhost, (name) => visualFor(name)?.heatConnections);
+        }
+        if (ghostPreviewGrid) previewGrid = ghostPreviewGrid;
         // A ghost with its own fluid box needs its pipe-cover patches (and
         // a neighbouring ghost/placed pipe needs the ghost's own connection
         // points) reflected live too, the same way previewGrid does for
         // belts above — otherwise a ghost building always shows every cover
-        // regardless of what it's actually being placed next to.
-        previewFluidNetwork = buildFluidNetwork([...entities, ghost], (e) => {
-          const points = visualFor(e.name)?.pipeConnections;
-          return points && activeFluidConnections(points, e.recipe, data);
-        });
-        // A reactor ghost needs its own heat-connection-patch art (connected
-        // vs disconnected) to react live to a neighbouring heat pipe too,
-        // same story as the fluid network above.
-        previewHeatNetwork = buildHeatNetwork([...entities, ghost], (name) => visualFor(name)?.heatConnections);
+        // regardless of what it's actually being placed next to. A reactor
+        // ghost likewise needs its heat-connection patches to react to a
+        // neighbouring heat pipe. Both come from the cache built above.
+        previewFluidNetwork = ghostPreviewFluid ?? previewFluidNetwork;
+        previewHeatNetwork = ghostPreviewHeat ?? previewHeatNetwork;
 
         // Valid iff nothing else's footprint overlaps the ghost's own —
         // queryRect already returns entityNumbers whose box overlaps a
@@ -871,6 +891,9 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
       if (connectors.isPlatformLike(e.name)) platformBoxes.push(box);
     }
     spatialIndex = new SpatialIndex(boxes);
+    // Any edit changes what the ghost previews against, so drop its cache.
+    entitiesVersion++;
+    ghostPreviewKey = null;
     invalidate();
 
     // Preload every sheet the visible entities reference, so nothing flashes
