@@ -1179,6 +1179,7 @@ export function mountBlueprintViewer(root: HTMLElement): () => void {
   function setMode(newMode: "idle" | { place: string; quality?: QualityName; direction?: number } | { wire: WireColor }) {
     // Leaving wire mode always drops a half-finished pick — otherwise the
     // first end would still be armed the next time wire mode came back on.
+    const hadWire = wireColorInHand !== null;
     if (typeof newMode === "string" || !("wire" in newMode)) {
       pendingWireFrom = null;
       wireColorInHand = null;
@@ -1212,6 +1213,9 @@ export function mountBlueprintViewer(root: HTMLElement): () => void {
       paletteQuality = newMode.quality ?? "normal";
       renderer.setInteractionMode({ kind: "place", entityName: newMode.place, direction: newMode.direction, quality: paletteQuality });
     }
+    // Putting a wire away has to clear its cursor icon here: nothing else
+    // will, since the pointermove refresh is gated on something being held.
+    if (hadWire && wireColorInHand === null) updateCursorIcon(lastPointerPos.x, lastPointerPos.y);
     // The yellow inward-fading border is the at-a-glance "you have
     // something in hand" cue, matching the real game's own cursor-ghost
     // feedback — on only while actually placing, off once idle.
@@ -1517,11 +1521,23 @@ export function mountBlueprintViewer(root: HTMLElement): () => void {
     );
   }
 
-  // The cursor-stack icon, matching the real game's own. Two things can put
+  /** Which item icon stands for a wire on the cursor. These are real items
+   *  in the dataset and real cells in the icon atlas, so the cursor shows
+   *  the same art the game puts in your hand. */
+  const WIRE_CURSOR_ICON: Record<WireColor, string> = {
+    copper: "copper-cable",
+    red: "red-wire",
+    green: "green-wire",
+  };
+
+  // The cursor-stack icon, matching the real game's own. Three things can put
   // something in it, with different reach:
   //   - a held MODULE follows the cursor everywhere, since a module has no
   //     canvas ghost of its own and its targets (module slots, machines)
   //     live in both the entity GUI and the canvas;
+  //   - a held WIRE likewise follows the cursor everywhere: it has no canvas
+  //     ghost either, and its targets are entities out on the canvas, so
+  //     without this there is no visible sign of what is in hand at all;
   //   - a picked ENTITY only shows here while over the Build window, since
   //     everywhere else the canvas already draws a real placement ghost and
   //     a second floating icon would just double up on it.
@@ -1534,7 +1550,8 @@ export function mountBlueprintViewer(root: HTMLElement): () => void {
   let lastPointerPos = { x: 0, y: 0 };
 
   function updateCursorIcon(clientX: number, clientY: number): void {
-    const held = heldModule?.name ?? (pointerOverPalette ? paletteSelection : null);
+    const heldWire = wireColorInHand ? WIRE_CURSOR_ICON[wireColorInHand] : null;
+    const held = heldModule?.name ?? heldWire ?? (pointerOverPalette ? paletteSelection : null);
     if (!held) {
       cursorIcon.hidden = true;
       cursorIconFor = null;
@@ -1556,7 +1573,9 @@ export function mountBlueprintViewer(root: HTMLElement): () => void {
   // entity GUI too, not just inside the Build window.
   document.addEventListener("pointermove", (e) => {
     lastPointerPos = { x: e.clientX, y: e.clientY };
-    if (heldModule) updateCursorIcon(e.clientX, e.clientY);
+    // A wire follows the cursor for the same reason a module does — neither
+    // has a canvas ghost of its own to show where it is.
+    if (heldModule || wireColorInHand) updateCursorIcon(e.clientX, e.clientY);
   }, { signal });
 
   paletteWindow.el.addEventListener("pointermove", (e) => {
@@ -1957,6 +1976,10 @@ export function mountBlueprintViewer(root: HTMLElement): () => void {
     }
     setMode({ wire: color });
     deselect();
+    // Taken by keyboard, so no pointer move will follow to draw the cursor
+    // icon — paint it at the pointer's last known position right away, the
+    // same way the 'q' pipette does for an entity ghost.
+    updateCursorIcon(lastPointerPos.x, lastPointerPos.y);
     setStatus(`Holding a ${color} wire — click two entities to connect or disconnect them.`);
   }, { signal });
 

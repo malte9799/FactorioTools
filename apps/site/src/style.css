@@ -943,6 +943,17 @@ button.ghost:hover, select:hover { border-color: var(--frame-light); }
   pointer-events: none;
 }
 
+/* Whatever is in hand — module, entity or wire — rides the cursor as the
+   bare item art, with none of the panel chrome .icon carries. A framed,
+   bevelled tile makes sense in a list or a slot; hanging off the pointer it
+   reads as a floating UI element rather than as the thing you are holding. */
+.palette-cursor-icon .icon {
+  background-color: transparent;
+  border: none;
+  border-radius: 0;
+  box-shadow: none;
+}
+
 .machine-tooltip {
   position: fixed;
   /* Positioned via transform (see positionTooltip) rather than left/top, so a
