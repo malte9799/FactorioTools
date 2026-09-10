@@ -432,11 +432,17 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
     commands: DrawCommand[];
     /** Indices into `commands` of the entries whose sx moves. */
     animated: number[];
-    /** sx at animationFrame 0, the per-frame sx increment, and how many
-     *  frames before the cycle repeats — parallel to `animated`. */
-    animBase: number[];
+    /** The sx of column 0, the width of one column, how many frames before
+     *  the cycle repeats, the starting column at animationFrame 0, and how
+     *  many columns the row holds — parallel to `animated`. sx wraps within
+     *  the row rather than ramping linearly, so a sprite whose phase starts
+     *  partway through its sheet (a turbo belt's odd-parity tile) still
+     *  animates instead of being rejected as non-linear. */
+    animOrigin: number[];
     animStride: number[];
     animPeriod: number[];
+    animPhase0: number[];
+    animColumns: number[];
   }
   let sceneCache: SceneCache | null = null;
 
@@ -769,8 +775,10 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
     const commands = sceneCache.commands;
     for (let i = 0; i < sceneCache.animated.length; i++) {
       const command = commands[sceneCache.animated[i]!]!;
-      const period = sceneCache.animPeriod[i]!;
-      command.sx = sceneCache.animBase[i]! + (animationFrame % period) * sceneCache.animStride[i]!;
+      const columns = sceneCache.animColumns[i]!;
+      const advanced = Math.floor((animationFrame % sceneCache.animPeriod[i]!) * (columns / sceneCache.animPeriod[i]!));
+      const column = (sceneCache.animPhase0[i]! + advanced) % columns;
+      command.sx = sceneCache.animOrigin[i]! + column * sceneCache.animStride[i]!;
     }
     lastDrawCommandCount = commands.length;
     // Device pixels per world tile — matches the resolution every placed
@@ -896,19 +904,47 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
     animated: number[];
     stride: number[];
     period: number[];
+    /** The column index (not pixels) this command sits on at animation frame
+     *  0, and how many columns its sheet row holds. sx is reconstructed as
+     *  origin + ((phase0 + frame/slowdown) % columns) * stride, mirroring the
+     *  `rawColumn % sprite.columns` wrap push() itself applies — a plain
+     *  base + frame * stride ramp cannot express a phase-shifted sprite,
+     *  because such a sprite wraps partway through its cycle rather than at
+     *  the end of it. */
+    phase0: number[];
+    columns: number[];
+    origin: number[];
+    /** How many commands the probed (isolated) entity emitted. The caller
+     *  compares this against what the same entity emitted in the real scene:
+     *  the indices above only mean anything when the two agree. */
+    commandCount: number;
   }
   const animProfiles = new Map<string, AnimProfile>();
 
-  const NO_ANIMATION: AnimProfile = { animated: [], stride: [], period: [] };
+  const NO_ANIMATION: AnimProfile = { animated: [], stride: [], period: [], phase0: [], columns: [], origin: [], commandCount: -1 };
 
-  /** Collects a single entity in isolation at one animation frame. Isolation is
-   *  deliberate: neighbours affect which sprite is picked, but not how that
-   *  sprite's own frames advance, and it keeps the probe independent of where
-   *  the entity happens to sit. */
-  function collectSolo(entity: PlacedEntity, visual: ResolvedVisual, baseCtx: CollectContext, frame: number): DrawCommand[] {
+  /** Collects a single entity at one animation frame, against whatever
+   *  neighbour context it is handed.
+   *
+   *  Neighbours do not change how a sprite's own frames advance, but they do
+   *  change HOW MANY commands the entity emits — a belt or splitter alone
+   *  draws end caps that the same entity mid-run does not. The profile's
+   *  indices are therefore only valid for a command list of the same length,
+   *  which buildSceneCache checks before using them. */
+  function collectAt(entity: PlacedEntity, visual: ResolvedVisual, baseCtx: CollectContext, frame: number): DrawCommand[] {
     const out: DrawCommand[] = [];
     collectEntity(out, entity, visual, { ...baseCtx, animationFrame: frame }, 1);
     return out;
+  }
+
+  /** Re-probes one entity against its real neighbours, for the minority whose
+   *  isolated shape did not match. Deliberately not memoised on the shared
+   *  key: the whole reason it is being called is that this entity's shape
+   *  differs from its type's, so caching it under the type would poison the
+   *  fast path for every other instance. */
+  function probeShape(entity: PlacedEntity, visual: ResolvedVisual, baseCtx: CollectContext, expected: number): AnimProfile {
+    const profile = probe(entity, visual, baseCtx);
+    return profile.commandCount === expected ? profile : NO_ANIMATION;
   }
 
   function animProfileFor(entity: PlacedEntity, visual: ResolvedVisual, baseCtx: CollectContext): AnimProfile {
@@ -923,7 +959,15 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
       return NO_ANIMATION;
     }
 
-    const base = collectSolo(entity, visual, baseCtx, 0);
+    const profile = probe(entity, visual, baseCtx);
+    animProfiles.set(key, profile);
+    return profile;
+  }
+
+  /** Works out, by sampling, which of one entity's commands animate and how.
+   *  Shared by the memoised per-type path and the per-entity fallback. */
+  function probe(entity: PlacedEntity, visual: ResolvedVisual, baseCtx: CollectContext): AnimProfile {
+    const base = collectAt(entity, visual, baseCtx, 0);
     const animated: number[] = [];
     const stride: number[] = [];
     const period: number[] = [];
@@ -931,46 +975,80 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
     const samples: DrawCommand[][] = [];
     let structural = false;
     for (let frame = 1; frame <= MAX_ANIM_PERIOD; frame++) {
-      const at = collectSolo(entity, visual, baseCtx, frame);
+      const at = collectAt(entity, visual, baseCtx, frame);
       if (at.length !== base.length) { structural = true; break; }
       samples.push(at);
     }
 
+    const phase0: number[] = [];
+    const columnCount: number[] = [];
+    const origin: number[] = [];
+
     if (!structural) {
       for (let i = 0; i < base.length; i++) {
-        const step = samples[0]![i]!.sx - base[i]!.sx;
-        if (step === 0) continue;
+        // The frame width is the smallest positive sx step the command takes
+        // across the cycle. Reading it from the samples rather than from the
+        // sprite keeps this independent of how the layer was described.
+        let width = 0;
+        for (let frame = 0; frame < samples.length; frame++) {
+          const delta = samples[frame]![i]!.sx - (frame === 0 ? base[i]!.sx : samples[frame - 1]![i]!.sx);
+          if (delta > 0 && (width === 0 || delta < width)) width = delta;
+        }
+        if (width === 0) continue;
 
+        // How many frames before the command returns to its frame-0 cell.
         let cycle = 0;
-        for (let frame = 1; frame <= MAX_ANIM_PERIOD; frame++) {
+        for (let frame = 1; frame <= samples.length; frame++) {
           if (samples[frame - 1]![i]!.sx === base[i]!.sx) { cycle = frame; break; }
         }
         if (cycle <= 0) continue;
 
-        // Accept only an exact base + (frame % cycle) * step progression with
-        // nothing else moving; anything else stays on its frame-0 art rather
-        // than risking wrong sprites.
-        let linear = true;
-        for (let frame = 1; frame <= MAX_ANIM_PERIOD && linear; frame++) {
+        // The lowest sx the command ever reaches is its row's column 0; the
+        // frame-0 offset above it is the sprite's starting phase. For a turbo
+        // belt's odd-parity tile that phase is half the sheet, which is
+        // exactly the case the old linear-only model had to reject.
+        let low = base[i]!.sx;
+        for (let frame = 0; frame < cycle; frame++) low = Math.min(low, samples[frame]![i]!.sx);
+        const startPhase = (base[i]!.sx - low) / width;
+        if (!Number.isInteger(startPhase)) continue;
+
+        // Frames advance one column per `slowdown` ticks, so the sheet may
+        // hold more columns than the cycle has distinct steps only when
+        // slowdown is 1; otherwise columns === cycle / slowdown. Derive the
+        // column count from the widest sx actually reached.
+        let high = base[i]!.sx;
+        for (let frame = 0; frame < cycle; frame++) high = Math.max(high, samples[frame]![i]!.sx);
+        const columns = (high - low) / width + 1;
+
+        // Accept only an exact wrapping ramp with nothing else moving;
+        // anything else stays on its frame-0 art rather than risking wrong
+        // sprites. `step` is how many columns one tick advances, which is
+        // 1/slowdown of a column — expressed as cycle/columns so it stays
+        // integral.
+        const perTick = columns / cycle;
+        let matches = true;
+        for (let frame = 1; frame <= samples.length && matches; frame++) {
           const sample = samples[frame - 1]![i]!;
-          linear =
-            sample.sx === base[i]!.sx + (frame % cycle) * step &&
+          const column = (startPhase + Math.floor(frame * perTick)) % columns;
+          matches =
+            sample.sx === low + column * width &&
             sample.sheet === base[i]!.sheet &&
             sample.sy === base[i]!.sy &&
             sample.layer === base[i]!.layer &&
             sample.order === base[i]!.order;
         }
-        if (!linear) continue;
+        if (!matches) continue;
 
         animated.push(i);
-        stride.push(step);
+        stride.push(width);
         period.push(cycle);
+        phase0.push(startPhase);
+        columnCount.push(columns);
+        origin.push(low);
       }
     }
 
-    const profile: AnimProfile = { animated, stride, period };
-    animProfiles.set(key, profile);
-    return profile;
+    return { animated, stride, period, phase0, columns: columnCount, origin, commandCount: base.length };
   }
 
   /** Collects and sorts the visible scene once, recording which of the
@@ -982,14 +1060,16 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
   function buildSceneCache(key: string, visibleEntities: PlacedEntity[], baseCtx: CollectContext): SceneCache {
     const commands: DrawCommand[] = [];
     const animated: number[] = [];
-    const animBase: number[] = [];
+    const animOrigin: number[] = [];
     const animStride: number[] = [];
     const animPeriod: number[] = [];
+    const animPhase0: number[] = [];
+    const animColumns: number[] = [];
 
     // Collect entity by entity so each command's index is known while its
     // profile is still in hand; the sort afterwards moves them, so the
     // recorded indices are remapped below.
-    const preSort: { command: DrawCommand; stride: number; period: number }[] = [];
+    const preSort: { command: DrawCommand; stride: number; period: number; columns: number; phase0: number; origin: number }[] = [];
     // Only allocated when the panel asked for it — see setEntityAccounting.
     const costByName = entityAccounting ? new Map<string, EntityCost>() : null;
     for (const entity of visibleEntities) {
@@ -1006,10 +1086,35 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
         cost.collectMs += performance.now() - tEntity;
       }
       const profile = animProfileFor(entity, visual, baseCtx);
-      for (let k = 0; k < profile.animated.length; k++) {
-        const local = profile.animated[k]!;
+      // The profile is probed on an ISOLATED copy of the entity, so its
+      // command indices only line up with the real scene's when this entity
+      // emitted the same number of commands there. Neighbours decide that
+      // count: a belt or splitter surrounded by its own kind drops the end
+      // caps a lone one draws, so index `local` can land on a different
+      // sprite entirely — for a splitter, on one of the two lanes' caps,
+      // whose sx was then patched to a column its row does not have. That
+      // is the flicker: a frame addressing an empty cell of the sheet.
+      // Falling back to a per-entity probe keeps such an entity animating
+      // correctly instead of guessing; it only runs for the entities whose
+      // shape actually differs, so the memoised fast path still covers the
+      // overwhelming majority.
+      const emitted = commands.length - before;
+      const usable = profile.animated.length === 0 || profile.commandCount === emitted
+        ? profile
+        : probeShape(entity, visual, baseCtx, emitted);
+      for (let k = 0; k < usable.animated.length; k++) {
+        const local = usable.animated[k]!;
         const command = commands[before + local];
-        if (command) preSort.push({ command, stride: profile.stride[k]!, period: profile.period[k]! });
+        if (command) {
+          preSort.push({
+            command,
+            stride: usable.stride[k]!,
+            period: usable.period[k]!,
+            columns: usable.columns[k]!,
+            phase0: usable.phase0[k]!,
+            origin: usable.origin[k]!,
+          });
+        }
       }
     }
 
@@ -1023,16 +1128,26 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
       const index = indexOf.get(entry.command);
       if (index === undefined) continue;
       animated.push(index);
-      animBase.push(entry.command.sx);
+      // The scene was collected at animationFrame 0, so the command's own sx
+      // IS its frame-0 cell — the probe's origin/phase0 describe the same
+      // sheet row and transfer directly. Asserting that rather than trusting
+      // it: a mismatch means the profile was matched to the wrong command,
+      // and leaving such a command unpatched (static art) is far better than
+      // walking it across cells its row does not have.
+      const expectedSx = entry.origin + entry.phase0 * entry.stride;
+      if (entry.command.sx !== expectedSx) { animated.pop(); continue; }
+      animOrigin.push(entry.origin);
       animStride.push(entry.stride);
       animPeriod.push(entry.period);
+      animPhase0.push(entry.phase0);
+      animColumns.push(entry.columns);
     }
 
     if (costByName) {
       entityCosts = [...costByName.values()].sort((a, b) => b.collectMs - a.collectMs);
     }
 
-    return { key, commands, animated, animBase, animStride, animPeriod };
+    return { key, commands, animated, animOrigin, animStride, animPeriod, animPhase0, animColumns };
   }
 
   /** The one place a frame is drawn and accounted for. Both the rAF loop and
