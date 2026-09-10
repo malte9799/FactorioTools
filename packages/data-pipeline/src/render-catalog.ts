@@ -13,11 +13,13 @@ import {
   perDirection,
   pipeConnectionsOf,
   pipeCoversLayers,
+  outputWireConnectionsOf,
   stackSources,
   staticGraphics,
   unwrapAll,
   toSprite,
   unwrap,
+  wireConnectionsOf,
 } from "./sprite-shapes.js";
 
 type Raw = Record<string, Record<string, any>>;
@@ -807,6 +809,14 @@ export function buildRenderCatalog(raw: Raw, locale: LocaleTables, version: stri
       rotatesFootprint: ROTATES_FOOTPRINT.has(proto.name),
       pipeConnections: pipeConnections.length > 0 ? pipeConnections : undefined,
       heatConnections: heatConnections.length > 0 ? heatConnections : undefined,
+      wireConnections: wireConnectionsOf(proto),
+      outputWireConnections: outputWireConnectionsOf(proto),
+      // Poles only. Both are read straight off the prototype rather than
+      // tabled here: the vanilla four are well known (small 2.5/7.5,
+      // medium 3.5/9, big 2/32, substation 9/18), but a mod's pole is not,
+      // and a hardcoded table would silently mis-size its overlay.
+      supplyAreaDistance: typeof proto.supply_area_distance === "number" ? proto.supply_area_distance : undefined,
+      maxWireDistance: typeof proto.maximum_wire_distance === "number" ? proto.maximum_wire_distance : undefined,
       localised: locale.entityName.get(proto.name) ?? proto.name,
     };
   };

@@ -6,10 +6,14 @@ import type {
   BpEntity,
   BpItemFilter,
   BpItemRequest,
+  BpWire,
   ModuleStack,
   PlacedEntity,
   QualityName,
+  WireColor,
+  WireLink,
 } from "./types.js";
+import { WireConnectorId } from "./types.js";
 
 export class BlueprintError extends Error {}
 
@@ -137,6 +141,50 @@ function readFilterItems(entity: BpEntity): string[] {
     .map((f) => safeName(f.name));
 }
 
+/** Splits a `defines.wire_connector_id` into the colour it carries and the
+ *  entity side it lands on.
+ *
+ *  Ids 1/2 are red/green for a plain entity AND a combinator's input; 3/4
+ *  are a combinator's output. 5 is a pole's copper and a power switch's
+ *  left terminal; 6 is a power switch's right. The colliding ids are not
+ *  ambiguous in practice — nothing is both a pole and a power switch — so
+ *  the side alone distinguishes them. Returns undefined for an id this
+ *  project does not know rather than guessing a colour, so an unreadable
+ *  wire is skipped instead of drawn wrong. */
+function decodeConnector(id: number): { color: WireColor; side: 1 | 2 } | undefined {
+  switch (id) {
+    case WireConnectorId.circuitRed: return { color: "red", side: 1 };
+    case WireConnectorId.circuitGreen: return { color: "green", side: 1 };
+    case WireConnectorId.combinatorOutputRed: return { color: "red", side: 2 };
+    case WireConnectorId.combinatorOutputGreen: return { color: "green", side: 2 };
+    case WireConnectorId.poleCopper: return { color: "copper", side: 1 };
+    case WireConnectorId.powerSwitchRightCopper: return { color: "copper", side: 2 };
+    default: return undefined;
+  }
+}
+
+/** Normalises a 2.0 blueprint's `wires` array into WireLinks.
+ *
+ *  A wire whose two ends disagree on colour is dropped, not repaired: the
+ *  game never emits one, so its presence means the string is malformed or
+ *  uses a connector id this build does not know, and inventing a colour
+ *  would draw a wire the game would not. Same for a wire naming an entity
+ *  the blueprint does not contain. */
+export function normaliseWires(blueprint: Blueprint): WireLink[] {
+  const present = new Set((blueprint.entities ?? []).map((e) => e.entity_number));
+  const links: WireLink[] = [];
+  for (const wire of blueprint.wires ?? ([] as BpWire[])) {
+    if (!Array.isArray(wire) || wire.length < 4) continue;
+    const [from, fromId, to, toId] = wire;
+    if (!present.has(from) || !present.has(to)) continue;
+    const a = decodeConnector(fromId);
+    const b = decodeConnector(toId);
+    if (!a || !b || a.color !== b.color) continue;
+    links.push({ color: a.color, from, fromSide: a.side, to, toSide: b.side });
+  }
+  return links;
+}
+
 export function normaliseEntities(blueprint: Blueprint): PlacedEntity[] {
   return (blueprint.entities ?? []).map((entity) => ({
     entityNumber: entity.entity_number,
@@ -200,17 +248,52 @@ export function denormaliseEntities(entities: PlacedEntity[]): BpEntity[] {
   });
 }
 
+/** Inverse of normaliseWires(), against the SAME renumbering
+ *  denormaliseEntities applies.
+ *
+ *  That renumbering is why this takes the entity list too: wires address
+ *  entities by number, and denormaliseEntities reassigns those numbers by
+ *  position in the array. A wire naming an entity that is no longer in the
+ *  list (erased since the blueprint was loaded) is dropped — that is the
+ *  same thing the game does when you mine one end of a wire. */
+export function denormaliseWires(wires: WireLink[], entities: PlacedEntity[]): BpWire[] {
+  const renumbered = new Map(entities.map((e, i) => [e.entityNumber, i + 1]));
+  const idFor = (color: WireColor, side: 1 | 2): number => {
+    if (color === "copper") {
+      return side === 1 ? WireConnectorId.poleCopper : WireConnectorId.powerSwitchRightCopper;
+    }
+    if (color === "red") {
+      return side === 1 ? WireConnectorId.circuitRed : WireConnectorId.combinatorOutputRed;
+    }
+    return side === 1 ? WireConnectorId.circuitGreen : WireConnectorId.combinatorOutputGreen;
+  };
+  const out: BpWire[] = [];
+  for (const wire of wires) {
+    const from = renumbered.get(wire.from);
+    const to = renumbered.get(wire.to);
+    if (from === undefined || to === undefined) continue;
+    out.push([from, idFor(wire.color, wire.fromSide), to, idFor(wire.color, wire.toSide)]);
+  }
+  return out;
+}
+
 /** Convenience wrapper bundling denormaliseEntities into a full Blueprint,
  *  ready for encodeBlueprintString. `template` carries the fields that have
  *  no PlacedEntity equivalent (the blueprint's own item/label/version). */
 export function toBlueprint(
   entities: PlacedEntity[],
   template: Pick<Blueprint, "item" | "label" | "version">,
+  wires: WireLink[] = [],
 ): Blueprint {
-  return {
+  const bp: Blueprint = {
     ...template,
     entities: denormaliseEntities(entities),
   };
+  // Omitted entirely when there are none, matching how sparse real
+  // blueprint JSON is (and how the game itself writes wire-less blueprints).
+  const encoded = denormaliseWires(wires, entities);
+  if (encoded.length) bp.wires = encoded;
+  return bp;
 }
 
 /* ---------- base64 helpers that work in both the browser and Node ---------- */

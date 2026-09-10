@@ -419,6 +419,26 @@ export interface HeatConnectionPoint {
   direction: 0 | 4 | 8 | 12;
 }
 
+/** Where each wire colour attaches to an entity's sprite, in tiles relative
+ *  to the entity's centre. A colour is undefined when the entity has no
+ *  terminal of that kind (a pole has copper plus red/green; a combinator has
+ *  only red/green). */
+export interface WireAttachPoint {
+  copper?: [number, number];
+  red?: [number, number];
+  green?: [number, number];
+}
+
+/** An entity's wire attachment points, one per 4-way facing (index is
+ *  `direction / 4`). */
+export interface WireAttachPoints {
+  byDirection: (WireAttachPoint | undefined)[];
+  /** A power switch's right-hand copper terminal — its two copper sides sit
+   *  at different points on one sprite, unlike every other entity's single
+   *  terminal per colour. */
+  secondCopper?: [number, number];
+}
+
 export interface RenderEntityProto {
   name: string;
   tileFootprint: [number, number];
@@ -435,6 +455,20 @@ export interface RenderEntityProto {
    *  by this same order (see GraphicsLayer's `heat-connection-patches`
    *  variant). Absent for entities with no heat buffer at all. */
   heatConnections?: HeatConnectionPoint[];
+  /** Where wires attach to this entity's sprite, per facing. Present for
+   *  poles, combinators, power switches and anything else that can be
+   *  wired; absent for the majority that cannot. */
+  wireConnections?: WireAttachPoints;
+  /** A combinator's output-side attachment points, which sit elsewhere on
+   *  the sprite than its input side (`wireConnections`). */
+  outputWireConnections?: WireAttachPoints;
+  /** Electric poles only: half-width of the square supply area, in tiles
+   *  (Factorio's `supply_area_distance` — a medium pole's 3.5 means the
+   *  7x7 area the game highlights). */
+  supplyAreaDistance?: number;
+  /** Electric poles only: how far a copper wire from this pole can reach,
+   *  in tiles (`maximum_wire_distance`). */
+  maxWireDistance?: number;
   localised: string;
 }
 
@@ -528,11 +562,43 @@ export interface BpEntity {
   request_filters?: BpRequestFilters;
 }
 
+/** One wire from a 2.0 blueprint's top-level `wires` array:
+ *  `[entityA, connectorA, entityB, connectorB]`.
+ *
+ *  The connector ids say both which colour the wire is and, for a
+ *  combinator or power switch, which of its two sides the wire lands on —
+ *  see WireConnectorId. Pre-2.0 blueprints have no `wires`; they carried
+ *  circuit wires inside each entity's own `connections` object instead, a
+ *  shape this project does not read (every blueprint the app has been
+ *  tested against is 2.0). */
+export type BpWire = [number, number, number, number];
+
+/** `defines.wire_connector_id`, the numbers a blueprint's `wires` entries
+ *  use. Verified against the reference editor's exported prototype data
+ *  rather than the wiki, whose blueprint-format page still documents the
+ *  pre-2.0 `connections` shape. Note the deliberate collisions: red and
+ *  a combinator's input-red are the same id, as are pole-copper and a
+ *  power switch's left-copper — the entity's own type is what
+ *  disambiguates them. */
+export const WireConnectorId = {
+  circuitRed: 1,
+  circuitGreen: 2,
+  combinatorOutputRed: 3,
+  combinatorOutputGreen: 4,
+  poleCopper: 5,
+  powerSwitchRightCopper: 6,
+} as const;
+
+/** Which of the three wire kinds a connector id denotes. */
+export type WireColor = "copper" | "red" | "green";
+
 export interface Blueprint {
   item: string;
   label?: string;
   entities?: BpEntity[];
   tiles?: { name: string; position: BpPosition }[];
+  /** 2.0+ only. Absent on older blueprints and on ones with no wires. */
+  wires?: BpWire[];
   version?: number;
 }
 
@@ -584,4 +650,19 @@ export interface PlacedEntity {
    *  direction while one is an entrance and the other an exit). Undefined
    *  for every other entity kind. */
   undergroundType?: "input" | "output";
+}
+
+/** One wire, normalised out of the blueprint's `wires` array into the pair
+ *  of entities it joins.
+ *
+ *  `side` is which connector of that entity the wire lands on: 1 for a
+ *  plain entity or a combinator's input, 2 for a combinator's output or a
+ *  power switch's right terminal. Both are kept because a combinator draws
+ *  its input and output wires at different points on its own sprite. */
+export interface WireLink {
+  color: WireColor;
+  from: number;
+  fromSide: 1 | 2;
+  to: number;
+  toSide: 1 | 2;
 }

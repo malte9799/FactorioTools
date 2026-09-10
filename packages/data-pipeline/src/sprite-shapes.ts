@@ -1,6 +1,6 @@
 /** Reading Factorio's sprite declarations, which come in a handful of
  *  historically-grown shapes, into this project's flat Sprite type. */
-import { Layer, type Dir4Name, type EntityGraphics, type GraphicsLayer, type HeatConnectionPoint, type PipeConnectionPoint, type Sprite } from "@factoriotools/engine";
+import { Layer, type Dir4Name, type EntityGraphics, type GraphicsLayer, type HeatConnectionPoint, type PipeConnectionPoint, type Sprite, type WireAttachPoint, type WireAttachPoints } from "@factoriotools/engine";
 
 /** A leaf sprite declaration: {filename,width,height,...}. Some use a single
  *  square `size` instead of width/height, some split a long frame strip over
@@ -467,6 +467,73 @@ export function heatConnectionsOf(proto: any): HeatConnectionPoint[] {
     out.push({ x: c.position[0], y: c.position[1], direction: c.direction });
   }
   return out;
+}
+
+/** Where each colour of wire physically attaches to an entity's sprite, per
+ *  facing — Factorio's own `connection_points` (a pole) or
+ *  `circuit_wire_connection_points` (a combinator, constant combinator and
+ *  friends), in tiles relative to the entity's centre.
+ *
+ *  Only the `wire` half is read, never `shadow`: the shadow offsets place a
+ *  wire's shadow on the ground, which this renderer has no concept of (it
+ *  draws no wire shadows), and using them for the wire itself would attach
+ *  every wire to the base of the pole rather than its top.
+ *
+ *  A prototype declares one entry per 4-way facing; index is `direction / 4`.
+ *  A power switch is the exception — it carries single, unindexed
+ *  `left_wire_connection_point`/`right_wire_connection_point` objects — and
+ *  is handled by repeating that one point across all four facings, so the
+ *  consumer can index by facing uniformly. */
+export function wireConnectionsOf(proto: any): WireAttachPoints | undefined {
+  const read = (point: any): WireAttachPoint | undefined => {
+    const wire = point?.wire;
+    if (!wire) return undefined;
+    const xy = (v: any): [number, number] | undefined =>
+      Array.isArray(v) && v.length >= 2 ? [v[0], v[1]] : undefined;
+    const copper = xy(wire.copper);
+    const red = xy(wire.red);
+    const green = xy(wire.green);
+    if (!copper && !red && !green) return undefined;
+    return { copper, red, green };
+  };
+
+  // A power switch's two copper terminals are single points shared by every
+  // facing (the prototype has no per-direction array for them).
+  if (proto.left_wire_connection_point || proto.right_wire_connection_point) {
+    const left = read(proto.left_wire_connection_point);
+    const right = read(proto.right_wire_connection_point);
+    const circuit = read(proto.circuit_wire_connection_point);
+    if (!left && !right && !circuit) return undefined;
+    const merged: WireAttachPoint = {
+      copper: left?.copper,
+      red: circuit?.red,
+      green: circuit?.green,
+    };
+    return { byDirection: [merged, merged, merged, merged], secondCopper: right?.copper };
+  }
+
+  // A combinator names its input side `input_connection_points`; a pole uses
+  // `connection_points`; everything else circuit-wired uses
+  // `circuit_wire_connection_points`.
+  const source =
+    proto.connection_points ?? proto.input_connection_points ?? proto.circuit_wire_connection_points;
+  if (!Array.isArray(source) || source.length === 0) return undefined;
+  const byDirection: (WireAttachPoint | undefined)[] = [];
+  for (let i = 0; i < 4; i++) {
+    // Some prototypes ship a single point rather than all four (a
+    // non-rotatable entity); reuse index 0 for the facings it omits.
+    byDirection.push(read(source[i]) ?? read(source[0]));
+  }
+  if (byDirection.every((p) => p === undefined)) return undefined;
+  return { byDirection };
+}
+
+/** A combinator's output-side connection points, which sit at a different
+ *  place on its sprite than its input side. Undefined for everything else. */
+export function outputWireConnectionsOf(proto: any): WireAttachPoints | undefined {
+  const source = proto.output_connection_points;
+  if (!Array.isArray(source) || source.length === 0) return undefined;
+  return wireConnectionsOf({ connection_points: source });
 }
 
 /** Splits a `variation_count`-grid sprite (one shared sheet, one frame per

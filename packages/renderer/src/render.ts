@@ -1,4 +1,4 @@
-import type { GameData, PlacedEntity, QualityName, RenderCatalog } from "@factoriotools/engine";
+import type { GameData, PlacedEntity, QualityName, RenderCatalog, WireLink } from "@factoriotools/engine";
 import { Camera } from "./camera.js";
 import { getSharedSpriteAtlas } from "./spriteAtlas.js";
 import { getSharedIconAtlas } from "./iconAtlas.js";
@@ -8,6 +8,8 @@ import { buildGrid, NeighbourGrid } from "./neighbours/grid.js";
 import { buildFluidNetwork, FluidNetwork } from "./neighbours/fluid.js";
 import { buildHeatNetwork, HeatNetwork } from "./neighbours/heat.js";
 import type { PlatformBox } from "./neighbours/platform.js";
+import { buildWireNetwork, resolveWires, type ResolvedWire, type WireNetwork } from "./neighbours/wires.js";
+import { drawSupplyAreas, drawWires, type SupplyArea } from "./draw/wireDraw.js";
 import { collectEntity, type CollectContext } from "./draw/collect.js";
 import { paint, paintPlain, drawOutline, type PaintTally } from "./draw/paint.js";
 import { compareDrawCommands, type DrawCommand } from "./draw/commands.js";
@@ -180,12 +182,12 @@ export type InteractionMode = { kind: "idle" } | { kind: "place"; entityName: st
 export interface BlueprintRenderer {
   canvas: HTMLCanvasElement;
   camera: Camera;
-  loadBlueprint(entities: PlacedEntity[]): void;
+  loadBlueprint(entities: PlacedEntity[], wires?: WireLink[]): void;
   /** Rebuilds the spatial/position indices for a mutated entity list WITHOUT
    *  reframing the camera — what every edit (place/remove/rotate/configure)
    *  calls, so the view never jumps mid-edit. loadBlueprint additionally
    *  reframes; use that only for first load / switching blueprints. */
-  updateEntities(entities: PlacedEntity[]): void;
+  updateEntities(entities: PlacedEntity[], wires?: WireLink[]): void;
   setHighlight(role: HighlightRole | null): void;
   setInteractionMode(mode: InteractionMode): void;
   /** Dev-only: freeze/unfreeze the belt animation clock and step it by an
@@ -353,6 +355,9 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
 
   let entities: PlacedEntity[] = [];
   let entityById = new Map<number, PlacedEntity>();
+  let wires: WireLink[] = [];
+  let wireNetwork: WireNetwork = buildWireNetwork([], [], isPoleLike);
+  let resolvedWires: ResolvedWire[] = [];
   let grid = new NeighbourGrid();
   let fluidNetwork = new FluidNetwork();
   let heatNetwork = new HeatNetwork();
@@ -464,6 +469,26 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
       highlight.consumers.has(entity.entityNumber) ||
       (highlight.beacons?.has(entity.entityNumber) ?? false);
     return lit ? 1 : 0.28;
+  }
+
+  /** The facing to actually DRAW an entity at.
+   *
+   *  For everything except a pole this is the blueprint's own direction. A
+   *  pole has no meaningful stored direction — the game derives its facing
+   *  from the wires hanging off it, so that a run of poles visibly leans
+   *  along the line it carries — so its wire-derived facing wins whenever it
+   *  has one. An unwired pole falls back to its stored direction, which is
+   *  north for anything the game itself produced. */
+  function directionOf(entity: PlacedEntity): number {
+    const fromWires = wireNetwork.poleDirection.get(entity.entityNumber);
+    return fromWires ?? entity.direction;
+  }
+
+  /** True while the thing in hand is a pole, which is when the game shows
+   *  every pole's supply area — the ghost's own and every placed one's — so
+   *  coverage gaps and overlap are visible while laying out a run. */
+  function supplyAreasVisible(): boolean {
+    return mode.kind === "place" && visualFor(mode.entityName)?.supplyAreaDistance !== undefined;
   }
 
   function invalidate(): void {
@@ -789,6 +814,25 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
     // Scene commands are never tinted — only the ghost is, and it paints via
     // its own paint() call below — so skip paint()'s tinted/untinted split.
     phases.animate = performance.now() - tAnimate;
+
+    // Supply areas are an UNDERLAY: the game shows them under the machines
+    // they power, so a pole's square never hides what is standing on it.
+    // Shown only while a pole is in hand — the ghost's own area plus every
+    // placed pole's, which is how the game lets you see coverage gaps and
+    // overlap while laying out a run.
+    if (supplyAreasVisible()) {
+      const areas: SupplyArea[] = [];
+      for (const entity of visibleEntities) {
+        const distance = visualFor(entity.name)?.supplyAreaDistance;
+        if (distance !== undefined) areas.push({ x: entity.x, y: entity.y, distance });
+      }
+      if (ghost) {
+        const distance = visualFor(ghost.name)?.supplyAreaDistance;
+        if (distance !== undefined) areas.push({ x: ghost.x, y: ghost.y, distance });
+      }
+      drawSupplyAreas(ctx, areas, camera.state.pixelsPerTile);
+    }
+
     const tPaint = performance.now();
     paintPlain(ctx, atlas, commands, paintTally ?? undefined);
     phases.paint = performance.now() - tPaint;
@@ -802,6 +846,13 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
     ctx.globalAlpha = 1;
     phases.inserters = performance.now() - tInserters;
     const tOverlays = performance.now();
+
+    // Wires hang ABOVE the entities they join — a power line crosses over a
+    // machine standing between two poles, it does not disappear behind it.
+    // Drawn from the resolved list rather than per visible entity so a wire
+    // whose far pole is off screen is still drawn to its real endpoint,
+    // instead of stopping at the viewport edge.
+    drawWires(ctx, resolvedWires, camera.state.pixelsPerTile);
 
     if (hasHighlight) {
       for (const entity of visibleEntities) {
@@ -1502,9 +1553,35 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
 
   /** Rebuilds the neighbour and spatial indices and preloads sprites. Leaves
    *  the camera alone, so edits never jump the view. */
-  function rebuildIndices(newEntities: PlacedEntity[]): void {
+  function rebuildIndices(newEntities: PlacedEntity[], newWires?: WireLink[]): void {
     entities = newEntities;
     entityById = new Map(entities.map((e) => [e.entityNumber, e]));
+    // Undefined means "unchanged" (an edit that only moved entities), an
+    // empty array means "this blueprint has no wires" — an edit must not
+    // silently drop the wires a load established.
+    if (newWires) wires = newWires;
+    wireNetwork = buildWireNetwork(wires, entities, isPoleLike);
+
+    // A pole's facing comes from its wires, not from the blueprint, so it is
+    // baked onto the entity rather than resolved at each draw. Every consumer
+    // below (sprite pick, footprint, spatial index) then sees one consistent
+    // facing, and the scene cache — which keys on the entity list, not on the
+    // wire list — cannot serve a stale pre-rotation sprite.
+    //
+    // The rotated pole is a COPY: `entities` is the caller's own array (the
+    // app's blueprint state), and turning a pole is a rendering decision, not
+    // an edit to the blueprint. Mutating in place would make a pole's stored
+    // direction drift every time a wire changed, and that drift would then be
+    // written back out on export.
+    if (wireNetwork.poleDirection.size > 0) {
+      entities = entities.map((entity) => {
+        const facing = wireNetwork.poleDirection.get(entity.entityNumber);
+        return facing === undefined || facing === entity.direction ? entity : { ...entity, direction: facing };
+      });
+      entityById = new Map(entities.map((e) => [e.entityNumber, e]));
+    }
+
+    resolvedWires = resolveWires(wireNetwork, entities, visualFor, directionOf);
     grid = buildGrid(entities);
     fluidNetwork = buildFluidNetwork(entities, (e) => {
       const points = visualFor(e.name)?.pipeConnections;
@@ -1560,8 +1637,8 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
     void atlas.whenIdle().then(invalidate);
   }
 
-  function loadBlueprint(newEntities: PlacedEntity[]): void {
-    rebuildIndices(newEntities);
+  function loadBlueprint(newEntities: PlacedEntity[], newWires: WireLink[] = []): void {
+    rebuildIndices(newEntities, newWires);
     const rect = container.getBoundingClientRect();
     const box = spatialIndex.boundingBox;
     if (box) camera.frame(box, rect.width, rect.height);

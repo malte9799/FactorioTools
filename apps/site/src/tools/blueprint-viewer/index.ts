@@ -5,6 +5,7 @@ import {
   encodeBlueprintString,
   toBlueprint,
   normaliseEntities,
+  normaliseWires,
   calculate,
   attachBottlenecks,
   computeScaleFactor,
@@ -18,7 +19,7 @@ import {
   boxOf,
   overlaps,
 } from "@factoriotools/engine";
-import type { CalculationResult, Timescale, Blueprint, PlacedEntity, QualityName, MachineGroup, ModuleStack, ThroughputContext, BottleneckSubgroup } from "@factoriotools/engine";
+import type { CalculationResult, Timescale, Blueprint, PlacedEntity, QualityName, MachineGroup, ModuleStack, ThroughputContext, BottleneckSubgroup, WireLink } from "@factoriotools/engine";
 import { mountRenderer, isPoleLike, isTwoDirectionOnly, rotationStep, effectiveFootprint, summariseRecording, slowestFrames, worstPhase, type BlueprintRenderer, type HighlightRole } from "@factoriotools/renderer";
 import { buildRecipeCard, renderResults, type ViewOptions } from "./legacy-view/panels.js";
 import { icon } from "./legacy-view/icons.js";
@@ -681,6 +682,9 @@ export function mountBlueprintViewer(root: HTMLElement): () => void {
 
   let blueprints: Blueprint[] = [];
   let entities: PlacedEntity[] = [];
+  /** The loaded blueprint's wires. Kept beside `entities` because a wire
+   *  names the entities it joins by number, so the two must stay in step. */
+  let wires: WireLink[] = [];
   let result: CalculationResult | null = null;
   // Set by every edit (applyEdit/undo/redo), cleared by load()/startNew()
   // and after a successful library save — drives the "Save/Discard/Cancel"
@@ -842,12 +846,13 @@ export function mountBlueprintViewer(root: HTMLElement): () => void {
     const blueprint = blueprints[index];
     if (!blueprint) return;
     entities = normaliseEntities(blueprint);
+    wires = normaliseWires(blueprint);
     nextEntityNumber = entities.reduce((max, e) => Math.max(max, e.entityNumber), 0) + 1;
     undoStack = [];
     redoStack = [];
     hasUnsavedChanges = false;
     deselect();
-    renderer.loadBlueprint(entities);
+    renderer.loadBlueprint(entities, wires);
     recalculate();
     persistEntities();
   }
@@ -861,12 +866,13 @@ export function mountBlueprintViewer(root: HTMLElement): () => void {
   function startNew(): void {
     blueprints = [];
     entities = [];
+    wires = [];
     nextEntityNumber = 1;
     undoStack = [];
     redoStack = [];
     hasUnsavedChanges = false;
     deselect();
-    renderer.loadBlueprint(entities);
+    renderer.loadBlueprint(entities, wires);
     recalculate();
     picker.replaceChildren();
     picker.hidden = true;
@@ -2128,7 +2134,7 @@ export function mountBlueprintViewer(root: HTMLElement): () => void {
     renderer.onHover(onSchematicHover);
     renderer.setAltMode(altModeOn);
     wireEditCallbacks();
-    if (entities.length) renderer.loadBlueprint(entities);
+    if (entities.length) renderer.loadBlueprint(entities, wires);
 
     populateMeasureOptions();
     updateMeasure();

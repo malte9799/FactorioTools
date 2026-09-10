@@ -1,4 +1,4 @@
-import type { EntityGraphics, GameData, HeatConnectionPoint, InserterGraphics, PipeConnectionPoint, RenderCatalog } from "@factoriotools/engine";
+import type { EntityGraphics, GameData, HeatConnectionPoint, InserterGraphics, PipeConnectionPoint, RenderCatalog, WireAttachPoints } from "@factoriotools/engine";
 import { toCardinal, Dir } from "./neighbours/grid.js";
 
 /** One lookup over both GameData (entities with rates) and the RenderCatalog
@@ -24,6 +24,16 @@ export interface ResolvedVisual {
    *  frame — feeds the heat network graph (neighbours/heat.ts). Undefined
    *  for every entity with no heat buffer. */
   heatConnections?: HeatConnectionPoint[];
+  /** Where each wire colour attaches to this entity's sprite, per facing —
+   *  a combinator's input side, and every other wired entity's only side.
+   *  Undefined for the majority of entities, which cannot be wired. */
+  wireConnections?: WireAttachPoints;
+  /** A combinator's output-side attachment points. */
+  outputWireConnections?: WireAttachPoints;
+  /** Poles only: half-width of the square supply area, in tiles. */
+  supplyAreaDistance?: number;
+  /** Poles only: copper wire reach, in tiles. */
+  maxWireDistance?: number;
 }
 
 const EMPTY = {
@@ -85,6 +95,10 @@ export function buildVisualLookup(data: GameData, catalog: RenderCatalog): Map<s
       showDirectionArrow: e.name.includes("combinator"),
       pipeConnections: e.pipeConnections,
       heatConnections: e.heatConnections,
+      wireConnections: e.wireConnections,
+      outputWireConnections: e.outputWireConnections,
+      supplyAreaDistance: e.supplyAreaDistance,
+      maxWireDistance: e.maxWireDistance,
     });
   }
   return lookup;

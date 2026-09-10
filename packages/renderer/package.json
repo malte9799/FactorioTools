@@ -6,7 +6,7 @@
   "main": "src/index.ts",
   "scripts": {
     "check": "tsc --noEmit",
-    "test": "tsx test/beltAnimation.test.ts && tsx test/pipe.test.ts && tsx test/beltGraph.test.ts && tsx test/spatial-camera.test.ts && tsx test/redraw.test.ts && tsx test/recordingSummary.test.ts"
+    "test": "tsx test/wires.test.ts && tsx test/beltAnimation.test.ts && tsx test/pipe.test.ts && tsx test/beltGraph.test.ts && tsx test/spatial-camera.test.ts && tsx test/redraw.test.ts && tsx test/recordingSummary.test.ts"
   },
   "dependencies": {
     "@factoriotools/engine": "*"
