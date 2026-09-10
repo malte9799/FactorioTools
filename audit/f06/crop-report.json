@@ -1,0 +1,135 @@
+{
+  "family": "recycler",
+  "beforeBytes": 15795763,
+  "afterBytes": 492286,
+  "sheets": [
+    {
+      "sheet": "recycler-N-shadow.png",
+      "beforeBytes": 209131,
+      "afterBytes": 28389,
+      "usedCols": [
+        0
+      ],
+      "usedRows": [
+        0
+      ],
+      "totalCells": 64,
+      "usedCells": 1,
+      "newColumns": 1,
+      "newFrameWidth": 234,
+      "newFrameHeight": 252
+    },
+    {
+      "sheet": "recycler-N.png",
+      "beforeBytes": 3672483,
+      "afterBytes": 99960,
+      "usedCols": [
+        0
+      ],
+      "usedRows": [
+        0
+      ],
+      "totalCells": 64,
+      "usedCells": 1,
+      "newColumns": 1,
+      "newFrameWidth": 170,
+      "newFrameHeight": 304
+    },
+    {
+      "sheet": "recycler-E-shadow.png",
+      "beforeBytes": 153992,
+      "afterBytes": 21535,
+      "usedCols": [
+        0
+      ],
+      "usedRows": [
+        0
+      ],
+      "totalCells": 64,
+      "usedCells": 1,
+      "newColumns": 1,
+      "newFrameWidth": 350,
+      "newFrameHeight": 114
+    },
+    {
+      "sheet": "recycler-E.png",
+      "beforeBytes": 3683267,
+      "afterBytes": 98423,
+      "usedCols": [
+        0
+      ],
+      "usedRows": [
+        0
+      ],
+      "totalCells": 64,
+      "usedCells": 1,
+      "newColumns": 1,
+      "newFrameWidth": 286,
+      "newFrameHeight": 204
+    },
+    {
+      "sheet": "recycler-S-shadow.png",
+      "beforeBytes": 232302,
+      "afterBytes": 28445,
+      "usedCols": [
+        0
+      ],
+      "usedRows": [
+        0
+      ],
+      "totalCells": 64,
+      "usedCells": 1,
+      "newColumns": 1,
+      "newFrameWidth": 232,
+      "newFrameHeight": 238
+    },
+    {
+      "sheet": "recycler-S.png",
+      "beforeBytes": 3529467,
+      "afterBytes": 95464,
+      "usedCols": [
+        0
+      ],
+      "usedRows": [
+        0
+      ],
+      "totalCells": 64,
+      "usedCells": 1,
+      "newColumns": 1,
+      "newFrameWidth": 168,
+      "newFrameHeight": 290
+    },
+    {
+      "sheet": "recycler-W-shadow.png",
+      "beforeBytes": 155204,
+      "afterBytes": 21177,
+      "usedCols": [
+        0
+      ],
+      "usedRows": [
+        0
+      ],
+      "totalCells": 64,
+      "usedCells": 1,
+      "newColumns": 1,
+      "newFrameWidth": 314,
+      "newFrameHeight": 112
+    },
+    {
+      "sheet": "recycler-W.png",
+      "beforeBytes": 4159917,
+      "afterBytes": 98893,
+      "usedCols": [
+        0
+      ],
+      "usedRows": [
+        0
+      ],
+      "totalCells": 64,
+      "usedCells": 1,
+      "newColumns": 1,
+      "newFrameWidth": 284,
+      "newFrameHeight": 186
+    }
+  ]
+}

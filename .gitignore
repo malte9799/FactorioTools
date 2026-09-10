@@ -12,7 +12,19 @@ apps/site/public/data/game-data.json
 apps/site/public/data/render-catalog.json
 apps/site/public/data/sprite-icon-manifest.json
 apps/site/public/data/sprite-source-manifest.json
-audit/
+# The audit's findings, reports and verification scripts ARE tracked — they
+# are project history, and the verify scripts are what prove the render path
+# unchanged across refactors. Only its bulk artefacts are excluded: both of
+# these hold Factorio sprite art copied out of a local install, same reason
+# apps/site/public/data/sprites/ is ignored.
+audit/f06-rollout/original-sheets/
+audit/f06/*.png
+audit/recordings/
+audit/data/
+
+# A 1.3 MB scratch dump of blueprint strings, kept locally for testing.
+# example-blueprints.json is the curated, tracked version.
+blueprint_book.txt
 
 # Inkrementeller tsc-Build-Cache, reproduzierbar.
 *.tsbuildinfo
