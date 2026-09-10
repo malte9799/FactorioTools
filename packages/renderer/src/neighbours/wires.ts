@@ -2,10 +2,14 @@
  *  physically attaches to its entity's sprite, and which way a pole turns to
  *  face the wires hanging off it.
  *
- *  Only wires the blueprint itself declares are represented. Factorio records
- *  a blueprint's pole connections explicitly, so two poles standing in reach
- *  of each other are NOT wired unless the blueprint says so — auto-connecting
- *  them would draw copper the game does not.
+ *  A LOADED blueprint's wires are exactly the ones it declares. Factorio
+ *  records pole connections explicitly, so two poles standing in reach of
+ *  each other are NOT wired unless the blueprint says so — inventing copper
+ *  on load would draw wires the game does not.
+ *
+ *  A NEWLY PLACED pole is the one exception, and it mirrors the game rather
+ *  than the file: dropping a pole next to a powered one joins the network on
+ *  the spot. See autoConnectPole.
  */
 import type { PlacedEntity, WireAttachPoints, WireColor, WireLink } from "@factoriotools/engine";
 import type { ResolvedVisual } from "../entityLookup.js";
@@ -192,4 +196,148 @@ export function resolveWires(
   }
 
   return out;
+}
+
+/* ---------- Editing the network ---------- */
+
+/** How many copper wires one pole may carry. Factorio's own limit, and the
+ *  reason a pole in a dense field does not end up wired to everything around
+ *  it. Circuit (red/green) wires are not subject to it. */
+const MAX_POLE_COPPER_WIRES = 5;
+
+/** True when `a` and `b` are already joined by a wire of this colour, in
+ *  either direction. Wires are undirected, so the stored order of the two
+ *  ends says nothing about which is "first". */
+export function wireExists(wires: WireLink[], color: WireColor, a: number, b: number): boolean {
+  return wires.some(
+    (w) => w.color === color && ((w.from === a && w.to === b) || (w.from === b && w.to === a)),
+  );
+}
+
+/** Whether this entity has a terminal of the given colour at all — a pole has
+ *  copper plus red/green, a combinator only red/green, a belt none. Used to
+ *  reject an invalid target before it becomes a pending pick, so the gesture
+ *  never leaves the user half-way through a wire that could not exist. */
+export function canWire(visual: ResolvedVisual | undefined, color: WireColor): boolean {
+  if (!visual) return false;
+  const has = (points: WireAttachPoints | undefined): boolean =>
+    points?.byDirection.some((p) => p?.[color] !== undefined) ?? false;
+  return has(visual.wireConnections) || has(visual.outputWireConnections);
+}
+
+/** Adds the wire if it is absent, removes it if it is present, and reports
+ *  which happened. One gesture toggles, so clicking the same pair twice is a
+ *  no-op overall rather than stacking duplicate wires. */
+export function toggleWire(
+  wires: WireLink[],
+  color: WireColor,
+  a: number,
+  b: number,
+): { wires: WireLink[]; connected: boolean } {
+  if (a === b) return { wires, connected: false };
+  if (wireExists(wires, color, a, b)) {
+    return {
+      wires: wires.filter(
+        (w) => !(w.color === color && ((w.from === a && w.to === b) || (w.from === b && w.to === a))),
+      ),
+      connected: false,
+    };
+  }
+  // Side 1 on both ends: that is what a pole-to-pole copper wire uses, and
+  // what a plain (non-combinator) circuit terminal uses too. A combinator's
+  // output side is only reachable by wiring from the output terminal, which
+  // this gesture does not distinguish yet.
+  return { wires: [...wires, { color, from: a, fromSide: 1, to: b, toSide: 1 }], connected: true };
+}
+
+/** Copper wires a freshly placed pole should take on, mirroring the game's
+ *  own "drop a pole beside a powered one and it joins the network".
+ *
+ *  Ported from the reference editor's connectPowerPole rather than invented,
+ *  because the obvious rule — wire every pole in reach — is wrong in a way
+ *  that only shows up on a dense field: it produces a cobweb. The real rule
+ *  has two limiters that matter:
+ *
+ *  - A pole already carrying MAX_POLE_COPPER_WIRES copper wires is not a
+ *    candidate, and the new pole itself takes at most that many.
+ *  - Each pole picked also blacklists everything IT is already wired to, so
+ *    the new pole joins a connected clump once instead of once per member.
+ *
+ *  Candidates are taken nearest-first by Manhattan distance, which is what
+ *  makes the choice deterministic and keeps the wires short.
+ */
+export function autoConnectPole(
+  placed: PlacedEntity,
+  entities: PlacedEntity[],
+  wires: WireLink[],
+  visualFor: (name: string) => ResolvedVisual | undefined,
+  isPole: (name: string) => boolean,
+): WireLink[] {
+  if (!isPole(placed.name)) return wires;
+  const selfReach = visualFor(placed.name)?.maxWireDistance;
+  if (selfReach === undefined) return wires;
+
+  // Copper-wire counts and adjacency, computed once rather than per candidate.
+  const copperCount = new Map<number, number>();
+  const copperNeighbours = new Map<number, number[]>();
+  for (const w of wires) {
+    if (w.color !== "copper") continue;
+    for (const [self, other] of [[w.from, w.to], [w.to, w.from]] as const) {
+      copperCount.set(self, (copperCount.get(self) ?? 0) + 1);
+      const list = copperNeighbours.get(self);
+      if (list) list.push(other);
+      else copperNeighbours.set(self, [other]);
+    }
+  }
+
+  const candidates = entities
+    .filter((e) => {
+      if (e.entityNumber === placed.entityNumber || !isPole(e.name)) return false;
+      if ((copperCount.get(e.entityNumber) ?? 0) >= MAX_POLE_COPPER_WIRES) return false;
+      if (wireExists(wires, "copper", placed.entityNumber, e.entityNumber)) return false;
+      const reach = visualFor(e.name)?.maxWireDistance;
+      if (reach === undefined) return false;
+      // Reach is the SHORTER of the two, same rule resolveWires uses to
+      // decide whether an existing wire is drawn faded.
+      const limit = Math.min(reach, selfReach);
+      const dx = e.x - placed.x;
+      const dy = e.y - placed.y;
+      return dx * dx + dy * dy <= limit * limit;
+    })
+    .sort(
+      (a, b) =>
+        Math.abs(a.x - placed.x) + Math.abs(a.y - placed.y) -
+        (Math.abs(b.x - placed.x) + Math.abs(b.y - placed.y)),
+    );
+
+  const added: WireLink[] = [];
+  const blacklist = new Set<number>();
+  let budget = MAX_POLE_COPPER_WIRES - (copperCount.get(placed.entityNumber) ?? 0);
+
+  for (const pole of candidates) {
+    if (budget <= 0) break;
+    if (blacklist.has(pole.entityNumber)) continue;
+    budget -= 1;
+
+    blacklist.add(pole.entityNumber);
+    // Everything this pole already reaches is now considered joined, so the
+    // new pole does not also wire itself to each of them individually.
+    for (const other of copperNeighbours.get(pole.entityNumber) ?? []) blacklist.add(other);
+
+    added.push({
+      color: "copper",
+      from: placed.entityNumber,
+      fromSide: 1,
+      to: pole.entityNumber,
+      toSide: 1,
+    });
+  }
+
+  return added.length > 0 ? [...wires, ...added] : wires;
+}
+
+/** Drops every wire touching these entities — what erasing a pole must do,
+ *  or its wires would hang in the air pointing at something that is gone. */
+export function dropWiresFor(wires: WireLink[], removed: Set<number>): WireLink[] {
+  return wires.filter((w) => !removed.has(w.from) && !removed.has(w.to));
 }

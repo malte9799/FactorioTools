@@ -4,6 +4,7 @@ export * from "./iconAtlas.js";
 export * from "./entityLookup.js";
 export * from "./spatialIndex.js";
 export * from "./neighbours/grid.js";
+export * from "./neighbours/wires.js";
 export * from "./draw/commands.js";
 export * from "./draw/collect.js";
 export * from "./draw/paint.js";

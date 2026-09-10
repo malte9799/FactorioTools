@@ -1,4 +1,4 @@
-import type { GameData, PlacedEntity, QualityName, RenderCatalog, WireLink } from "@factoriotools/engine";
+import type { GameData, PlacedEntity, QualityName, RenderCatalog, WireColor, WireLink } from "@factoriotools/engine";
 import { Camera } from "./camera.js";
 import { getSharedSpriteAtlas } from "./spriteAtlas.js";
 import { getSharedIconAtlas } from "./iconAtlas.js";
@@ -177,7 +177,15 @@ export interface HighlightRole {
  *  logic): it removes whatever's under the cursor after a short press-and-
  *  hold, then erases anything the cursor drags across immediately, exactly
  *  like the real game's mine-by-right-click. */
-export type InteractionMode = { kind: "idle" } | { kind: "place"; entityName: string; direction?: number; quality?: QualityName };
+export type InteractionMode =
+  | { kind: "idle" }
+  | { kind: "place"; entityName: string; direction?: number; quality?: QualityName }
+  /** A wire of this colour is "on the cursor" (Alt+C/R/G). A left-click on
+   *  an entity reports it through onWireClick instead of opening it — two
+   *  clicks make or break a wire between the pair. Clicks that miss an
+   *  entity are inert rather than cancelling, so a stray click into empty
+   *  space never silently drops a half-finished connection. */
+  | { kind: "wire"; color: WireColor };
 
 export interface BlueprintRenderer {
   canvas: HTMLCanvasElement;
@@ -234,6 +242,11 @@ export interface BlueprintRenderer {
    *  erase-drag starts, so the modifier can't accidentally mine a row of
    *  buildings. */
   onAltRightClickEntity(callback: (entityNumber: number) => void): void;
+  /** Fires for each left-click on an entity while a wire is on the cursor
+   *  (InteractionMode's 'wire' kind), INSTEAD of onSelect — the app pairs
+   *  two of these into one connect/disconnect. Clicks that hit no entity
+   *  never fire it, and never cancel anything (see onPointerDown). */
+  onWireClick(callback: (entityNumber: number) => void): void;
   /** Fires whenever the shared sprite atlas's pending-load count changes —
    *  `loading` is true while at least one sheet is still fetching/decoding
    *  (a pan/zoom bringing new entities into view, or the initial burst on
@@ -1385,6 +1398,20 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
       return;
     }
 
+    // Wire mode: a click on an entity is a wire pick, never a pan or an
+    // "open the building" select. Reported on press rather than deferred to
+    // release like a select, because there is no click-vs-drag ambiguity to
+    // resolve — wire mode does not pan. A click that misses every entity is
+    // swallowed deliberately: it neither cancels the pending pick nor drags
+    // the camera, so a stray click into empty space cannot silently discard
+    // a half-finished connection.
+    if (mode.kind === "wire") {
+      const world = worldAtPointer(e);
+      const hit = spatialIndex.hitTest(world.x, world.y);
+      if (hit !== undefined) wireClickCallback?.(hit);
+      return;
+    }
+
     // 'idle' mode: always starts a pan, whether the press landed on an
     // entity or empty ground — matches the real game, where you can grab
     // the camera from on top of a building just as freely as from open
@@ -1495,6 +1522,7 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
   let selectCallback: ((entityNumber: number) => void) | null = null;
   let eraseCallback: ((entityNumber: number) => void) | null = null;
   let altRightClickCallback: ((entityNumber: number) => void) | null = null;
+  let wireClickCallback: ((entityNumber: number) => void) | null = null;
   const onHoverMove = (e: PointerEvent) => {
     if (!hoverCallback) return;
     const world = worldAtPointer(e);
@@ -1743,6 +1771,9 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
     },
     onAltRightClickEntity(callback) {
       altRightClickCallback = callback;
+    },
+    onWireClick(callback) {
+      wireClickCallback = callback;
     },
     onLoadingChange(callback) {
       atlas.setOnPendingChange((pending) => callback(pending > 0));
