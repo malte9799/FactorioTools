@@ -21,9 +21,14 @@ const WIRE_COLOR: Record<string, string> = {
  *  when zoomed out and stay thin when zoomed in. */
 const WIRE_WIDTH_TILES = 1 / 24;
 
-/** Deepest a wire ever hangs, in tiles — the reference editor's 30 px at its
- *  32 px/tile scale. */
-const MAX_SAG_TILES = 30 / 32;
+/** Deepest a wire ever hangs, in tiles.
+ *
+ *  Half the reference editor's own 30 px (at its 32 px/tile scale), a
+ *  deliberate divergence: at full depth the arch read as too heavy against
+ *  this renderer's sprites, so the cable is pulled up to half the droop.
+ *  Only the DEPTH is halved — the curve's shape, its proportionality to the
+ *  horizontal span, and the long-span clamp are all still the reference's. */
+const MAX_SAG_TILES = 15 / 32;
 
 /** Span at which the sag reaches MAX_SAG_TILES and stops growing. */
 const SAG_FULL_AT_TILES = 3;
@@ -32,9 +37,9 @@ const SAG_FULL_AT_TILES = 3;
  *  in tiles.
  *
  *  Ported from the reference editor, whose own formula is
- *  `sin(atan2(dX, -dY)) * min(1, d / 32 / 3) * 30` in pixels. At 32 px per
- *  tile that 30 is exactly 30/32 tiles, which is where MAX_SAG_TILES comes
- *  from. Two things fall out of that shape and both matter:
+ *  `sin(atan2(dX, -dY)) * min(1, d / 32 / 3) * 30` in pixels — at 32 px per
+ *  tile, a 30/32-tile droop. MAX_SAG_TILES halves that; see its own comment.
+ *  Two things fall out of the shape and both still hold:
  *
  *  - The `sin` term makes the droop proportional to the HORIZONTAL span, so
  *    a purely vertical wire hangs dead straight (a cable seen end-on has no

@@ -252,11 +252,15 @@ test("every vanilla pole has supply area, wire reach and 4 attach points", () =>
 
 /* ---------- Wire sag ---------- */
 
-test("sag matches the reference editor's own curve, in tiles", () => {
+test("sag keeps the reference editor's curve at half its depth", () => {
   // The reference computes, in pixels at 32px/tile:
   //   sin(atan2(dX, -dY)) * min(1, d / 32 / 3) * 30
-  // These are that formula's values converted to tiles, so a future change
-  // to sagFor cannot quietly drift away from the shape the game shows.
+  // This renderer keeps that SHAPE but halves the depth — the full arch read
+  // as too heavy against these sprites. Asserting against half the reference
+  // rather than against baked-in numbers keeps the two tied together: the
+  // proportionality to horizontal span and the long-span clamp still have to
+  // match, so a future change cannot quietly drift the curve's form.
+  const SAG_SCALE = 0.5;
   const reference = (dxTiles: number, dyTiles: number): number => {
     const px = 32;
     const dX = dxTiles * px;
@@ -267,14 +271,15 @@ test("sag matches the reference editor's own curve, in tiles", () => {
   };
   for (const [dx, dy] of [[7, 0], [0, 7], [20, 0], [7, 7], [3, 0], [1, 0], [0.5, 0]]) {
     const mine = sagFor(dx!, dy!);
-    assert.ok(Math.abs(mine - Math.abs(reference(dx!, dy!))) < 1e-9,
-      `sag(${dx},${dy}) = ${mine}, reference = ${reference(dx!, dy!)}`);
+    const want = Math.abs(reference(dx!, dy!)) * SAG_SCALE;
+    assert.ok(Math.abs(mine - want) < 1e-9, `sag(${dx},${dy}) = ${mine}, expected ${want}`);
   }
 });
 
 test("a vertical wire does not sag, a horizontal one does", () => {
   assert.equal(sagFor(0, 9), 0, "a vertical cable seen end-on shows no droop");
-  assert.ok(sagFor(9, 0) > 0.9, "a horizontal cable droops");
+  // 15/32 at full droop — the halved depth (see MAX_SAG_TILES).
+  assert.ok(sagFor(9, 0) > 0.4, "a horizontal cable droops");
   // A diagonal sags less than a horizontal of the same length.
   assert.ok(sagFor(7, 7) < sagFor(Math.hypot(7, 7), 0));
 });
