@@ -155,6 +155,27 @@ function attachPoint(
   return { x: entity.x + offset[0], y: entity.y + offset[1] };
 }
 
+/** Where one colour's wire attaches to a single entity, in world tiles.
+ *
+ *  The same terminal maths resolveWires uses for a finished wire's ends,
+ *  exposed for the in-progress wire that trails from an armed entity to the
+ *  cursor: both must leave from exactly the same point on the sprite, or the
+ *  wire would visibly jump the moment the second end is clicked.
+ *
+ *  Side 1 is a plain entity's only terminal (and a combinator's input); side
+ *  2 is a combinator's output or a power switch's right copper post. */
+export function terminalFor(
+  entity: PlacedEntity,
+  visual: ResolvedVisual | undefined,
+  direction: number,
+  color: WireColor,
+  side: 1 | 2 = 1,
+): { x: number; y: number } | undefined {
+  if (!visual) return undefined;
+  const points = side === 2 && visual.outputWireConnections ? visual.outputWireConnections : visual.wireConnections;
+  return attachPoint(points, entity, direction, color, side === 2 && !visual.outputWireConnections);
+}
+
 /** Resolves every wire to the two world points it connects, dropping any
  *  whose endpoints cannot be located (an entity missing from the blueprint,
  *  or one whose prototype declares no terminal of that colour). */

@@ -691,6 +691,18 @@ export function mountBlueprintViewer(root: HTMLElement): () => void {
    *  next click starts a fresh pair. Cleared by the first 'q' press; a
    *  second 'q' leaves wire mode entirely (see the 'q' handler). */
   let pendingWireFrom: number | null = null;
+
+  /** Arms or clears the half-finished wire pick, keeping the renderer in
+   *  step so it can trail the in-progress wire to the cursor. Every write
+   *  goes through here rather than assigning the variable directly — the
+   *  pick is cleared from seven places (undo, redo, erase, mode changes,
+   *  completing a wire, 'q'), and one of them forgetting to notify would
+   *  leave a wire dangling from an entity the app no longer considers
+   *  armed. */
+  function setPendingWireFrom(entityNumber: number | null): void {
+    pendingWireFrom = entityNumber;
+    renderer.setPendingWire(entityNumber);
+  }
   /** Which wire colour is on the cursor (Alt+C/R/G), or null outside wire
    *  mode. Mirrors the renderer's own 'wire' InteractionMode so the app can
    *  answer "is a wire in hand" without asking the renderer back. */
@@ -978,7 +990,7 @@ export function mountBlueprintViewer(root: HTMLElement): () => void {
     // so they are always the same depth.
     wires = undoWires.pop() ?? wires;
     selectedEntity = undefined; // safest default: it may not exist post-undo
-    pendingWireFrom = null; // the half-picked entity may not exist post-undo
+    setPendingWireFrom(null); // the half-picked entity may not exist post-undo
     hasUnsavedChanges = true;
     renderer.updateEntities(entities, wires);
     recalculate();
@@ -993,7 +1005,7 @@ export function mountBlueprintViewer(root: HTMLElement): () => void {
     entities = redoStack.pop()!;
     wires = redoWires.pop() ?? wires;
     selectedEntity = undefined;
-    pendingWireFrom = null;
+    setPendingWireFrom(null);
     hasUnsavedChanges = true;
     renderer.updateEntities(entities, wires);
     recalculate();
@@ -1073,7 +1085,7 @@ export function mountBlueprintViewer(root: HTMLElement): () => void {
     // A half-picked wire whose first end is the entity being erased has no
     // valid second click left, so drop the pick rather than let the next
     // click complete a wire to something that no longer exists.
-    if (pendingWireFrom === entityNumber) pendingWireFrom = null;
+    if (pendingWireFrom === entityNumber) setPendingWireFrom(null);
     applyEdit(() => {
       entities = entities.filter((e) => e.entityNumber !== entityNumber);
       // Otherwise its wires would hang in the air pointing at a gone entity.
@@ -1181,7 +1193,7 @@ export function mountBlueprintViewer(root: HTMLElement): () => void {
     // first end would still be armed the next time wire mode came back on.
     const hadWire = wireColorInHand !== null;
     if (typeof newMode === "string" || !("wire" in newMode)) {
-      pendingWireFrom = null;
+      setPendingWireFrom(null);
       wireColorInHand = null;
     }
     if (newMode === "idle") {
@@ -1191,7 +1203,7 @@ export function mountBlueprintViewer(root: HTMLElement): () => void {
       // Switching straight from one wire colour to another abandons a pick
       // made in the old colour: its second click would otherwise create a
       // wire in a colour the user has already moved on from.
-      if (wireColorInHand !== newMode.wire) pendingWireFrom = null;
+      if (wireColorInHand !== newMode.wire) setPendingWireFrom(null);
       wireColorInHand = newMode.wire;
       // A wire on the cursor replaces whatever else was in hand — the
       // cursor only ever carries one thing.
@@ -1263,7 +1275,7 @@ export function mountBlueprintViewer(root: HTMLElement): () => void {
         return;
       }
       if (pendingWireFrom === null) {
-        pendingWireFrom = entityNumber;
+        setPendingWireFrom(entityNumber);
         setStatus(`Picked one end — click another entity to connect or disconnect the ${wireColorInHand} wire.`);
         return;
       }
@@ -1271,7 +1283,7 @@ export function mountBlueprintViewer(root: HTMLElement): () => void {
       // only 'q' clears a pick, never a click.
       if (pendingWireFrom === entityNumber) return;
       const from = pendingWireFrom;
-      pendingWireFrom = null;
+      setPendingWireFrom(null);
       applyEdit(() => {
         const result = toggleWire(wires, wireColorInHand!, from, entityNumber);
         wires = result.wires;
@@ -2089,7 +2101,7 @@ export function mountBlueprintViewer(root: HTMLElement): () => void {
     // since none of them applies while a wire is in hand.
     if (wireColorInHand !== null) {
       if (pendingWireFrom !== null) {
-        pendingWireFrom = null;
+        setPendingWireFrom(null);
         setStatus(`Cleared the pick — still holding the ${wireColorInHand} wire.`);
       } else {
         setMode("idle");
@@ -2314,6 +2326,9 @@ export function mountBlueprintViewer(root: HTMLElement): () => void {
     // by keyboard and then expected to stay in hand.
     if (wireColorInHand) renderer.setInteractionMode({ kind: "wire", color: wireColorInHand });
     else if (paletteSelection) renderer.setInteractionMode({ kind: "place", entityName: paletteSelection, quality: paletteQuality });
+    // A fresh renderer knows nothing of a half-finished pick either, so an
+    // armed wire would stop trailing to the cursor across the swap.
+    if (pendingWireFrom !== null) renderer.setPendingWire(pendingWireFrom);
     if (entities.length) renderer.loadBlueprint(entities, wires);
 
     populateMeasureOptions();

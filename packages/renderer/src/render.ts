@@ -8,7 +8,7 @@ import { buildGrid, NeighbourGrid } from "./neighbours/grid.js";
 import { buildFluidNetwork, FluidNetwork } from "./neighbours/fluid.js";
 import { buildHeatNetwork, HeatNetwork } from "./neighbours/heat.js";
 import type { PlatformBox } from "./neighbours/platform.js";
-import { buildWireNetwork, resolveWires, type ResolvedWire, type WireNetwork } from "./neighbours/wires.js";
+import { buildWireNetwork, resolveWires, terminalFor, type ResolvedWire, type WireNetwork } from "./neighbours/wires.js";
 import { drawSupplyAreas, drawWires, type SupplyArea } from "./draw/wireDraw.js";
 import { collectEntity, type CollectContext } from "./draw/collect.js";
 import { paint, paintPlain, drawOutline, type PaintTally } from "./draw/paint.js";
@@ -247,6 +247,11 @@ export interface BlueprintRenderer {
    *  two of these into one connect/disconnect. Clicks that hit no entity
    *  never fire it, and never cancel anything (see onPointerDown). */
   onWireClick(callback: (entityNumber: number) => void): void;
+  /** Arms (or disarms, with null) the entity an in-progress wire trails
+   *  from, so the renderer can draw the dangling end to the cursor while a
+   *  two-click connect is half-finished. The app owns the pick itself; this
+   *  only tells the renderer what to draw. */
+  setPendingWire(entityNumber: number | null): void;
   /** Fires whenever the shared sprite atlas's pending-load count changes —
    *  `loading` is true while at least one sheet is still fetching/decoding
    *  (a pan/zoom bringing new entities into view, or the initial burst on
@@ -371,6 +376,11 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
   let wires: WireLink[] = [];
   let wireNetwork: WireNetwork = buildWireNetwork([], [], isPoleLike);
   let resolvedWires: ResolvedWire[] = [];
+  /** The entity whose terminal an in-progress wire trails from, while the
+   *  user is part-way through a two-click connect. Null whenever no pick is
+   *  armed. The app owns the pick itself; this is only what the renderer
+   *  needs to draw the dangling end. */
+  let pendingWireFrom: number | null = null;
   let grid = new NeighbourGrid();
   let fluidNetwork = new FluidNetwork();
   let heatNetwork = new HeatNetwork();
@@ -865,7 +875,22 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
     // Drawn from the resolved list rather than per visible entity so a wire
     // whose far pole is off screen is still drawn to its real endpoint,
     // instead of stopping at the viewport edge.
-    drawWires(ctx, resolvedWires, camera.state.pixelsPerTile);
+    // A wire being drawn right now trails from the armed entity's terminal to
+    // the cursor, so you can see what you are about to connect. Resolved per
+    // frame rather than cached: the cursor end moves continuously, and it
+    // leaves from exactly the terminal resolveWires would use for the
+    // finished wire (terminalFor), so nothing jumps when the second end
+    // lands. Appended to the same list so it sorts and strokes identically.
+    const trailing: ResolvedWire[] = [];
+    if (mode.kind === "wire" && pendingWireFrom !== null) {
+      const from = entityById.get(pendingWireFrom);
+      const start = from && terminalFor(from, visualFor(from.name), directionOf(from), mode.color);
+      if (start) {
+        const cursor = worldAtScreenPoint(lastPointer.x, lastPointer.y);
+        trailing.push({ color: mode.color, x1: start.x, y1: start.y, x2: cursor.x, y2: cursor.y, reaches: true });
+      }
+    }
+    drawWires(ctx, trailing.length ? [...resolvedWires, ...trailing] : resolvedWires, camera.state.pixelsPerTile);
 
     if (hasHighlight) {
       for (const entity of visibleEntities) {
@@ -1458,6 +1483,9 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
       invalidate(); // the ghost follows the cursor, so the picture changed
       if (isPlacingDrag) placeAtGhost();
     }
+    // An armed wire trails to the cursor, so the picture changes on every
+    // move even though nothing in the scene itself did.
+    if (mode.kind === "wire" && pendingWireFrom !== null) invalidate();
     if (isPanning) {
       const dx = e.clientX - lastPointer.x;
       const dy = e.clientY - lastPointer.y;
@@ -1774,6 +1802,11 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
     },
     onWireClick(callback) {
       wireClickCallback = callback;
+    },
+    setPendingWire(entityNumber) {
+      if (pendingWireFrom === entityNumber) return;
+      pendingWireFrom = entityNumber;
+      invalidate();
     },
     onLoadingChange(callback) {
       atlas.setOnPendingChange((pending) => callback(pending > 0));
