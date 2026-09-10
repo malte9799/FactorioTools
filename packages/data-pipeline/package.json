@@ -6,11 +6,13 @@
   "scripts": {
     "dump-to-gamedata": "tsx src/dump-to-gamedata.ts",
     "extract-sprites": "tsx src/extract-sprites.ts",
+    "crop-sprite-sheets": "tsx src/crop-sprite-sheets.ts",
     "build-debug-lab": "tsx src/build-debug-lab.ts",
     "check": "tsc --noEmit"
   },
   "dependencies": {
     "@factoriotools/engine": "*",
+    "@factoriotools/renderer": "*",
     "pngjs": "^7.0.0"
   },
   "devDependencies": {
