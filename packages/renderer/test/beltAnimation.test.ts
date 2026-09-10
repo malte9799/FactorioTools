@@ -21,8 +21,8 @@
 import assert from "node:assert/strict";
 import { readFileSync, existsSync } from "node:fs";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
-import type { GameData, RenderCatalog, PlacedEntity } from "@factoriotools/engine";
+import type { PlacedEntity } from "@factoriotools/engine";
+import { requireDataset, DATA_DIR } from "./dataset.js";
 import { buildVisualLookup, makeConnectorPredicates, activeFluidConnections } from "../src/entityLookup.js";
 import { buildGrid } from "../src/neighbours/grid.js";
 import { buildFluidNetwork } from "../src/neighbours/fluid.js";
@@ -43,10 +43,10 @@ function test(name: string, fn: () => void) {
   }
 }
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const PUBLIC = path.resolve(__dirname, "../../../apps/site/public/data");
-const gameData: GameData = JSON.parse(readFileSync(path.join(PUBLIC, "game-data.json"), "utf-8"));
-const catalog: RenderCatalog = JSON.parse(readFileSync(path.join(PUBLIC, "render-catalog.json"), "utf-8"));
+// Also needs the extracted sprite sheets, not just the JSON — it reads PNG
+// headers to check that no frame addresses past the end of its sheet.
+const { gameData, catalog } = requireDataset("beltAnimation", true);
+const PUBLIC = DATA_DIR;
 const lookup = buildVisualLookup(gameData, catalog);
 const connectors = makeConnectorPredicates(lookup);
 

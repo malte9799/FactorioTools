@@ -1,8 +1,7 @@
 import assert from "node:assert/strict";
 import { Camera } from "../src/camera.js";
 import { buildVisualLookup, hasAnimatedLayer } from "../src/entityLookup.js";
-import { readFileSync } from "node:fs";
-import type { GameData, RenderCatalog } from "@factoriotools/engine";
+import { requireDataset } from "./dataset.js";
 
 let passed = 0;
 function test(name: string, fn: () => void) {
@@ -65,8 +64,7 @@ test("detaching the callback stops notifications", () => {
 
 /* ---------- hasAnimatedLayer decides whether the loop keeps drawing ---------- */
 
-const data: GameData = JSON.parse(readFileSync("../../apps/site/public/data/game-data.json", "utf8"));
-const catalog: RenderCatalog = JSON.parse(readFileSync("../../apps/site/public/data/render-catalog.json", "utf8"));
+const { gameData: data, catalog } = requireDataset("redraw");
 const lookup = buildVisualLookup(data, catalog);
 
 test("belts report as animated", () => {

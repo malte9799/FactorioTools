@@ -16,10 +16,8 @@
  * looks plausible on a two-pole test and only falls apart at scale.
  */
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
-import path from "node:path";
-import { fileURLToPath } from "node:url";
-import type { GameData, PlacedEntity, RenderCatalog, WireLink } from "@factoriotools/engine";
+import type { PlacedEntity, WireLink } from "@factoriotools/engine";
+import { requireDataset } from "./dataset.js";
 import { buildVisualLookup, isPoleLike } from "../src/entityLookup.js";
 import { autoConnectPole, canWire, dropWiresFor, toggleWire, wireExists } from "../src/neighbours/wires.js";
 
@@ -36,10 +34,7 @@ function test(name: string, fn: () => void) {
   }
 }
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const PUBLIC = path.resolve(__dirname, "../../../apps/site/public/data");
-const gameData: GameData = JSON.parse(readFileSync(path.join(PUBLIC, "game-data.json"), "utf-8"));
-const catalog: RenderCatalog = JSON.parse(readFileSync(path.join(PUBLIC, "render-catalog.json"), "utf-8"));
+const { gameData, catalog } = requireDataset("wireEdit");
 const lookup = buildVisualLookup(gameData, catalog);
 const visualFor = (name: string) => lookup.get(name);
 
