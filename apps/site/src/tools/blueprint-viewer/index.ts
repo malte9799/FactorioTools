@@ -19,8 +19,8 @@ import {
   boxOf,
   overlaps,
 } from "@factoriotools/engine";
-import type { CalculationResult, Timescale, Blueprint, PlacedEntity, QualityName, MachineGroup, ModuleStack, ThroughputContext, BottleneckSubgroup, WireLink } from "@factoriotools/engine";
-import { mountRenderer, isPoleLike, isTwoDirectionOnly, rotationStep, effectiveFootprint, summariseRecording, slowestFrames, worstPhase, type BlueprintRenderer, type HighlightRole } from "@factoriotools/renderer";
+import type { CalculationResult, Timescale, Blueprint, PlacedEntity, QualityName, MachineGroup, ModuleStack, ThroughputContext, BottleneckSubgroup, WireColor, WireLink } from "@factoriotools/engine";
+import { mountRenderer, isPoleLike, isTwoDirectionOnly, rotationStep, effectiveFootprint, summariseRecording, slowestFrames, worstPhase, autoConnectPole, canWire, dropWiresFor, toggleWire, type BlueprintRenderer, type HighlightRole } from "@factoriotools/renderer";
 import { buildRecipeCard, renderResults, type ViewOptions } from "./legacy-view/panels.js";
 import { icon } from "./legacy-view/icons.js";
 import { makeFloatingWindow } from "../../window-manager.js";
@@ -682,9 +682,19 @@ export function mountBlueprintViewer(root: HTMLElement): () => void {
 
   let blueprints: Blueprint[] = [];
   let entities: PlacedEntity[] = [];
-  /** The loaded blueprint's wires. Kept beside `entities` because a wire
+  /** The blueprint's wires — both the ones it was loaded with and any the
+   *  user has since made, by placing a pole (copper auto-connects) or by
+   *  wiring two entities by hand. Kept beside `entities` because a wire
    *  names the entities it joins by number, so the two must stay in step. */
   let wires: WireLink[] = [];
+  /** The first entity picked in a two-click wire gesture, or null when the
+   *  next click starts a fresh pair. Cleared by the first 'q' press; a
+   *  second 'q' leaves wire mode entirely (see the 'q' handler). */
+  let pendingWireFrom: number | null = null;
+  /** Which wire colour is on the cursor (Alt+C/R/G), or null outside wire
+   *  mode. Mirrors the renderer's own 'wire' InteractionMode so the app can
+   *  answer "is a wire in hand" without asking the renderer back. */
+  let wireColorInHand: WireColor | null = null;
   let result: CalculationResult | null = null;
   // Set by every edit (applyEdit/undo/redo), cleared by load()/startNew()
   // and after a successful library save — drives the "Save/Discard/Cancel"
@@ -835,7 +845,7 @@ export function mountBlueprintViewer(root: HTMLElement): () => void {
     if (!entities.length) return;
     try {
       const template = blueprints[0] ?? { item: "blueprint" as const, label: undefined, version: undefined };
-      const bpString = encodeBlueprintString({ blueprint: toBlueprint(entities, template) });
+      const bpString = encodeBlueprintString({ blueprint: toBlueprint(entities, template, wires) });
       localStorage.setItem(AUTOSAVE_KEY, bpString);
     } catch {
       /* storage unavailable — not worth surfacing for a dev convenience */
@@ -850,6 +860,11 @@ export function mountBlueprintViewer(root: HTMLElement): () => void {
     nextEntityNumber = entities.reduce((max, e) => Math.max(max, e.entityNumber), 0) + 1;
     undoStack = [];
     redoStack = [];
+    // Reset in lockstep with the entity stacks: leaving the previous
+    // blueprint's wire snapshots behind would make the first undo after a
+    // load restore stale wires against the freshly-loaded entities.
+    undoWires = [];
+    redoWires = [];
     hasUnsavedChanges = false;
     deselect();
     renderer.loadBlueprint(entities, wires);
@@ -870,6 +885,8 @@ export function mountBlueprintViewer(root: HTMLElement): () => void {
     nextEntityNumber = 1;
     undoStack = [];
     redoStack = [];
+    undoWires = [];
+    redoWires = [];
     hasUnsavedChanges = false;
     deselect();
     renderer.loadBlueprint(entities, wires);
@@ -903,6 +920,14 @@ export function mountBlueprintViewer(root: HTMLElement): () => void {
   // array + each module object — exactly as deep as PlacedEntity nests.
   let undoStack: PlacedEntity[][] = [];
   let redoStack: PlacedEntity[][] = [];
+  /** Wire snapshots, pushed and popped in lockstep with the entity stacks
+   *  above. Kept as a parallel array rather than folded into the entity
+   *  snapshot because a wire names entities by number: undoing entities
+   *  without undoing wires would leave copper pointing at an entity number
+   *  that no longer exists, and undoing wires without entities would drop
+   *  connections the restored poles still expect. */
+  let undoWires: WireLink[][] = [];
+  let redoWires: WireLink[][] = [];
 
   /** Ceiling on how many snapshots either history keeps. Each entry is a full
    *  copy of every entity — measured at ~1.1 MB on a 6.5k-entity blueprint —
@@ -930,10 +955,15 @@ export function mountBlueprintViewer(root: HTMLElement): () => void {
    *  entities/renderer/recalculate/re-render sequence every edit needs. */
   function applyEdit(mutate: () => void): void {
     pushHistory(undoStack, snapshotEntities());
+    // Wires ride the same history as entities — see undoWires' own comment
+    // for why they cannot be undone independently of each other.
+    undoWires.push(wires);
+    if (undoWires.length > HISTORY_LIMIT) undoWires.shift();
     redoStack = [];
+    redoWires = [];
     mutate();
     hasUnsavedChanges = true;
-    renderer.updateEntities(entities);
+    renderer.updateEntities(entities, wires);
     recalculate();
     renderPropertiesPanel();
     persistEntities();
@@ -942,10 +972,15 @@ export function mountBlueprintViewer(root: HTMLElement): () => void {
   function undo(): void {
     if (!undoStack.length) return;
     pushHistory(redoStack, snapshotEntities());
+    redoWires.push(wires);
     entities = undoStack.pop()!;
+    // Popped in lockstep: the two stacks are pushed together by every edit,
+    // so they are always the same depth.
+    wires = undoWires.pop() ?? wires;
     selectedEntity = undefined; // safest default: it may not exist post-undo
+    pendingWireFrom = null; // the half-picked entity may not exist post-undo
     hasUnsavedChanges = true;
-    renderer.updateEntities(entities);
+    renderer.updateEntities(entities, wires);
     recalculate();
     renderPropertiesPanel();
     persistEntities();
@@ -954,10 +989,13 @@ export function mountBlueprintViewer(root: HTMLElement): () => void {
   function redo(): void {
     if (!redoStack.length) return;
     pushHistory(undoStack, snapshotEntities());
+    undoWires.push(wires);
     entities = redoStack.pop()!;
+    wires = redoWires.pop() ?? wires;
     selectedEntity = undefined;
+    pendingWireFrom = null;
     hasUnsavedChanges = true;
-    renderer.updateEntities(entities);
+    renderer.updateEntities(entities, wires);
     recalculate();
     renderPropertiesPanel();
     persistEntities();
@@ -1021,13 +1059,25 @@ export function mountBlueprintViewer(root: HTMLElement): () => void {
         filterItems: [],
       };
       entities = [...entities, newEntity];
+      // A pole dropped beside a powered one joins the network on the spot,
+      // the way the game does it — copper only, and only for poles.
+      // autoConnectPole is a no-op for everything else. Runs inside the same
+      // applyEdit as the placement, so the pole and its wires undo together
+      // rather than as two separate steps.
+      wires = autoConnectPole(newEntity, entities, wires, visualLookup().get.bind(visualLookup()), isPoleLike);
     });
   }
 
   function removeEntity(entityNumber: number) {
     if (selectedEntity?.entityNumber === entityNumber) deselect();
+    // A half-picked wire whose first end is the entity being erased has no
+    // valid second click left, so drop the pick rather than let the next
+    // click complete a wire to something that no longer exists.
+    if (pendingWireFrom === entityNumber) pendingWireFrom = null;
     applyEdit(() => {
       entities = entities.filter((e) => e.entityNumber !== entityNumber);
+      // Otherwise its wires would hang in the air pointing at a gone entity.
+      wires = dropWiresFor(wires, new Set([entityNumber]));
     });
   }
 
@@ -1126,10 +1176,30 @@ export function mountBlueprintViewer(root: HTMLElement): () => void {
    *  entity IS in hand (picked from the palette, or via the 'q' pipette
    *  below): left-click places it. Right-click erases in either mode
    *  (wired once in render.ts, not here). */
-  function setMode(newMode: "idle" | { place: string; quality?: QualityName; direction?: number }) {
+  function setMode(newMode: "idle" | { place: string; quality?: QualityName; direction?: number } | { wire: WireColor }) {
+    // Leaving wire mode always drops a half-finished pick — otherwise the
+    // first end would still be armed the next time wire mode came back on.
+    if (typeof newMode === "string" || !("wire" in newMode)) {
+      pendingWireFrom = null;
+      wireColorInHand = null;
+    }
     if (newMode === "idle") {
       paletteSelection = null;
       renderer.setInteractionMode({ kind: "idle" });
+    } else if ("wire" in newMode) {
+      // Switching straight from one wire colour to another abandons a pick
+      // made in the old colour: its second click would otherwise create a
+      // wire in a colour the user has already moved on from.
+      if (wireColorInHand !== newMode.wire) pendingWireFrom = null;
+      wireColorInHand = newMode.wire;
+      // A wire on the cursor replaces whatever else was in hand — the
+      // cursor only ever carries one thing.
+      paletteSelection = null;
+      if (heldModule) {
+        heldModule = null;
+        updateCursorIcon(lastPointerPos.x, lastPointerPos.y);
+      }
+      renderer.setInteractionMode({ kind: "wire", color: newMode.wire });
     } else {
       // Taking an entity into the cursor drops any held module, so the
       // cursor only ever carries one thing (the mirror of setHeldModule's
@@ -1174,6 +1244,35 @@ export function mountBlueprintViewer(root: HTMLElement): () => void {
     });
     renderer.onErase((entityNumber) => {
       removeEntity(entityNumber);
+    });
+    // Two clicks make or break one wire. The first arms `pendingWireFrom`,
+    // the second completes the pair. A click on an entity that has no
+    // terminal of the held colour is refused outright rather than armed, so
+    // the gesture never strands the user half-way through a wire that could
+    // not exist (a belt has no circuit terminals at all).
+    renderer.onWireClick((entityNumber) => {
+      if (wireColorInHand === null) return;
+      const entity = entities.find((e) => e.entityNumber === entityNumber);
+      if (!entity) return;
+      if (!canWire(visualLookup().get(entity.name), wireColorInHand)) {
+        setStatus(`A ${entity.name.replace(/-/g, " ")} has no ${wireColorInHand} wire terminal.`, "error");
+        return;
+      }
+      if (pendingWireFrom === null) {
+        pendingWireFrom = entityNumber;
+        setStatus(`Picked one end — click another entity to connect or disconnect the ${wireColorInHand} wire.`);
+        return;
+      }
+      // Re-clicking the same entity is inert, per the user's own design:
+      // only 'q' clears a pick, never a click.
+      if (pendingWireFrom === entityNumber) return;
+      const from = pendingWireFrom;
+      pendingWireFrom = null;
+      applyEdit(() => {
+        const result = toggleWire(wires, wireColorInHand!, from, entityNumber);
+        wires = result.wires;
+        setStatus(result.connected ? `Connected with a ${wireColorInHand} wire.` : `Disconnected the ${wireColorInHand} wire.`);
+      });
     });
     // Alt+right-click a machine with a module in hand: stamp that module
     // into every one of its slots at once. Without a module held there's
@@ -1623,7 +1722,7 @@ export function mountBlueprintViewer(root: HTMLElement): () => void {
           return;
         }
         const template = blueprints[0] ?? { item: "blueprint" as const, label: undefined, version: undefined };
-        const bpString = encodeBlueprintString({ blueprint: toBlueprint(entities, template) });
+        const bpString = encodeBlueprintString({ blueprint: toBlueprint(entities, template, wires) });
         const label = unsavedNameInput.value.trim() || "Untitled blueprint";
         try {
           saveToLibrary(bpString, label);
@@ -1719,7 +1818,7 @@ export function mountBlueprintViewer(root: HTMLElement): () => void {
     getCurrentBpString() {
       if (!entities.length) return null;
       const template = blueprints[0] ?? { item: "blueprint" as const, label: undefined, version: undefined };
-      return encodeBlueprintString({ blueprint: toBlueprint(entities, template) });
+      return encodeBlueprintString({ blueprint: toBlueprint(entities, template, wires) });
     },
     onNew: guardedStartNew,
   });
@@ -1758,7 +1857,7 @@ export function mountBlueprintViewer(root: HTMLElement): () => void {
       return;
     }
     const template = blueprints[0] ?? { item: "blueprint" as const, label: undefined, version: undefined };
-    const bpString = encodeBlueprintString({ blueprint: toBlueprint(entities, template) });
+    const bpString = encodeBlueprintString({ blueprint: toBlueprint(entities, template, wires) });
     try {
       await navigator.clipboard.writeText(bpString);
       input.value = bpString;
@@ -1827,6 +1926,39 @@ export function mountBlueprintViewer(root: HTMLElement): () => void {
   // stamping), checked and cleared by the Alt-keyup handler above — without
   // it, every such gesture would also toggle alt mode on release.
   let usedAltAsModifier = false;
+
+  // Alt+C / Alt+R / Alt+G put a copper / red / green wire on the cursor.
+  // Two clicks then make or break that wire between the pair (see
+  // onWireClick); 'q' clears, in two stages.
+  //
+  // Bound on e.code, NOT e.key: on macOS Alt+letter emits a special
+  // character (Alt+C is "ç", Alt+R "®", Alt+G "©"), so an e.key check would
+  // simply never match. e.code is the physical key and is unaffected by the
+  // modifier or the keyboard layout. Every other shortcut in this file
+  // reads e.key and explicitly bails on altKey, which is why none of them
+  // hit this problem.
+  const WIRE_KEYS: Record<string, WireColor> = { KeyC: "copper", KeyR: "red", KeyG: "green" };
+  window.addEventListener("keydown", (e) => {
+    if (!e.altKey || e.metaKey || e.ctrlKey || e.shiftKey) return;
+    const color = WIRE_KEYS[e.code];
+    if (!color) return;
+    if (document.activeElement instanceof HTMLInputElement || document.activeElement instanceof HTMLTextAreaElement) return;
+    e.preventDefault();
+    // Alt is being held as a modifier here, so its eventual release must not
+    // also toggle alt mode (the same guard Shift+Alt+scroll and Alt+right-
+    // click already use).
+    usedAltAsModifier = true;
+    // Pressing the same colour again puts the wire away, so one shortcut
+    // both takes and drops it — matching how 'q' toggles on a pipette.
+    if (wireColorInHand === color) {
+      setMode("idle");
+      setStatus("Put the wire away.");
+      return;
+    }
+    setMode({ wire: color });
+    deselect();
+    setStatus(`Holding a ${color} wire — click two entities to connect or disconnect them.`);
+  }, { signal });
 
   // Shift+Alt+scroll while a ghost is in hand cycles its quality tier
   // (up on scroll-up, down on scroll-down) — matches the real game's own
@@ -1927,6 +2059,22 @@ export function mountBlueprintViewer(root: HTMLElement): () => void {
     // suppress, and calling it was triggering macOS's own "hide pointer
     // while typing" heuristic, leaving the system cursor invisible until
     // the next mousemove.
+    // A wire on the cursor clears in two stages, per the user's own design:
+    // the first 'q' drops a half-finished pick but KEEPS the wire in hand
+    // (so a mis-click costs one keypress, not the whole mode), and only a
+    // second 'q' puts the wire away. Checked before every branch below,
+    // since none of them applies while a wire is in hand.
+    if (wireColorInHand !== null) {
+      if (pendingWireFrom !== null) {
+        pendingWireFrom = null;
+        setStatus(`Cleared the pick — still holding the ${wireColorInHand} wire.`);
+      } else {
+        setMode("idle");
+        setStatus("Put the wire away.");
+      }
+      return;
+    }
+
     // A module under the cursor — either a cell in the module menu or a
     // filled slot in the machine GUI — goes into the cursor as a held
     // module rather than an entity ghost: a module isn't placeable on the
@@ -2134,6 +2282,15 @@ export function mountBlueprintViewer(root: HTMLElement): () => void {
     renderer.onHover(onSchematicHover);
     renderer.setAltMode(altModeOn);
     wireEditCallbacks();
+    // A fresh renderer starts in 'idle', so whatever was in hand when the
+    // real dataset arrived has to be re-applied — otherwise the app still
+    // believes a wire (or an entity) is on the cursor while the renderer
+    // that actually handles the clicks has forgotten, and every click falls
+    // through to panning. Only mattered for wire mode in practice: the
+    // palette re-sets place mode on the next pick, but a wire is taken once
+    // by keyboard and then expected to stay in hand.
+    if (wireColorInHand) renderer.setInteractionMode({ kind: "wire", color: wireColorInHand });
+    else if (paletteSelection) renderer.setInteractionMode({ kind: "place", entityName: paletteSelection, quality: paletteQuality });
     if (entities.length) renderer.loadBlueprint(entities, wires);
 
     populateMeasureOptions();

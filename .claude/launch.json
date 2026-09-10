@@ -12,6 +12,12 @@
       "runtimeExecutable": "npm",
       "runtimeArgs": ["run", "dev", "--workspace", "apps/site", "--", "--port", "4175", "--strictPort"],
       "port": 4175
+    },
+    {
+      "name": "site-dev-alt",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["run", "dev", "--workspace", "apps/site", "--", "--port", "4176", "--strictPort"],
+      "port": 4176
     }
   ]
 }
