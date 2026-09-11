@@ -13,6 +13,7 @@ import { readFileSync, writeFileSync, mkdirSync, copyFileSync, existsSync } from
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { PNG } from "pngjs";
+import { BuildCache, reportCache } from "./build-cache.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -30,6 +31,16 @@ const MANIFEST_PATH = path.join(SITE_PUBLIC, "data/sprite-source-manifest.json")
 const ENTITY_SPRITE_OUT_DIR = path.join(SITE_PUBLIC, "data/sprites/entities");
 const ICON_ATLAS_OUT = path.join(SITE_PUBLIC, "data/sprites/icons.png");
 const ICON_MANIFEST_OUT = path.join(SITE_PUBLIC, "data/sprite-icon-manifest.json");
+const CACHE_PATH = path.join(SITE_PUBLIC, "data/.build-cache.json");
+
+/** Shared by all three extraction steps; written once at the end.
+ *
+ *  --force rebuilds everything by starting from an empty set of previous
+ *  stamps, but still WRITES to the real cache path — so a forced run leaves
+ *  the next run fast rather than discarding the cache or littering a second
+ *  file next to the data. */
+const FORCE = process.argv.includes("--force");
+const cache = new BuildCache(CACHE_PATH, { ignorePrevious: FORCE });
 
 /** Factorio prototype paths are namespaced by mod, e.g.
  *  "__base__/graphics/entity/...", "__space-age__/graphics/...". Maps
@@ -52,6 +63,7 @@ function extractEntitySheets(): void {
   mkdirSync(ENTITY_SPRITE_OUT_DIR, { recursive: true });
   let copied = 0;
   let missing = 0;
+  let reused = 0;
   for (const file of manifest.files) {
     const src = resolveModPath(file);
     if (!existsSync(src)) {
@@ -63,10 +75,23 @@ function extractEntitySheets(): void {
     // avoided because Factorio's own filenames are already unique per
     // entity (e.g. "assembling-machine-2.png", not "sheet.png").
     const dest = path.join(ENTITY_SPRITE_OUT_DIR, path.basename(src));
+    // Skip sheets whose source has not moved since the last run AND whose
+    // copy is still on disk. Deliberately keyed on the file in the Factorio
+    // install: crop-sprite-sheets later rewrites `dest` in place, so
+    // stamping the destination would make every run see it as changed.
+    //
+    // A cache hit here means the destination is whatever the last run left
+    // — which, after a crop, is the CROPPED file, not a fresh copy. That is
+    // the point: re-copying would undo the crop and force it to run again.
+    if (cache.isFresh(src, [dest])) {
+      reused++;
+      continue;
+    }
     copyFileSync(src, dest);
     copied++;
   }
-  console.log(`Entity sprites: copied ${copied}, missing ${missing} -> ${ENTITY_SPRITE_OUT_DIR}`);
+  const reusedNote = reused > 0 ? `, reused ${reused}` : "";
+  console.log(`Entity sprites: copied ${copied}${reusedNote}, missing ${missing} -> ${ENTITY_SPRITE_OUT_DIR}`);
 }
 
 /** Icons are one small PNG per prototype (confirmed by spike: `icon` is a
@@ -140,6 +165,19 @@ function extractIconAtlas(): void {
     }
   }
 
+  // The atlas packs every icon into ONE image whose cell layout depends on
+  // how many icons there are, so a single changed or added icon invalidates
+  // the whole thing — there is no per-file skip to be had here. Freshness is
+  // therefore all-or-nothing: every source must be unchanged, and both
+  // outputs still present. isFresh() is called for all of them (not
+  // short-circuited) so each one's stamp is recorded for the next run.
+  const atlasOutputs = [ICON_ATLAS_OUT, ICON_MANIFEST_OUT];
+  const stale = entries.map((e) => cache.isFresh(e.file, atlasOutputs)).filter((fresh) => !fresh).length;
+  if (stale === 0 && entries.length > 0) {
+    console.log(`Packing icon atlas: ${entries.length} icons — unchanged, kept`);
+    return;
+  }
+
   console.log(`Packing icon atlas: ${entries.length} icons`);
 
   const CELL = 64;
@@ -195,6 +233,7 @@ function extractItemGroupIcons(): void {
 
   let copied = 0;
   let missing = 0;
+  let reused = 0;
   for (const proto of Object.values(raw["item-group"] ?? {})) {
     const icon = (proto as any).icon;
     if (typeof icon !== "string") continue;
@@ -202,6 +241,11 @@ function extractItemGroupIcons(): void {
     if (!existsSync(src)) {
       console.warn(`  missing item-group icon: ${src}`);
       missing++;
+      continue;
+    }
+    // One source -> one output, so this skips per file like the sheets do.
+    if (cache.isFresh(src, [path.join(outDir, path.basename(src))])) {
+      reused++;
       continue;
     }
     const iconSize = typeof (proto as any).icon_size === "number" ? (proto as any).icon_size : 64;
@@ -218,3 +262,8 @@ function extractItemGroupIcons(): void {
 extractEntitySheets();
 extractIconAtlas();
 extractItemGroupIcons();
+
+// Written once, after every step has recorded what it looked at. Entries the
+// run never touched are dropped rather than accumulating forever.
+cache.save();
+reportCache(cache, "incremental");

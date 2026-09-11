@@ -63,6 +63,12 @@ regenerate, regenerate all three.
 
 Non-standard install paths are read from `FACTORIO_DATA` and `FACTORIO_DUMP`.
 
+`extract-sprites` is incremental: it stamps each source file's size and
+mtime, and skips anything unchanged whose output is still present. Re-running
+it after a crop therefore leaves the cropped sheets alone instead of
+replacing them with fresh uncropped copies. Pass `--force` to rebuild
+regardless.
+
 ## Development
 
 ```bash
