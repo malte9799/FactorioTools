@@ -102,6 +102,19 @@ export interface Sprite {
    *  single-file sprite, which uses plain `sheet`. */
   sheets?: string[];
   rowsPerSheet?: number;
+  /** Clockwise rotation in degrees, about the sprite's own on-screen
+   *  center, applied at paint time. Not something Factorio's own data ever
+   *  carries — vanilla entities never need it, since every rotatable
+   *  entity ships pre-rendered per-direction art instead (this is why
+   *  Factorio's wall/rail art must never be rotated at render time: doing
+   *  so breaks the connection art's alignment with its neighbours). This
+   *  exists solely for a hand-placed static composite where no source
+   *  frame exists at the needed angle — the agricultural tower's crane
+   *  parts (see render-catalog.ts's agriculturalTowerGraphics), whose
+   *  sheets are yaw-only (every direction keeps the part vertical on
+   *  screen) and so have no frame that alone depicts a swept, angled arm.
+   *  Leave undefined for anything backed by real per-direction art. */
+  rotationDeg?: number;
 }
 
 /** Which paint pass a sprite belongs to. Every sprite in the world is sorted

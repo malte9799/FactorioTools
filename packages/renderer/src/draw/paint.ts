@@ -98,7 +98,23 @@ export function paintPlain(
       ctx.globalAlpha = wantAlpha;
       alpha = wantAlpha;
     }
-    ctx.drawImage(img, c.sx, c.sy, c.sw, c.sh, c.dx, c.dy, c.dw, c.dh);
+    // Rotation is rare — only a hand-placed static composite like the
+    // agricultural tower's crane parts ever sets it (see Sprite.rotationDeg's
+    // own doc comment) — so this stays a plain drawImage for every other
+    // command, and only pays for save/translate/rotate/restore on the ones
+    // that actually need it.
+    if (c.rotationDeg) {
+      const cx = c.dx + c.dw / 2;
+      const cy = c.dy + c.dh / 2;
+      ctx.save();
+      ctx.translate(cx, cy);
+      ctx.rotate((c.rotationDeg * Math.PI) / 180);
+      ctx.translate(-cx, -cy);
+      ctx.drawImage(img, c.sx, c.sy, c.sw, c.sh, c.dx, c.dy, c.dw, c.dh);
+      ctx.restore();
+    } else {
+      ctx.drawImage(img, c.sx, c.sy, c.sw, c.sh, c.dx, c.dy, c.dw, c.dh);
+    }
   }
   if (alpha !== 1) ctx.globalAlpha = 1;
   if (compositeIsMultiply) {
@@ -155,7 +171,18 @@ function paintTinted(ctx: CanvasRenderingContext2D, atlas: SpriteAtlas, commands
       offCtx.globalAlpha = wantAlpha;
       alpha = wantAlpha;
     }
-    offCtx.drawImage(img, c.sx, c.sy, c.sw, c.sh, (c.dx - left) * res, (c.dy - top) * res, c.dw * res, c.dh * res);
+    const ox = (c.dx - left) * res, oy = (c.dy - top) * res, ow = c.dw * res, oh = c.dh * res;
+    if (c.rotationDeg) {
+      const cx = ox + ow / 2, cy = oy + oh / 2;
+      offCtx.save();
+      offCtx.translate(cx, cy);
+      offCtx.rotate((c.rotationDeg * Math.PI) / 180);
+      offCtx.translate(-cx, -cy);
+      offCtx.drawImage(img, c.sx, c.sy, c.sw, c.sh, ox, oy, ow, oh);
+      offCtx.restore();
+    } else {
+      offCtx.drawImage(img, c.sx, c.sy, c.sw, c.sh, ox, oy, ow, oh);
+    }
   }
   offCtx.globalAlpha = 1;
   offCtx.globalCompositeOperation = "source-atop";

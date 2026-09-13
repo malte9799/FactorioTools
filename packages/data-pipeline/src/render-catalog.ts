@@ -277,6 +277,134 @@ function thrusterGraphics(proto: any): EntityGraphics | undefined {
   return { layers };
 }
 
+/** Picks one direction's frame out of a rotated_sprite-shaped sheet
+ *  (direction_count + line_length, direction packed into ROWS — see
+ *  isDirectionInRows) as a fixed, non-rotating Sprite: bakes the row's y
+ *  offset (and, for a sheet split across several same-sized files, the
+ *  right file) directly into the sprite rather than leaving it for
+ *  column/row frame axes, since this layer is meant to always draw that one
+ *  frame regardless of the entity's placement facing.
+ *
+ *  `cropTopFraction` chops that fraction off the TOP of the frame (0..1,
+ *  e.g. 0.75 keeps only the bottom quarter) by shrinking frameHeight and
+ *  advancing y into the frame by the same amount — crane-7/arm_outer's own
+ *  frame is a long bare telescoping shaft with just a small mounting
+ *  bracket at the bottom; the shaft's reach is irrelevant to an idle,
+ *  unextended pose and reads as a stray beam without it. Cropping shifts
+ *  the remaining art's own center down by half the removed height, so the
+ *  caller's `shift` must be pre-compensated (the crop happens here, not in
+ *  push()'s own frame math, so nothing else can absorb that offset). */
+function fixedDirectionFrame(raw: any, direction: number, cropTopFraction = 0): Sprite | undefined {
+  const sprite = toSprite(raw);
+  if (!sprite) return undefined;
+  const lineLength = raw?.line_length ?? 1;
+  const row = Math.floor(direction / lineLength);
+  const col = direction % lineLength;
+  let sheet = sprite.sheet;
+  let sheetRow = row;
+  if (sprite.sheets && sprite.rowsPerSheet) {
+    const fileIndex = Math.floor(row / sprite.rowsPerSheet);
+    sheet = sprite.sheets[fileIndex] ?? sprite.sheets[sprite.sheets.length - 1]!;
+    sheetRow = row % sprite.rowsPerSheet;
+  }
+  const y = sheetRow * sprite.frameHeight;
+  const cropPx = Math.round(sprite.frameHeight * cropTopFraction);
+  return {
+    ...sprite,
+    sheet,
+    sheets: undefined,
+    rowsPerSheet: undefined,
+    x: col * sprite.frameWidth,
+    y: y + cropPx,
+    frameHeight: sprite.frameHeight - cropPx,
+  };
+}
+
+/** The agricultural tower's arm ("crane") is a separate, heavily-animated
+ *  prototype (`proto.crane`, required in from its own file) rather than a
+ *  field under graphics_set — graphics_set alone (what the generic
+ *  PICTURE_FIELD path reads) only covers the base pedestal, which is why a
+ *  naive read of this entity renders a bare stump with an empty mounting
+ *  socket at the top and no arm at all.
+ *
+ *  The crane's 9 parts are positioned by the game as a true 3D kinematic
+ *  chain (relative_position/static_length against crane.origin) and its
+ *  rotated_sprite sheets are yaw-only — every direction keeps the part
+ *  vertical on screen, no frame alone depicts a swept, angled arm. So
+ *  rather than solve that chain, PART_PLACEMENT below is a hand-picked
+ *  direction + shift + paint-order bias per part, eyeballed in a one-off
+ *  visual placement tool (this project's own crane-editor scratch tool,
+ *  not part of the shipped app) against the base's own collar opening
+ *  until the still pose read correctly — the closest a still, unanimated
+ *  blueprint icon needs to get to the arm's real extended silhouette.
+ *
+ *  Each part's own `shift` (authored for its place in the 3D rig, relative
+ *  to crane.origin) does NOT carry over to this flat stack — confirmed by
+ *  spike: applied as-is, the hub's raw shift draws it oversized and
+ *  floating clear of the collar. ySortBias is likewise necessary, not
+ *  cosmetic: paint order within Layer.Object sorts by each sprite's own
+ *  shift.y (see collect.ts's push()), and every crane part's frame carries
+ *  a large transparent margin (room for the sheet's other 127 directions'
+ *  poses) that can otherwise sort a correctly-placed part behind the
+ *  base's own collar/tube art.
+ *
+ *  arm_central is deliberately omitted: its placement was never actually
+ *  finished, and unlike the others it isn't needed for a believable idle
+ *  pose — the parts on either side of it already read as a continuous arm
+ *  without it. */
+function agriculturalTowerGraphics(proto: any): EntityGraphics | undefined {
+  const gs = proto.graphics_set;
+  const { main, shadow } = unwrap(gs?.animation);
+  if (!main) return undefined;
+  const layers: GraphicsLayer[] = [];
+  if (shadow) layers.push({ layer: Layer.Shadow, sprites: shadow });
+  layers.push({ layer: Layer.Object, sprites: main });
+
+  const PART_PLACEMENT: Record<string, { direction: number; shift: [number, number]; ySortBias: number; cropTopFraction?: number; rotationDeg?: number }> = {
+    hub: { direction: 96, shift: [0.5114, -3.3137], ySortBias: 4 },
+    arm_inner: { direction: 96, shift: [-0.6467, -3.8829], ySortBias: 3, rotationDeg: 300 },
+    arm_inner_joint: { direction: 96, shift: [-1.9705, -4.3942], ySortBias: 6, rotationDeg: 275 },
+    arm_central_joint: { direction: 96, shift: [-3.3445, -4.3072], ySortBias: 5, rotationDeg: 253 },
+    // arm_outer's own frame is a long bare telescoping shaft with just a
+    // small mounting bracket at one end — the shaft's reach is irrelevant
+    // to an idle, unextended pose and reads as a stray floating beam
+    // without cropping. Cropped to its bottom quarter (the bracket end;
+    // "top" here means the top of the SOURCE frame, the far/telescoping
+    // end, not screen-up) via fixedDirectionFrame's cropTopFraction, which
+    // shrinks frameHeight and advances y into the frame — that shifts the
+    // remaining art's own center down by half the removed height, so the
+    // shift below is pre-compensated (see the shift math in
+    // agriculturalTowerGraphics' call site) to land the bracket where it
+    // was placed against the un-cropped frame in the editor.
+    arm_outer: { direction: 96, shift: [-4.0324, -7.8409], ySortBias: 5, cropTopFraction: 0.75, rotationDeg: 75 },
+    "grappler-hub": { direction: 48, shift: [-4.5742, -3.6692], ySortBias: 0, rotationDeg: 180 },
+    telescope: { direction: 0, shift: [-4.5945, -2.3077], ySortBias: -3, rotationDeg: 180 },
+    "grappler-claw": { direction: 0, shift: [-4.6013, -0.9101], ySortBias: -5, rotationDeg: 180 },
+  };
+  const parts = proto.crane?.parts;
+  const partByName = new Map<string, any>((parts ?? []).map((p: any) => [p.name, p]));
+  for (const [name, placement] of Object.entries(PART_PLACEMENT)) {
+    const part = partByName.get(name);
+    const raw = part?.rotated_sprite ?? part?.sprite; // telescope/grappler-claw use the non-rotating `sprite` field
+    const sprite = fixedDirectionFrame(raw, placement.direction, placement.cropTopFraction ?? 0);
+    if (!sprite) continue;
+    // Cropping shrinks frameHeight and keeps the BOTTOM of the source
+    // frame, which moves that remaining art's own center down on screen by
+    // half the cropped-away height — add that back so `placement.shift`
+    // (picked against the full, uncropped frame) still lands the kept
+    // portion where it was placed.
+    const cropPx = raw ? Math.round((raw.height ?? 0) * (placement.cropTopFraction ?? 0)) : 0;
+    const shiftY = placement.shift[1] + (cropPx * (sprite.scale ?? 1)) / 2 / 32;
+    layers.push({
+      layer: Layer.Object,
+      sprites: { ...sprite, shift: [placement.shift[0], shiftY], rotationDeg: placement.rotationDeg },
+      column: { by: "none" },
+      ySortBias: placement.ySortBias,
+    });
+  }
+  return { layers };
+}
+
 /** artillery-turret's cannon (base + barrel) rotates through a 256-entry
  *  aiming sheet — 64 rows of line_length frames, meant for fine in-combat
  *  traverse — rather than the plain {north,east,south,west} split every
@@ -600,7 +728,6 @@ const PICTURE_FIELD: Record<string, string> = {
   "land-mine": "picture_safe",
   "train-stop": "rail_overlay_animations",
   "asteroid-collector": "graphics_set",
-  "agricultural-tower": "graphics_set",
   "mining-drill": "graphics_set",
   // Turrets: graphics_set.base_visualisation.animation is the turret's real
   // stationary base/body sprite (per-direction {north,east,south,west[,
@@ -883,6 +1010,9 @@ export function buildRenderCatalog(raw: Raw, locale: LocaleTables, version: stri
   }
   for (const proto of Object.values(raw.thruster ?? {})) {
     add(proto, thrusterGraphics(proto));
+  }
+  for (const proto of Object.values(raw["agricultural-tower"] ?? {})) {
+    add(proto, agriculturalTowerGraphics(proto));
   }
   for (const proto of Object.values(raw["fusion-generator"] ?? {})) {
     add(proto, fusionGeneratorGraphics(proto));

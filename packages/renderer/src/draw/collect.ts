@@ -381,6 +381,7 @@ function push(
     y: entity.y + offsetY + shiftY + (capPriority ? CAP_PRIORITY_EPSILON : 0) + yBias,
     order,
     alpha,
+    rotationDeg: sprite.rotationDeg,
   });
 }
 

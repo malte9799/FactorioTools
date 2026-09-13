@@ -29,6 +29,11 @@ export interface DrawCommand {
    *  ghost's green/red valid/invalid tint. Undefined for every ordinary
    *  entity, which paints untinted. */
   tint?: string;
+  /** Clockwise degrees, about (dx+dw/2, dy+dh/2) — see Sprite.rotationDeg's
+   *  own doc comment for why this exists and why it should stay rare.
+   *  Undefined (the common case) skips the extra save/rotate/restore in
+   *  paint.ts entirely. */
+  rotationDeg?: number;
 }
 
 /** Global paint order: layer, then screen depth, then the entity's own layer
