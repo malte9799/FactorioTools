@@ -864,6 +864,71 @@ export function mountBlueprintViewer(root: HTMLElement): () => void {
     }
   }
 
+  // Remembers where the camera was pointed (world position + zoom) across
+  // page reloads, so refreshing mid-session doesn't snap back to the
+  // blueprint's auto-framed overview. Keyed alongside AUTOSAVE_KEY, one fixed
+  // slot rather than per-blueprint — same dev-convenience scope as the
+  // autosave next to it.
+  const CAMERA_KEY = "factoriotools.blueprint-viewer.camera";
+
+  function persistCamera(): void {
+    try {
+      localStorage.setItem(CAMERA_KEY, JSON.stringify(renderer.camera.state));
+    } catch {
+      /* storage unavailable — not worth surfacing for a dev convenience */
+    }
+  }
+
+  /** Overrides whatever auto-frame loadBlueprint() just did with the last
+   *  saved position/zoom, if one exists. Called right after every
+   *  loadBlueprint() so a restored session reopens exactly where it left
+   *  off instead of re-fitting to the blueprint's extent.
+   *
+   *  Reads the value captured BEFORE loadBlueprint() ran (passed in as
+   *  `savedBeforeLoad`) rather than re-reading localStorage here: framing
+   *  the blueprint fires the camera's onChange listener, which includes
+   *  persistCamera — so by the time this function would read localStorage,
+   *  loadBlueprint's own auto-frame has already clobbered the very value
+   *  this is trying to restore. */
+  function restoreCamera(savedBeforeLoad: string | null): void {
+    if (!savedBeforeLoad) return;
+    try {
+      const state = JSON.parse(savedBeforeLoad) as { x: number; y: number; pixelsPerTile: number };
+      if (typeof state.x !== "number" || typeof state.y !== "number" || typeof state.pixelsPerTile !== "number") return;
+      renderer.camera.state.x = state.x;
+      renderer.camera.state.y = state.y;
+      renderer.camera.state.pixelsPerTile = state.pixelsPerTile;
+      renderer.updateEntities(entities, wires); // repaint with the restored view, not the auto-framed one
+      // Mutating .state directly doesn't fire the camera's onChange, so
+      // re-save explicitly — otherwise the auto-framed value loadBlueprint's
+      // own frame() just persisted stays in storage, and the NEXT
+      // loadBlueprint (the loadData() dataset swap) would read that stale
+      // auto-framed value instead of the one just restored here.
+      persistCamera();
+    } catch {
+      /* malformed saved state — keep whatever loadBlueprint() just framed */
+    }
+  }
+
+  /** Snapshot of CAMERA_KEY taken right before a loadBlueprint() call, for
+   *  restoreCamera() to use — see its own doc comment for why it can't just
+   *  read localStorage fresh at that point. */
+  function readSavedCamera(): string | null {
+    try {
+      return localStorage.getItem(CAMERA_KEY);
+    } catch {
+      return null;
+    }
+  }
+
+  /** Wired onto whichever BlueprintRenderer instance is currently mounted —
+   *  mirrors wireEditCallbacks() below, needed again after loadData()'s
+   *  renderer swap since a fresh Camera has an empty listener set. */
+  function wireCameraPersistence() {
+    renderer.camera.onChange(persistCamera);
+  }
+  wireCameraPersistence();
+
   function selectBlueprint(index: number) {
     const blueprint = blueprints[index];
     if (!blueprint) return;
@@ -879,7 +944,9 @@ export function mountBlueprintViewer(root: HTMLElement): () => void {
     redoWires = [];
     hasUnsavedChanges = false;
     deselect();
+    const savedCamera = readSavedCamera();
     renderer.loadBlueprint(entities, wires);
+    restoreCamera(savedCamera);
     recalculate();
     persistEntities();
   }
@@ -2317,6 +2384,7 @@ export function mountBlueprintViewer(root: HTMLElement): () => void {
     renderer.onHover(onSchematicHover);
     renderer.setAltMode(altModeOn);
     wireEditCallbacks();
+    wireCameraPersistence();
     // A fresh renderer starts in 'idle', so whatever was in hand when the
     // real dataset arrived has to be re-applied — otherwise the app still
     // believes a wire (or an entity) is on the cursor while the renderer
@@ -2329,7 +2397,11 @@ export function mountBlueprintViewer(root: HTMLElement): () => void {
     // A fresh renderer knows nothing of a half-finished pick either, so an
     // armed wire would stop trailing to the cursor across the swap.
     if (pendingWireFrom !== null) renderer.setPendingWire(pendingWireFrom);
-    if (entities.length) renderer.loadBlueprint(entities, wires);
+    if (entities.length) {
+      const savedCamera = readSavedCamera();
+      renderer.loadBlueprint(entities, wires);
+      restoreCamera(savedCamera);
+    }
 
     populateMeasureOptions();
     updateMeasure();

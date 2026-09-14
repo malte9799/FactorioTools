@@ -519,8 +519,8 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
   }
 
   // The camera announces its own pans/zooms rather than every gesture handler
-  // remembering to invalidate (see Camera.setOnChange).
-  camera.setOnChange(invalidate);
+  // remembering to invalidate (see Camera.onChange).
+  camera.onChange(invalidate);
   let isPanning = false;
   let lastPointer = { x: 0, y: 0 };
   let destroyed = false;
@@ -1881,7 +1881,7 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
       window.removeEventListener("keyup", onKeyUp);
       window.removeEventListener("blur", onBlur);
       atlas.setOnPendingChange(null);
-      camera.setOnChange(null);
+      camera.clearListeners();
     },
   };
 }

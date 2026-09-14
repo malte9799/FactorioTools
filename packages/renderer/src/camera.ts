@@ -27,7 +27,7 @@ const DEFAULT_LIMITS: CameraLimits = {
 export class Camera {
   state: CameraState;
   private limits: CameraLimits;
-  private onChange: (() => void) | null = null;
+  private listeners: Set<() => void> = new Set();
 
   constructor(initial: CameraState, limits: Partial<CameraLimits> = {}) {
     this.state = { ...initial };
@@ -38,13 +38,22 @@ export class Camera {
    *  this to mark the frame dirty: making the camera announce its own changes
    *  is what keeps every pan/zoom/pinch/frame call site from having to
    *  remember to do it, which is exactly the kind of thing that gets missed
-   *  when a new gesture is added later. */
-  setOnChange(callback: (() => void) | null): void {
-    this.onChange = callback;
+   *  when a new gesture is added later. Supports more than one listener (the
+   *  renderer's own redraw trigger plus, e.g., an app-level position/zoom
+   *  persister) — returns an unsubscribe function. */
+  onChange(callback: () => void): () => void {
+    this.listeners.add(callback);
+    return () => this.listeners.delete(callback);
   }
 
   private changed(): void {
-    this.onChange?.();
+    for (const listener of this.listeners) listener();
+  }
+
+  /** Drops every listener — called on renderer teardown so a destroyed
+   *  renderer's invalidate() (and any app-level listener) can't fire again. */
+  clearListeners(): void {
+    this.listeners.clear();
   }
 
   private clampZoom(pixelsPerTile: number): number {
