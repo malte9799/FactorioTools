@@ -1,4 +1,4 @@
-import type { PlacedEntity } from "@factoriotools/engine";
+import { Layer, type PlacedEntity } from "@factoriotools/engine";
 import { getSharedSpriteAtlas } from "./spriteAtlas.js";
 import type { ResolvedVisual } from "./entityLookup.js";
 import { collectEntity } from "./draw/collect.js";
@@ -8,6 +8,90 @@ import { NeighbourGrid } from "./neighbours/grid.js";
 import { FluidNetwork } from "./neighbours/fluid.js";
 import { HeatNetwork } from "./neighbours/heat.js";
 import type { DrawCommand } from "./draw/commands.js";
+
+/** A centered fit box in world tiles: what computeFitBox measures the
+ *  viewport around. */
+export interface FitBox {
+  cx: number;
+  cy: number;
+  w: number;
+  h: number;
+}
+
+/** Measures the box a preview viewport should fit around, in world tiles
+ *  centered on the entity's own (0,0). Pure and DOM-free so it can be
+ *  covered directly by a test (see entityPreview.test.ts) without a canvas.
+ *
+ *  Prefers the ACTUAL extent of the given draw commands over a
+ *  footprint*margin guess — a fixed margin is only ever as good as its
+ *  constant, and silently clips any entity whose art overhangs further
+ *  than that: confirmed by spike, the agricultural tower's crane arm
+ *  reaches roughly 4.4 tiles from center on a 3x3 footprint, well past a
+ *  1.6x margin's 2.4-tile budget, and rendered clipped/mis-scaled in this
+ *  panel while the exact same collectEntity()/paint() pair looked correct
+ *  in the free-pan main canvas and #/layer-debug (neither of which
+ *  pre-sizes a viewport around the entity the way this fixed-size preview
+ *  pane must).
+ *
+ *  The CENTER is measured from non-shadow commands only, then the box is
+ *  grown symmetrically around that center to cover every command's full
+ *  extent (shadow included) — confirmed by spike, a shadow's shift is
+ *  asymmetric (the agricultural tower's own shift is [1.45, 0.30], purely
+ *  toward one side), so folding it into a plain min/max alongside
+ *  everything else pulls the midpoint off the building's own visual
+ *  center; the building itself should sit centered in the panel, with its
+ *  shadow trailing off to whichever side it naturally falls, same as it
+ *  does on the main canvas — never clipped, but never the thing being
+ *  centered on either.
+ *
+ *  Falls back to footprint*margin when there are no commands to measure —
+ *  the inserter path (drawInserter doesn't go through collectEntity /
+ *  DrawCommand, so there is nothing to measure) and a defensive floor for
+ *  an empty/malformed command list, so a tiny edge case still gets a sane,
+ *  centered fit instead of dividing by ~0. */
+export function computeFitBox(tileFootprint: [number, number], commands: DrawCommand[]): FitBox {
+  const [fw, fh] = tileFootprint;
+  const margin = 1.6;
+  const fallback = { minX: -(fw * margin) / 2, maxX: (fw * margin) / 2, minY: -(fh * margin) / 2, maxY: (fh * margin) / 2 };
+
+  const extentOf = (cs: DrawCommand[]) => {
+    let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+    for (const c of cs) {
+      minX = Math.min(minX, c.dx);
+      maxX = Math.max(maxX, c.dx + c.dw);
+      minY = Math.min(minY, c.dy);
+      maxY = Math.max(maxY, c.dy + c.dh);
+    }
+    return { minX, maxX, minY, maxY };
+  };
+
+  const content = commands.filter((c) => c.layer !== Layer.Shadow);
+  const contentExtent = content.length > 0 ? extentOf(content) : fallback;
+  const cx = (contentExtent.minX + contentExtent.maxX) / 2;
+  const cy = (contentExtent.minY + contentExtent.maxY) / 2;
+
+  // Grow the box symmetrically around that center so every command
+  // (shadow included) stays inside it — the farthest any command's own
+  // edge sits from the content center, doubled, is exactly the half-extent
+  // a symmetric-about-center box needs to still contain it.
+  let halfW = (contentExtent.maxX - contentExtent.minX) / 2;
+  let halfH = (contentExtent.maxY - contentExtent.minY) / 2;
+  if (commands.length > 0) {
+    const all = extentOf(commands);
+    halfW = Math.max(halfW, cx - all.minX, all.maxX - cx);
+    halfH = Math.max(halfH, cy - all.minY, all.maxY - cy);
+  } else {
+    halfW = (fallback.maxX - fallback.minX) / 2;
+    halfH = (fallback.maxY - fallback.minY) / 2;
+  }
+
+  return {
+    cx,
+    cy,
+    w: Math.max(halfW * 2, 0.1),
+    h: Math.max(halfH * 2, 0.1),
+  };
+}
 
 /** A small standalone canvas that draws exactly one entity, centered and
  *  scaled to fill the canvas — the real game's own machine-GUI preview pane
@@ -53,21 +137,14 @@ export function mountEntityPreview(container: HTMLElement, entityName: string, d
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.clearRect(0, 0, rect.width, rect.height);
 
-    // Fit the entity's footprint (plus its own sprite overhang margin) into
-    // the available space, centered — mirrors camera.frame()'s own
-    // fit-to-viewport math in render.ts, simplified since there's only ever
-    // one entity and no pan/zoom state to preserve.
-    const [fw, fh] = visual.tileFootprint;
-    const margin = 1.6; // overhang allowance so sprites that spill past their footprint (most of them) aren't clipped
-    const pixelsPerTile = Math.min(rect.width / (fw * margin), rect.height / (fh * margin));
-
-    ctx.save();
-    ctx.translate(rect.width / 2, rect.height / 2);
-    ctx.scale(pixelsPerTile, pixelsPerTile);
-    if (visual.inserterGraphics) {
-      drawInserter(ctx, atlas, entity, visual.inserterGraphics);
-    } else if (visual.graphics) {
-      const commands: DrawCommand[] = [];
+    // Fit the entity into the available space, centered. Collected FIRST
+    // (before any transform is applied) so computeFitBox can measure the
+    // actual draw commands' own extents — see its own doc comment for why
+    // that beats a footprint*margin guess. The inserter path never
+    // collects (drawInserter doesn't go through collectEntity/DrawCommand),
+    // so it always gets computeFitBox's footprint-based fallback.
+    let commands: DrawCommand[] = [];
+    if (visual.graphics && !visual.inserterGraphics) {
       const never = () => false;
       collectEntity(
         commands,
@@ -76,6 +153,18 @@ export function mountEntityPreview(container: HTMLElement, entityName: string, d
         { grid: new NeighbourGrid(), fluidNetwork: new FluidNetwork(), heatNetwork: new HeatNetwork(), isPipeLike: never, isHeatPipeLike: never, isWallLike: never, isBeltLike: never, platformBoxes: [], animationFrame: 0 },
         1,
       );
+    }
+
+    const box = computeFitBox(visual.tileFootprint, commands);
+    const pixelsPerTile = Math.min(rect.width / box.w, rect.height / box.h);
+
+    ctx.save();
+    ctx.translate(rect.width / 2, rect.height / 2);
+    ctx.scale(pixelsPerTile, pixelsPerTile);
+    ctx.translate(-box.cx, -box.cy);
+    if (visual.inserterGraphics) {
+      drawInserter(ctx, atlas, entity, visual.inserterGraphics);
+    } else if (visual.graphics) {
       // Never actually used — this preview's commands carry no .tint, so
       // paint() never reaches the code path that reads it — but paint()
       // still wants a resolution argument, so this passes its own current
