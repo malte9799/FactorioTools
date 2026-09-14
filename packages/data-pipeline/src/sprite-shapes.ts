@@ -485,18 +485,20 @@ export function heatConnectionsOf(proto: any): HeatConnectionPoint[] {
 /** `per: "heat-covers"` layer from `energy_source.pipe_covers` — a heat
  *  CONSUMER's own small stub-cap sprite (confirmed by spike: heat-exchanger
  *  is the only placeable entity with this field), one per cardinal
- *  direction, shaped identically to a fluid box's own `pipe_covers` (see
- *  pipeCoversLayers) but drawn the opposite way round: fluid pipe-covers
- *  patch a gap that shows only when nothing is connected there (the
- *  connected neighbour's own art already closes that side); a heat
- *  consumer's plain idle sprite has no such closing art at all, so this
- *  cap is the thing that closes the gap, and only needs to appear once a
- *  heat pipe is actually plugged in there — reported live as a missing
- *  patch at the heat-exchanger's own heat-pipe connection. A reactor
- *  (heat_buffer, not energy_source) has no `pipe_covers` field and so
- *  never produces this layer — its own gap-filling is
- *  heat-connection-patches' `connected`/`disconnected` full sprite sets
- *  instead, a different shape for a different (always-drawn) case. */
+ *  direction, drawn the SAME way round as a fluid box's own `pipe_covers`
+ *  (see pipeCoversLayers): only when the connection point has NO neighbour.
+ *  Confirmed against the reference renderer's own draw_boiler
+ *  (spriteDataBuilder.ts) — `energy_source.pipe_covers` is pushed only when
+ *  `needsEnding = !isConnected`, i.e. it patches over a bare, unconnected
+ *  stub exactly like a fluid pipe-cover does; a heat-exchanger's plain idle
+ *  sprite already has a closed-looking socket, and a heat pipe actually
+ *  plugged in there needs no extra cap art at all (initial spike had this
+ *  backwards — reported live as the visible patch showing up on the WRONG
+ *  side of the connected/unconnected split, which is exactly the mistake
+ *  this comment corrects). A reactor (heat_buffer, not energy_source) has
+ *  no `pipe_covers` field and so never produces this layer — its own
+ *  gap-filling is heat-connection-patches' `connected`/`disconnected` full
+ *  sprite sets instead, a genuinely different (always-drawn) pattern. */
 export function heatCoversOf(proto: any): GraphicsLayer[] {
   const covers = proto.energy_source?.pipe_covers;
   if (!covers) return [];

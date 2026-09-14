@@ -227,15 +227,20 @@ export type GraphicsLayer = {
    *  direction — several points can share the same direction (a reactor has
    *  3 per side) so a Dir4Name key can't distinguish them. */
   | { connected: Sprite[]; disconnected: Sprite[]; per: "heat-connection-patches" }
-  /** One cover sprite per cardinal facing, drawn once per CONNECTED heat
-   *  connection point — the heat-exchanger's own case: unlike a reactor
-   *  (heat-connection-patches, always one of two full sprite sets per
-   *  point) its plain idle sprite already looks complete on its own, and
-   *  `energy_source.pipe_covers` is a small stub cap meant to close the
-   *  gap that appears specifically where a heat pipe plugs in — the
-   *  inverse of fluid pipe-covers (drawn only when UNconnected, since a
-   *  fluid entity's own connected art already caps that side). Keyed by
-   *  Dir4Name to match HeatConnectionPoint.direction, same as pipe-covers. */
+  /** One cover sprite per cardinal facing, drawn once per UNCONNECTED heat
+   *  connection point — the heat-exchanger's own case, and structurally
+   *  the SAME rule as fluid pipe-covers (drawn only when nothing is
+   *  attached there), not the reactor's heat-connection-patches (always
+   *  one of two full sprite sets). Confirmed against the reference
+   *  renderer's own draw_boiler: `energy_source.pipe_covers` is pushed
+   *  only when `needsEnding = !isConnected` — a heat-exchanger's plain
+   *  idle sprite already has a closed socket shape, and this cap patches
+   *  over the OPEN stub, the same job a fluid pipe-cover does; a heat pipe
+   *  actually plugged in needs no extra cap at all. Keyed by Dir4Name, but
+   *  unlike pipe-covers the key is NOT the connection's own facing —
+   *  render-catalog.ts/collect.ts pick it as (entity direction + south),
+   *  matching draw_boiler's own hardcoded rule for this one entity rather
+   *  than a connection-derived direction. */
   | { sprites: Partial<Record<Dir4Name, Sprite>>; per: "heat-covers" }
   /** A beacon's per-slot module art — one entry per physical slot (index
    *  order matches graphics_set.module_visualisations[0].slots). `empty`

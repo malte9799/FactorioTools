@@ -9,6 +9,18 @@ import type { FluidNetwork } from "../neighbours/fluid.js";
 import type { HeatNetwork } from "../neighbours/heat.js";
 import { PIXELS_PER_TILE, type DrawCommand } from "./commands.js";
 
+/** Rotates a fixed local [x, y] offset by an entity's own placement
+ *  direction, 90° per cardinal step — same convention as heat.ts's own
+ *  (private) rotatePoint, duplicated here rather than exported+imported for
+ *  one call site, since this only ever rotates a plain tuple (no
+ *  connection-specific `direction` field to carry along). */
+function rotate90([x, y]: [number, number], entityDirection: number): [number, number] {
+  const steps = Math.round(toCardinal(entityDirection) / 4) % 4;
+  let rx = x, ry = y;
+  for (let i = 0; i < steps; i++) [rx, ry] = [-ry, rx];
+  return [rx, ry];
+}
+
 export interface CollectContext {
   grid: NeighbourGrid;
   fluidNetwork: FluidNetwork;
@@ -63,14 +75,25 @@ interface EntityFrame {
    *  matching push()'s existing offsetX/offsetY convention). */
   unconnectedPipeCovers: { offsetX: number; offsetY: number; direction: Cardinal }[];
   /** Every heat-network connection point this entity has that the real
-   *  heat network graph found A neighbour for — the inverse filter from
-   *  unconnectedPipeCovers, since a heat consumer's own idle sprite (unlike
-   *  a fluid entity's) has no closing art at that point on its own; the
-   *  cap here is what fills the gap once a heat pipe is actually plugged
-   *  in, not what covers a stub with nothing attached. Same offset
-   *  convention as unconnectedPipeCovers (one tile further out, in the
-   *  connection's own facing). */
-  connectedHeatCovers: { offsetX: number; offsetY: number; direction: Cardinal }[];
+   *  heat network graph found NO neighbour for — same "unconnected only"
+   *  rule as unconnectedPipeCovers (confirmed against the reference
+   *  renderer's own draw_boiler: `needsEnding = !isConnected`, cover drawn
+   *  only when true — heat-covers is NOT the reactor's
+   *  heat-connection-patches pattern of "always draw one of two variants").
+   *
+   *  Unlike unconnectedPipeCovers, the offset here is NOT derived from the
+   *  connection point's own position — the reference renderer's own
+   *  draw_boiler hardcodes a fixed [0, 1.5] shift (rotated by the entity's
+   *  own placement direction, not the connection's facing) for every
+   *  heat-exchanger patch regardless of which connection triggered it.
+   *  heat-exchanger is confirmed the only entity with this layer, so
+   *  reproducing that fixed offset exactly (rather than generalizing to a
+   *  per-point formula this reference behaviour doesn't actually follow)
+   *  is the faithful choice. spriteDirection is separately entityDirection
+   *  rotated 8 (south) — also taken verbatim from the reference rather
+   *  than assumed to equal the connection's own facing, which only
+   *  coincides for this entity's specific south-facing connection. */
+  unconnectedHeatCovers: { offsetX: number; offsetY: number; spriteDirection: Cardinal }[];
   /** Every `heat_buffer.connections` point this entity declares, in
    *  declaration order (matching the `heat-connection-patches` layer's own
    *  `connected`/`disconnected` array index) — a reactor always draws one
@@ -126,27 +149,26 @@ function resolveFrame(entity: PlacedEntity, visual: ResolvedVisual, ctx: Collect
         // pump's socket at entity.y + 0.5).
         return { offsetX: p.offsetX + dx, offsetY: p.offsetY + dy, direction: p.direction };
       }),
-    // heat-covers' own cap sits the same one-tile-further-out as a fluid
-    // pipe-cover does (see unconnectedPipeCovers' own doc comment) — it is
-    // structurally the same kind of stub cap, just drawn on the opposite
-    // (connected) side of the filter. A ghost never shows one: unlike a
-    // pipe/heat-pipe stub (whose own art already looks unfinished without a
-    // neighbour), a heat-exchanger's plain idle sprite looks complete on
-    // its own, so a not-yet-built ghost has nothing to visually close off.
-    connectedHeatCovers: ctx.heatNetwork
+    // Fixed [0, 1.5] offset rotated by the ENTITY's own placement direction
+    // (not the connection point's facing), and sprite picked by
+    // entityDirection+8 — both taken verbatim from the reference renderer's
+    // draw_boiler, which hardcodes this rather than deriving it from
+    // conn.position (see unconnectedHeatCovers' own doc comment for why
+    // that's the faithful choice for heat-exchanger specifically).
+    unconnectedHeatCovers: ctx.heatNetwork
       .pointsFor(entity.entityNumber)
-      .filter((p) => entity.entityNumber !== -1 && ctx.heatNetwork.isConnected(p))
-      .map((p) => {
-        const { dx, dy } = step(p.direction);
-        // p.offsetX/Y is the point's own unrounded local offset from this
-        // entity's centre — using p.x/p.y (the rounded world tile) minus
-        // this entity's own independently-rounded x/y would drift whenever
-        // the two roundings don't land the same way (e.g. heat-exchanger's
-        // own 3x2 footprint, which sits on a half-integer y; see
-        // HeatNetwork.add's own doc comment for the connectivity bug this
-        // same drift caused).
-        return { offsetX: p.offsetX + dx, offsetY: p.offsetY + dy, direction: p.direction };
-      }),
+      .filter((p) => entity.entityNumber === -1 || !ctx.heatNetwork.isConnected(p))
+      .map(() => {
+        // Rotating [0, 1.5] by direction only depends on entity.direction,
+        // never on which point triggered it — every unconnected point on
+        // this entity produces the exact same offset/sprite pair.
+        const [offsetX, offsetY] = rotate90([0, 1.5], entity.direction);
+        return { offsetX, offsetY, spriteDirection: toCardinal(entity.direction + 8) };
+      })
+      // heat-exchanger has exactly one connection, so this never actually
+      // produces duplicates today, but dedupe by offset defensively rather
+      // than assume that stays true for every future heat-covers entity.
+      .filter((v, i, arr) => arr.findIndex((o) => o.offsetX === v.offsetX && o.offsetY === v.offsetY) === i),
     // A reactor's own connection-patch art sits directly at the connection
     // point's own world position, not a further tile out the way a pipe
     // cover does — matching the reference renderer's own draw_reactor
@@ -456,13 +478,15 @@ export function collectEntity(
       return;
     }
 
-    // heat-covers' own cap draws once per CONNECTED heat-network point —
-    // the inverse filter of pipe-covers (see connectedHeatCovers' own doc
-    // comment for why: a heat consumer's plain idle art has no closing
-    // shape of its own at that point, unlike a fluid entity's).
+    // heat-covers' own cap draws once per UNconnected heat-network point —
+    // same rule as pipe-covers (see unconnectedHeatCovers' own doc comment:
+    // confirmed against the reference renderer's draw_boiler, whose
+    // `needsEnding = !isConnected` gate this mirrors exactly — the cap
+    // patches over a bare stub, the same as a fluid pipe-cover, and is
+    // NOT the reactor's "always draw one of two variants" pattern).
     if ("per" in layer && layer.per === "heat-covers") {
-      for (const point of frame.connectedHeatCovers) {
-        const sprite = layer.sprites[dir4Name(point.direction)];
+      for (const point of frame.unconnectedHeatCovers) {
+        const sprite = layer.sprites[dir4Name(point.spriteDirection)];
         if (sprite) push(out, sprite, 0, 0, entity, layer.layer, order, alpha, point.offsetX, point.offsetY);
       }
       return;

@@ -920,10 +920,11 @@ export function buildRenderCatalog(raw: Raw, locale: LocaleTables, version: stri
   // energy_source) gets the same treatment for the separate heat network:
   // its connection points recorded, plus whichever of two mutually
   // exclusive patch mechanisms it actually ships — a reactor's own
-  // connection_patches_* (heat-connection-patches, always-drawn) or a heat
-  // consumer's own energy_source.pipe_covers (heat-covers, drawn only once
-  // connected — see heatCoversOf's own doc comment for why heat-exchanger
-  // needed this).
+  // connection_patches_* (heat-connection-patches, always one of two
+  // variants) or a heat consumer's own energy_source.pipe_covers
+  // (heat-covers, drawn only when UNconnected, same rule as fluid
+  // pipe-covers — see heatCoversOf's own doc comment for why heat-exchanger
+  // needed this at all).
   const add = (proto: any, graphics: EntityGraphics | undefined, footprintOverride?: [number, number]) => {
     if (entities[proto.name] || NOT_PLACEABLE.test(proto.name)) return;
     const pipeConnections = pipeConnectionsOf(proto);
