@@ -62,6 +62,15 @@ interface EntityFrame {
    *  rotated local position (world tile minus entity's own rounded centre,
    *  matching push()'s existing offsetX/offsetY convention). */
   unconnectedPipeCovers: { offsetX: number; offsetY: number; direction: Cardinal }[];
+  /** Every heat-network connection point this entity has that the real
+   *  heat network graph found A neighbour for — the inverse filter from
+   *  unconnectedPipeCovers, since a heat consumer's own idle sprite (unlike
+   *  a fluid entity's) has no closing art at that point on its own; the
+   *  cap here is what fills the gap once a heat pipe is actually plugged
+   *  in, not what covers a stub with nothing attached. Same offset
+   *  convention as unconnectedPipeCovers (one tile further out, in the
+   *  connection's own facing). */
+  connectedHeatCovers: { offsetX: number; offsetY: number; direction: Cardinal }[];
   /** Every `heat_buffer.connections` point this entity declares, in
    *  declaration order (matching the `heat-connection-patches` layer's own
    *  `connected`/`disconnected` array index) — a reactor always draws one
@@ -117,6 +126,27 @@ function resolveFrame(entity: PlacedEntity, visual: ResolvedVisual, ctx: Collect
         // pump's socket at entity.y + 0.5).
         return { offsetX: p.offsetX + dx, offsetY: p.offsetY + dy, direction: p.direction };
       }),
+    // heat-covers' own cap sits the same one-tile-further-out as a fluid
+    // pipe-cover does (see unconnectedPipeCovers' own doc comment) — it is
+    // structurally the same kind of stub cap, just drawn on the opposite
+    // (connected) side of the filter. A ghost never shows one: unlike a
+    // pipe/heat-pipe stub (whose own art already looks unfinished without a
+    // neighbour), a heat-exchanger's plain idle sprite looks complete on
+    // its own, so a not-yet-built ghost has nothing to visually close off.
+    connectedHeatCovers: ctx.heatNetwork
+      .pointsFor(entity.entityNumber)
+      .filter((p) => entity.entityNumber !== -1 && ctx.heatNetwork.isConnected(p))
+      .map((p) => {
+        const { dx, dy } = step(p.direction);
+        // p.offsetX/Y is the point's own unrounded local offset from this
+        // entity's centre — using p.x/p.y (the rounded world tile) minus
+        // this entity's own independently-rounded x/y would drift whenever
+        // the two roundings don't land the same way (e.g. heat-exchanger's
+        // own 3x2 footprint, which sits on a half-integer y; see
+        // HeatNetwork.add's own doc comment for the connectivity bug this
+        // same drift caused).
+        return { offsetX: p.offsetX + dx, offsetY: p.offsetY + dy, direction: p.direction };
+      }),
     // A reactor's own connection-patch art sits directly at the connection
     // point's own world position, not a further tile out the way a pipe
     // cover does — matching the reference renderer's own draw_reactor
@@ -126,8 +156,8 @@ function resolveFrame(entity: PlacedEntity, visual: ResolvedVisual, ctx: Collect
     // joined into.
     heatConnectionPatches: ctx.heatNetwork.pointsFor(entity.entityNumber).map((p, index) => ({
       index,
-      offsetX: p.x - x,
-      offsetY: p.y - y,
+      offsetX: p.offsetX,
+      offsetY: p.offsetY,
       connected: entity.entityNumber !== -1 && ctx.heatNetwork.isConnected(p),
     })),
     // entity.modules is collapsed (one ModuleStack per distinct
@@ -420,6 +450,18 @@ export function collectEntity(
     // corner the fluid network graph found no neighbour for).
     if ("per" in layer && layer.per === "pipe-covers") {
       for (const point of frame.unconnectedPipeCovers) {
+        const sprite = layer.sprites[dir4Name(point.direction)];
+        if (sprite) push(out, sprite, 0, 0, entity, layer.layer, order, alpha, point.offsetX, point.offsetY);
+      }
+      return;
+    }
+
+    // heat-covers' own cap draws once per CONNECTED heat-network point —
+    // the inverse filter of pipe-covers (see connectedHeatCovers' own doc
+    // comment for why: a heat consumer's plain idle art has no closing
+    // shape of its own at that point, unlike a fluid entity's).
+    if ("per" in layer && layer.per === "heat-covers") {
+      for (const point of frame.connectedHeatCovers) {
         const sprite = layer.sprites[dir4Name(point.direction)];
         if (sprite) push(out, sprite, 0, 0, entity, layer.layer, order, alpha, point.offsetX, point.offsetY);
       }

@@ -9,6 +9,7 @@ import {
   directionColumnGraphics,
   heatConnectionPatchLayers,
   heatConnectionsOf,
+  heatCoversOf,
   layerOf,
   perDirection,
   pipeConnectionsOf,
@@ -914,18 +915,23 @@ export function buildRenderCatalog(raw: Raw, locale: LocaleTables, version: stri
   // a pipe-covers layer appended, regardless of which adapter above built
   // its base graphics — added once here rather than at each call site so a
   // new fluid-box entity picks this up automatically instead of needing its
-  // own adapter updated too. Every prototype with a heat buffer (reactor,
-  // heat-pipe) gets the same treatment for the separate heat network: its
-  // connection points recorded, and — for a reactor, the only prototype that
-  // ships connection_patches_* art of its own — a heat-connection-patches
-  // layer appended.
+  // own adapter updated too. Every prototype with a heat-network connection
+  // (heatConnectionsOf reads both a producer's heat_buffer and a consumer's
+  // energy_source) gets the same treatment for the separate heat network:
+  // its connection points recorded, plus whichever of two mutually
+  // exclusive patch mechanisms it actually ships — a reactor's own
+  // connection_patches_* (heat-connection-patches, always-drawn) or a heat
+  // consumer's own energy_source.pipe_covers (heat-covers, drawn only once
+  // connected — see heatCoversOf's own doc comment for why heat-exchanger
+  // needed this).
   const add = (proto: any, graphics: EntityGraphics | undefined, footprintOverride?: [number, number]) => {
     if (entities[proto.name] || NOT_PLACEABLE.test(proto.name)) return;
     const pipeConnections = pipeConnectionsOf(proto);
     const coverLayers = pipeCoversLayers(proto);
     const heatConnections = heatConnectionsOf(proto);
     const heatPatchLayers = heatConnectionPatchLayers(proto);
-    const extraLayers = [...coverLayers, ...heatPatchLayers];
+    const heatCoverLayers = heatCoversOf(proto);
+    const extraLayers = [...coverLayers, ...heatPatchLayers, ...heatCoverLayers];
     if (extraLayers.length > 0) {
       graphics = { ...(graphics ?? { layers: [] }), layers: [...(graphics?.layers ?? []), ...extraLayers] };
     }

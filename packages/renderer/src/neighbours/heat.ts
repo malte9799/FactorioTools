@@ -24,8 +24,19 @@ function rotatePoint(point: HeatConnectionPoint, entityDirection: number): { x: 
 
 export interface WorldHeatConnection {
   entityNumber: number;
+  /** World tile the point sits on (entity centre + rotated local offset,
+   *  rounded) — used for tile-for-tile connectivity matching. */
   x: number;
   y: number;
+  /** The rotated local offset itself, unrounded — entity.x/y is often a
+   *  half-integer (any even-width/height footprint, e.g. heat-exchanger's
+   *  own 3x2 box), and offsetX/offsetY is meant to be added straight back
+   *  onto it for drawing, so rounding this independently of that would
+   *  drift a patch/cover sprite off by up to a tile whenever the two
+   *  roundings don't land the same way. Same convention as
+   *  FluidNetwork's WorldPipeConnection. */
+  offsetX: number;
+  offsetY: number;
   direction: Cardinal;
 }
 
@@ -36,10 +47,25 @@ export class HeatNetwork {
   add(entity: PlacedEntity, connections: HeatConnectionPoint[]): void {
     for (const c of connections) {
       const rotated = rotatePoint(c, entity.direction);
+      // entity.x/y themselves may already be a half-integer (any
+      // even-width/height footprint) — rounding them before adding the
+      // rotated offset would silently shift the point half a tile off,
+      // so round only the final sum for the tile key. Confirmed by spike
+      // against a real blueprint (a heat-exchanger at (4.5, -26) with an
+      // adjacent heat-pipe at (4.5, -24.5)): the old
+      // `Math.round(entity.y) + rotated.y` put the connection point a
+      // half-tile away from where the heat-pipe's own point actually
+      // registers, so isConnected() never matched them — the heat-exchanger
+      // silently never showed as connected to anything, which is also why
+      // its own connection-patch cap (heatCoversOf) never appeared: this
+      // bug, not a missing sprite, was the real cause of the reported
+      // "patch never shows" behaviour.
       const point: WorldHeatConnection = {
         entityNumber: entity.entityNumber,
-        x: Math.round(entity.x) + rotated.x,
-        y: Math.round(entity.y) + rotated.y,
+        x: Math.round(entity.x + rotated.x),
+        y: Math.round(entity.y + rotated.y),
+        offsetX: rotated.x,
+        offsetY: rotated.y,
         direction: rotated.direction,
       };
       this.points.push(point);

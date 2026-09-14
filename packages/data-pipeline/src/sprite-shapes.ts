@@ -451,22 +451,62 @@ export function pipeCoversLayers(proto: any): GraphicsLayer[] {
   return layers;
 }
 
-/** Every `heat_buffer.connections` entry a prototype declares, in its own
+/** Every heat-network connection point a prototype declares, in its own
  *  unrotated (north-facing) local frame — straight off Factorio's own
  *  position/direction pairs, same shape as `pipeConnectionsOf` but for the
  *  separate heat network (a heat pipe never carries fluid and vice versa).
- *  Both the reactor and heat-pipe itself declare these; a reactor's own
- *  connection-patch art is indexed by this exact array order (confirmed
- *  against the reference renderer's draw_reactor, which zips
- *  `heat_buffer.connections.entries()` 1:1 against `connection_patches_*`'s
- *  variation index). */
+ *
+ *  Checks TWO different fields, because Factorio splits "has a heat
+ *  network connection" across two unrelated prototype shapes depending on
+ *  whether the entity produces or consumes heat: a heat producer/buffer
+ *  (reactor, heat-pipe itself) declares `heat_buffer.connections`, while a
+ *  heat CONSUMER (heat-exchanger; confirmed by spike to be the only
+ *  placeable entity of this kind) instead has an `energy_source` of
+ *  `type: "heat"` whose own `connections` field is shaped identically.
+ *  Reading only `heat_buffer` (as this function used to) left the
+ *  heat-exchanger with zero recorded connection points — not just missing
+ *  patch art, but invisible to the heat network's adjacency graph
+ *  entirely. A reactor's own connection-patch art is indexed by this exact
+ *  array order (confirmed against the reference renderer's draw_reactor,
+ *  which zips `heat_buffer.connections.entries()` 1:1 against
+ *  `connection_patches_*`'s variation index) — energy_source.connections
+ *  is never indexed that way (heat-covers keys by direction instead, see
+ *  heatCoversOf), so mixing the two sources here is safe either way. */
 export function heatConnectionsOf(proto: any): HeatConnectionPoint[] {
   const out: HeatConnectionPoint[] = [];
-  for (const c of proto.heat_buffer?.connections ?? []) {
+  const source = proto.heat_buffer?.connections ?? proto.energy_source?.connections ?? [];
+  for (const c of source) {
     if (!Array.isArray(c.position) || typeof c.direction !== "number") continue;
     out.push({ x: c.position[0], y: c.position[1], direction: c.direction });
   }
   return out;
+}
+
+/** `per: "heat-covers"` layer from `energy_source.pipe_covers` — a heat
+ *  CONSUMER's own small stub-cap sprite (confirmed by spike: heat-exchanger
+ *  is the only placeable entity with this field), one per cardinal
+ *  direction, shaped identically to a fluid box's own `pipe_covers` (see
+ *  pipeCoversLayers) but drawn the opposite way round: fluid pipe-covers
+ *  patch a gap that shows only when nothing is connected there (the
+ *  connected neighbour's own art already closes that side); a heat
+ *  consumer's plain idle sprite has no such closing art at all, so this
+ *  cap is the thing that closes the gap, and only needs to appear once a
+ *  heat pipe is actually plugged in there — reported live as a missing
+ *  patch at the heat-exchanger's own heat-pipe connection. A reactor
+ *  (heat_buffer, not energy_source) has no `pipe_covers` field and so
+ *  never produces this layer — its own gap-filling is
+ *  heat-connection-patches' `connected`/`disconnected` full sprite sets
+ *  instead, a different shape for a different (always-drawn) case. */
+export function heatCoversOf(proto: any): GraphicsLayer[] {
+  const covers = proto.energy_source?.pipe_covers;
+  if (!covers) return [];
+  const sprites: Partial<Record<Dir4Name, Sprite>> = {};
+  for (const dir of ["north", "east", "south", "west"] as const) {
+    const sprite = toSprite(covers[dir]);
+    if (sprite) sprites[dir] = sprite;
+  }
+  if (Object.keys(sprites).length === 0) return [];
+  return [{ layer: Layer.Object, sprites, per: "heat-covers" }];
 }
 
 /** Where each colour of wire physically attaches to an entity's sprite, per
