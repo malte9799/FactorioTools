@@ -43,6 +43,22 @@ const EMPTY = {
   showDirectionArrow: false,
 };
 
+/** Machines whose non-square footprint genuinely swaps width/height when
+ *  rotated east/west, confirmed against their real in-game collision box
+ *  (not just their selection_box, which can be non-square even for an
+ *  entity that never actually swaps — e.g. stone-furnace's 1.6x2
+ *  selection_box hides a square 2x2 collision box, so footprint inequality
+ *  alone isn't a safe signal here). Mirrors render-catalog.ts's own
+ *  ROTATES_FOOTPRINT allowlist for visual-only entities — this is the
+ *  machine-side equivalent, needed because buildVisualLookup never set
+ *  rotatesFootprint for anything sourced from data.machines. */
+const MACHINE_ROTATES_FOOTPRINT = new Set([
+  "steam-engine",
+  "steam-turbine",
+  "crusher",
+  "recycler",
+]);
+
 export function buildVisualLookup(data: GameData, catalog: RenderCatalog): Map<string, ResolvedVisual> {
   const lookup = new Map<string, ResolvedVisual>();
 
@@ -51,6 +67,7 @@ export function buildVisualLookup(data: GameData, catalog: RenderCatalog): Map<s
       ...EMPTY,
       tileFootprint: m.tileFootprint ?? m.size,
       graphics: m.graphics,
+      rotatesFootprint: MACHINE_ROTATES_FOOTPRINT.has(m.name),
       localised: m.localised,
       isMachine: true,
       moduleSlots: m.moduleSlots,

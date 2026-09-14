@@ -1231,7 +1231,21 @@ export function mountBlueprintViewer(root: HTMLElement): () => void {
       });
       return;
     }
-    const step = rotationStep(target.name);
+    let step = rotationStep(target.name);
+    // A non-square footprint that swaps width/height on rotation (e.g. a
+    // 3x2 assembler-adjacent building) can't take a plain 90° turn once
+    // it's already placed: swapping the footprint's dimensions in place
+    // flips which axis is odd/even, and snapAxis's tile-grid rounding then
+    // lands the entity's center on a half-tile offset it was never built
+    // on. The real game avoids this by only offering a 180° turn for these
+    // — same facing-pair, footprint unchanged, no misalignment — so double
+    // the step here too rather than actually moving the entity to
+    // compensate. A square footprint (or one that doesn't rotate at all)
+    // has no such axis to flip and keeps its normal 90° step.
+    const visual = visualLookup().get(target.name);
+    if (visual?.rotatesFootprint && visual.tileFootprint[0] !== visual.tileFootprint[1]) {
+      step *= 2;
+    }
     mutateEntity(target, (e) => {
       e.direction = (e.direction + (reverse ? -step : step) + 16) % 16;
     });

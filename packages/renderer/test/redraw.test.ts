@@ -23,7 +23,7 @@ function test(name: string, fn: () => void) {
 test("zoomAt notifies", () => {
   const camera = new Camera({ x: 0, y: 0, pixelsPerTile: 32 });
   let calls = 0;
-  camera.setOnChange(() => calls++);
+  camera.onChange(() => calls++);
   camera.zoomAt(1.5, 100, 100, 800, 600);
   assert.equal(calls, 1);
 });
@@ -31,7 +31,7 @@ test("zoomAt notifies", () => {
 test("panByScreenDelta notifies, but not for a zero-delta move", () => {
   const camera = new Camera({ x: 0, y: 0, pixelsPerTile: 32 });
   let calls = 0;
-  camera.setOnChange(() => calls++);
+  camera.onChange(() => calls++);
   camera.panByScreenDelta(10, -4);
   assert.equal(calls, 1);
   // A pointermove that does not actually move must not dirty the frame.
@@ -42,7 +42,7 @@ test("panByScreenDelta notifies, but not for a zero-delta move", () => {
 test("frame notifies", () => {
   const camera = new Camera({ x: 0, y: 0, pixelsPerTile: 32 });
   let calls = 0;
-  camera.setOnChange(() => calls++);
+  camera.onChange(() => calls++);
   camera.frame({ minX: 0, minY: 0, maxX: 10, maxY: 10 }, 800, 600);
   assert.equal(calls, 1);
 });
@@ -56,8 +56,33 @@ test("a zero pan leaves the camera exactly where it was", () => {
 test("detaching the callback stops notifications", () => {
   const camera = new Camera({ x: 0, y: 0, pixelsPerTile: 32 });
   let calls = 0;
-  camera.setOnChange(() => calls++);
-  camera.setOnChange(null);
+  const unsubscribe = camera.onChange(() => calls++);
+  unsubscribe();
+  camera.panByScreenDelta(5, 5);
+  assert.equal(calls, 0);
+});
+
+test("multiple listeners all fire, independently unsubscribable", () => {
+  const camera = new Camera({ x: 0, y: 0, pixelsPerTile: 32 });
+  let a = 0;
+  let b = 0;
+  const unsubscribeA = camera.onChange(() => a++);
+  camera.onChange(() => b++);
+  camera.panByScreenDelta(1, 1);
+  assert.equal(a, 1);
+  assert.equal(b, 1);
+  unsubscribeA();
+  camera.panByScreenDelta(1, 1);
+  assert.equal(a, 1);
+  assert.equal(b, 2);
+});
+
+test("clearListeners drops every listener", () => {
+  const camera = new Camera({ x: 0, y: 0, pixelsPerTile: 32 });
+  let calls = 0;
+  camera.onChange(() => calls++);
+  camera.onChange(() => calls++);
+  camera.clearListeners();
   camera.panByScreenDelta(5, 5);
   assert.equal(calls, 0);
 });
