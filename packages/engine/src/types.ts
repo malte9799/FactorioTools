@@ -542,6 +542,14 @@ export interface RenderCatalog {
    *  window used before this and doesn't correspond to any real in-game UI
    *  grouping the user would recognise. */
   recipeMenuPositions: Record<string, MenuPosition>;
+  /** Every real item prototype's own localised name, keyed by item name —
+   *  the general item catalog itemMenuPositions/menuPositions lack (those
+   *  only carry a menu POSITION, not a display name), needed for anything
+   *  that lets the player pick an arbitrary item rather than a placeable
+   *  entity, a module, or a recipe — e.g. an inserter's filter-item slots,
+   *  which can hold any item at all, ores and intermediates included, not
+   *  just the placeable/module/recipe subsets those other tables cover. */
+  itemNames: Record<string, string>;
 }
 
 /* ---------- Blueprint string shapes (as exported by the game) ---------- */
@@ -574,6 +582,18 @@ export interface BpRequestFilters {
   sections?: { index: number; filters?: BpItemFilter[] }[];
 }
 
+/** Whether an inserter/loader's `filters` list is a whitelist (pick up only
+ *  these items) or a blacklist (pick up anything EXCEPT these) — omitted
+ *  from a real blueprint's JSON when it's the default "whitelist" (the
+ *  game's serializer drops default-valued fields). */
+export type BpFilterMode = "whitelist" | "blacklist";
+
+/** An inserter's spoil-priority radio: which end of an item's spoil timer it
+ *  reaches for first when several stacks of the same item, at different
+ *  spoilage, are available to pick up. "none" (the default, no preference)
+ *  is likewise omitted from real blueprint JSON. */
+export type BpSpoilPriority = "spoiled-first" | "fresh-first";
+
 export interface BpEntity {
   entity_number: number;
   name: string;
@@ -586,6 +606,22 @@ export interface BpEntity {
   type?: string;
   /** Filter inserters/loaders. */
   filters?: BpItemFilter[];
+  /** Whitelist/blacklist mode for `filters` above. Inserters/loaders only. */
+  filter_mode?: BpFilterMode;
+  /** The "Use filters" checkbox — filters can be saved on the entity while
+   *  this is false, in which case the game ignores them; kept as its own
+   *  field (not inferred from `filters` being non-empty) so toggling it off
+   *  and back on preserves whatever was configured, matching the in-game
+   *  GUI's own checkbox behaviour. */
+  use_filters?: boolean;
+  /** Manual override of the inserter's hand size (items carried per swing).
+   *  Presence of the key IS the "enabled" signal — there is no separate
+   *  boolean flag; absent means the game computes it from the inserter's own
+   *  stack-size bonus as usual. */
+  override_stack_size?: number;
+  /** Inserters only, Space Age spoilage mechanic. Omitted (not "none") when
+   *  the player hasn't set a preference. */
+  spoil_priority?: BpSpoilPriority;
   /** Storage/requester/buffer chests. */
   request_filters?: BpRequestFilters;
 }
@@ -648,6 +684,14 @@ export interface BlueprintEnvelope {
   blueprint_book?: BlueprintBook;
 }
 
+/** One node of a decoded book's folder tree (see buildBlueprintTree): either
+ *  a leaf blueprint (`flatIndex` into collectBlueprints' own flattened
+ *  order, so the sidebar can still call selectBlueprint(flatIndex)
+ *  unchanged) or a nested book folder holding more nodes. */
+export type BlueprintTreeNode =
+  | { kind: "blueprint"; label: string; flatIndex: number }
+  | { kind: "book"; label: string; children: BlueprintTreeNode[] };
+
 /* ---------- Normalised, engine-facing shapes ---------- */
 
 export interface ModuleStack {
@@ -666,12 +710,43 @@ export interface PlacedEntity {
   recipe?: string;
   modules: ModuleStack[];
   /** Item names this entity is explicitly configured to filter for — filter
-   *  inserters' `filters`, or a chest's `request_filters` first section.
-   *  Empty for entities with no filters set (most blueprints never set
-   *  these) or that can't have any. Deliberately NOT a live inventory
-   *  snapshot — the blueprint format has no such thing, only the
-   *  filter/request configuration, which is what alt-mode shows here. */
+   *  inserters'/loaders' `filters`, or a chest's `request_filters` first
+   *  section. Empty for entities with no filters set (most blueprints never
+   *  set these) or that can't have any.
+   *
+   *  For an inserter/loader this round-trips (see denormaliseEntities): it's
+   *  the entity GUI's own editable filter-slot list, gated by `useFilters`
+   *  below. For a chest it stays READ-ONLY display data — alt-mode's badge
+   *  shows a request, but chest requests use the incompatible nested
+   *  `request_filters.sections[]` shape (2.0's logistics-groups format),
+   *  which this project has no editor for; denormaliseEntities only ever
+   *  writes this back out as an inserter's flat `filters`. Deliberately NOT
+   *  a live inventory snapshot either way — the blueprint format has no such
+   *  thing, only the filter/request configuration. */
   filterItems: string[];
+  /** Inserters/loaders only: the "Use filters" checkbox — filters can be
+   *  configured while this is false, in which case the game ignores them
+   *  (matches the in-game GUI, which keeps the slot contents when the
+   *  checkbox is unticked rather than clearing them). Undefined for every
+   *  entity that can't have filters at all. */
+  useFilters?: boolean;
+  /** Inserters/loaders only: whitelist (pick up only these items, the
+   *  default) or blacklist (pick up anything EXCEPT these). Undefined for
+   *  every entity that can't have filters, or that has filters at their
+   *  default "whitelist". */
+  filterMode?: "whitelist" | "blacklist";
+  /** Inserters only: manual override of the hand size (items carried per
+   *  swing), replacing the game's own stack-size-bonus calculation.
+   *  Undefined means "not overridden" — there is no separate enabled flag,
+   *  matching the blueprint format's own override_stack_size (presence IS
+   *  the enabled signal). */
+  overrideStackSize?: number;
+  /** Inserters only, Space Age spoilage mechanic: which end of an item's
+   *  spoil timer to reach for first when several stacks of the same item at
+   *  different spoilage are available to pick up. Undefined means no
+   *  preference set (matches the blueprint format's own omitted/"none"
+   *  spoil_priority). */
+  spoilPriority?: "spoiled-first" | "fresh-first";
   /** Underground belts only: which end this instance is, from the
    *  blueprint's own `type` field — confirmed by spike this is a real,
    *  separate field from `direction` (two undergrounds can share a

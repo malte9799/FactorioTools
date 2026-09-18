@@ -8,7 +8,7 @@ import { buildGridMenu, type GridMenuEntry, type GridMenuHandle } from "./grid-m
  *  the in-game build menu sorts by, not a guessed categorization). An entity
  *  with no menuPositions entry has no item that places it, so it isn't
  *  directly placeable and is skipped rather than given an invented slot. */
-function placeableEntries(data: GameData, catalog: RenderCatalog): GridMenuEntry[] {
+export function placeableEntries(data: GameData, catalog: RenderCatalog): GridMenuEntry[] {
   const protos = [
     ...Object.values(data.machines),
     ...Object.values(data.beacons),

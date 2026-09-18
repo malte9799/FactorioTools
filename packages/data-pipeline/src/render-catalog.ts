@@ -843,6 +843,7 @@ function buildMenuIndex(
   menuPositions: Record<string, MenuPosition>;
   itemMenuPositions: Record<string, MenuPosition>;
   recipeMenuPositions: Record<string, MenuPosition>;
+  itemNames: Record<string, string>;
 } {
   const subgroupToGroup = new Map<string, { group: string; subgroupOrder: string }>();
   for (const sg of Object.values(raw["item-subgroup"] ?? {})) {
@@ -872,12 +873,14 @@ function buildMenuIndex(
   const itemSubgroupByName = new Map<string, unknown>();
   const itemOrderByName = new Map<string, unknown>();
   const itemMenuPositions: Record<string, MenuPosition> = {};
+  const itemNames: Record<string, string> = {};
   for (const table of RECIPE_PRODUCT_ITEM_TABLES) {
     for (const item of Object.values(raw[table] ?? {}) as any[]) {
       if (itemSubgroupByName.has(item.name)) continue;
       itemSubgroupByName.set(item.name, item.subgroup);
       itemOrderByName.set(item.name, item.order);
       itemMenuPositions[item.name] = resolvePosition(subgroupToGroup, menuGroups, item.subgroup, item.order);
+      itemNames[item.name] = locale.itemName.get(item.name) ?? item.name;
     }
   }
   // Fluids have their own subgroup too (usually "fluid" itself) — a
@@ -901,7 +904,7 @@ function buildMenuIndex(
     );
   }
 
-  return { menuGroups, menuPositions, itemMenuPositions, recipeMenuPositions };
+  return { menuGroups, menuPositions, itemMenuPositions, recipeMenuPositions, itemNames };
 }
 
 export function buildRenderCatalog(raw: Raw, locale: LocaleTables, version: string): RenderCatalog {
@@ -1041,6 +1044,6 @@ export function buildRenderCatalog(raw: Raw, locale: LocaleTables, version: stri
     add(proto, undefined);
   }
 
-  const { menuGroups, menuPositions, itemMenuPositions, recipeMenuPositions } = buildMenuIndex(raw, locale);
-  return { version, entities, menuGroups, menuPositions, itemMenuPositions, recipeMenuPositions };
+  const { menuGroups, menuPositions, itemMenuPositions, recipeMenuPositions, itemNames } = buildMenuIndex(raw, locale);
+  return { version, entities, menuGroups, menuPositions, itemMenuPositions, recipeMenuPositions, itemNames };
 }

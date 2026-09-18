@@ -8,6 +8,7 @@ const EMPTY_CATALOG: RenderCatalog = {
   menuPositions: {},
   itemMenuPositions: {},
   recipeMenuPositions: {},
+  itemNames: {},
 };
 
 let active: GameData = vanilla;

@@ -456,7 +456,13 @@ button.ghost:hover, select:hover { border-color: var(--frame-light); }
 
 .library-category-header.is-open .library-disclosure { transform: rotate(90deg); }
 
-.library-category-body {
+/* :not([hidden]) rather than a bare `display: flex` — folder bodies toggle
+   via the `hidden` attribute (see makeCategory's click handler), and a plain
+   class-level `display` would outrank the browser's own `[hidden]{display:
+   none}` default (equal specificity, this rule comes later), keeping a
+   "collapsed" folder's contents visible regardless of the arrow's own state.
+   Same fix as .library-save-row's own comment above for the identical bug. */
+.library-category-body:not([hidden]) {
   display: flex;
   flex-direction: column;
   padding: 2px 0 2px 6px;
@@ -724,6 +730,24 @@ button.ghost:hover, select:hover { border-color: var(--frame-light); }
 .debug-check {
   display: block;
   margin-bottom: 8px;
+  font-size: 12px;
+}
+
+.debug-field {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 6px;
+  font-size: 12px;
+}
+
+.debug-field select,
+.debug-field input {
+  flex: 1;
+  min-width: 0;
+  max-width: 160px;
+  padding: 3px 6px;
   font-size: 12px;
 }
 
@@ -1147,6 +1171,40 @@ button.ghost:hover, select:hover { border-color: var(--frame-light); }
 
 .icon.icon-missing { background-image: none; }
 
+/* Rich-text label icons (blueprint/book names with [item=x] etc. tags) sit
+   inline with surrounding text rather than in an icon grid — no border/
+   background-box like the default .icon look, no icon-missing box either
+   (a sprite that's still loading, or one the sheet just doesn't have, should
+   quietly take up no space rather than show an empty tile mid-sentence).
+   Nudged up slightly so its center lines up with the text baseline instead
+   of sitting on it. */
+.rich-text-icon {
+  --icon-size: 16px;
+  border: none;
+  box-shadow: none;
+  background-color: transparent;
+  vertical-align: -3px;
+}
+.rich-text-icon.icon-missing { display: none; }
+
+/* A rich-text tag whose type has no sprite in the icon sheet at all
+   (virtual-signal, quality, tile, ...) — a small lettered square naming the
+   tag's own type, since there is no icon to show. */
+.rich-text-icon-placeholder {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--icon-size);
+  height: var(--icon-size);
+  border-radius: 3px;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  font-size: 9px;
+  font-weight: 700;
+  color: var(--text-dim);
+  vertical-align: -3px;
+}
+
 .flow-name .icon { --icon-size: 26px; }
 
 .group .flow-name .icon { align-self: flex-start; }
@@ -1551,6 +1609,138 @@ button.ghost:hover, select:hover { border-color: var(--frame-light); }
   display: flex;
   align-items: center;
   justify-content: center;
+}
+
+/* Inserter-only settings: filters, override stack size, spoil priority
+   (see edit-properties.ts's buildPropertiesPanel). Each gets its own bordered
+   section, matching the entity-gui-status row's own boxed look. */
+.entity-gui-section {
+  padding: 8px;
+  margin-bottom: 8px;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  font-size: 12px;
+}
+
+.entity-gui-checkbox-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.entity-gui-filter-body {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+}
+
+.entity-gui-filter-mode-row {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+/* DOM order is whitelistLabel, then the switch, then blacklistLabel (see
+   edit-properties.ts) — the switch's own is-blacklist class (toggled in JS)
+   drives which label reads as "active" via plain sibling selectors, no JS
+   needed on the labels themselves. */
+.filter-mode-label { color: var(--gold-strong); font-weight: 600; }
+.filter-mode-switch.is-blacklist + .filter-mode-label { color: var(--text-dim); font-weight: 400; }
+.filter-mode-switch:not(.is-blacklist) ~ .filter-mode-label:last-child { color: var(--text-dim); font-weight: 400; }
+
+/* A toggle switch, not a checkbox — matches the real GUI's own
+   Whitelist/Blacklist slider look more closely than two radio buttons would. */
+.filter-mode-switch {
+  position: relative;
+  width: 36px;
+  height: 18px;
+  padding: 0;
+  border-radius: 9px;
+  background: var(--panel-3);
+  border: 1px solid var(--border);
+  box-shadow: inset 0 1px 2px var(--bevel-dark);
+  flex: none;
+}
+
+.filter-mode-switch::after {
+  content: "";
+  position: absolute;
+  top: 1px;
+  left: 1px;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--text);
+  transition: left 0.1s ease;
+}
+
+.filter-mode-switch.is-blacklist::after { left: 19px; background: var(--gold); }
+
+.entity-gui-filter-slots {
+  display: flex;
+  gap: 6px;
+  justify-content: center;
+}
+
+.filter-slot-button {
+  width: 36px;
+  height: 36px;
+  padding: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.entity-gui-stack-body {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+}
+
+.stack-size-slider { flex: 1; min-width: 0; }
+
+.stack-size-value {
+  width: 44px;
+  padding: 3px 4px;
+  font-size: 12px;
+  text-align: center;
+  /* Hides the native up/down spinner arrows, which at this width overlap
+     the digit(s) rather than sitting beside them. */
+  appearance: textfield;
+  -moz-appearance: textfield;
+}
+.stack-size-value::-webkit-outer-spin-button,
+.stack-size-value::-webkit-inner-spin-button {
+  appearance: none;
+  -webkit-appearance: none;
+  margin: 0;
+}
+
+.entity-gui-spoil-body {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+}
+
+.spoil-priority-option {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  cursor: pointer;
+  color: var(--text-dim);
 }
 
 @media (prefers-reduced-motion: reduce) {

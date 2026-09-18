@@ -1,4 +1,5 @@
 import { ROTATION_TEST_BLUEPRINT, DEBUG_BLUEPRINT } from "@factoriotools/engine";
+import type { BlueprintTreeNode } from "@factoriotools/engine";
 import {
   listSaved,
   saveToLibrary,
@@ -8,6 +9,7 @@ import {
   type SavedBlueprint,
 } from "./blueprint-library.js";
 import { html } from "./html.js";
+import { renderRichLabel } from "./rich-text.js";
 
 export interface LibraryCallbacks {
   /** Load this blueprint string as the active one in the viewer. */
@@ -16,6 +18,17 @@ export interface LibraryCallbacks {
   getCurrentBpString(): string | null;
   /** Clears the canvas back to an empty blueprint, for starting fresh. */
   onNew(): void;
+  /** The currently-loaded book's folder tree (nested sub-books kept intact),
+   *  or null for a loose blueprint / nothing loaded yet — backs the "Current
+   *  book" section so an imported-but-not-saved book shows up as nested
+   *  collapsible folders too, not just whatever's in the library. */
+  getCurrentBookTree(): BlueprintTreeNode | null;
+  /** Switches the active sub-blueprint within the currently-loaded book,
+   *  by its flat index (matching collectBlueprints' own order) — the
+   *  sidebar equivalent of the existing #bp-picker dropdown's change
+   *  handler, so a book doesn't need re-importing just to look at a
+   *  different one of its blueprints. */
+  onSelectCurrent(flatIndex: number): void;
 }
 
 interface BuiltinEntry {
@@ -174,7 +187,12 @@ function makeRow(
   const button = document.createElement("button");
   button.type = "button";
   button.className = "library-row-label";
-  button.textContent = label;
+  button.appendChild(renderRichLabel(label));
+  // A blueprint's own name (not the rendered icons+text) is still the most
+  // useful hover/rename-target reference when it contains rich-text tags,
+  // matching options.title's existing role of naming the row for a11y/title
+  // attribute purposes — falls back to the raw label with its `[tag]`
+  // markup still visible, same as before this rich-text rendering existed.
   if (options.title) button.title = options.title;
   button.addEventListener("click", options.onClick);
   row.appendChild(button);
@@ -295,6 +313,33 @@ function renderEntries(
   }
 }
 
+/** Renders the currently-loaded (not necessarily saved) book's own folder
+ *  tree into `body`: a blueprint leaf is a plain click-to-select row (no
+ *  delete/context-menu — this isn't a library entry, just what's on screen
+ *  right now), a sub-book is another collapsible folder nested the same way
+ *  saved multi-blueprint books already render in renderEntries. `path` is
+ *  the chain of ancestor labels-so-far, joined into each folder's expand/
+ *  collapse key — needed because two sibling sub-books (or a sub-book and
+ *  the top book) can share a label, and makeCategory's disclosure state is
+ *  keyed by string. */
+function renderBookNode(
+  container: HTMLElement,
+  node: BlueprintTreeNode,
+  path: string,
+  onSelect: (flatIndex: number) => void,
+): void {
+  if (node.kind === "blueprint") {
+    container.appendChild(makeRow(node.label, { onClick: () => onSelect(node.flatIndex) }));
+    return;
+  }
+  const key = `current-book-${path}`;
+  const { section, body: folderBody } = makeCategory(key, `📘 ${node.label}`);
+  for (const child of node.children) {
+    renderBookNode(folderBody, child, `${path}/${child.label}`, onSelect);
+  }
+  container.appendChild(section);
+}
+
 /** Builds the "Blueprint Library" sidebar into `container`: a docked
  *  collapsible-category list (Debug / Saved) mirroring the reference
  *  Surfaces-panel look — dark rows, gold section headers, click-to-load,
@@ -333,14 +378,38 @@ export function buildLibrarySidebar(container: HTMLElement, callbacks: LibraryCa
   const list = document.createElement("div");
   list.className = "library-list";
 
+  // "Current book" sits above Debug/Saved — it's what's on screen right
+  // now, so it's the most relevant section — and starts open like Debug/
+  // Saved (see `expanded`'s own doc comment on that default). Only shown at
+  // all once a book is actually loaded; a loose blueprint or nothing yet
+  // leaves the whole section hidden rather than an always-visible empty
+  // folder.
+  const { section: currentBookSection, body: currentBookBody } = makeCategory("current-book", "Current book");
+  currentBookSection.hidden = true;
   const { section: debugSection, body: debugBody } = makeCategory("debug", "Debug");
   const { section: savedSection, body: savedBody } = makeCategory("saved", "Saved");
-  list.append(debugSection, savedSection);
+  list.append(currentBookSection, debugSection, savedSection);
 
   function refresh(): void {
     const saved = listSaved();
     renderEntries(debugBody, BUILTINS, saved.filter((e) => e.category === "debug"), callbacks, refresh);
     renderEntries(savedBody, [], saved.filter((e) => e.category !== "debug"), callbacks, refresh);
+
+    const bookTree = callbacks.getCurrentBookTree();
+    currentBookSection.hidden = bookTree === null;
+    currentBookBody.replaceChildren();
+    // buildBlueprintTree only ever returns a "book" node (or null) at the
+    // top level — a bare loose blueprint returns null instead, see its own
+    // doc comment — but the type is a union, so this narrows it explicitly.
+    if (bookTree && bookTree.kind === "book") {
+      // The top-level node is the book itself — its own children render
+      // directly into this section's body rather than nesting one more
+      // "📘 <book label>" folder inside "Current book", which would be a
+      // redundant extra click to get to what's already the only thing here.
+      for (const child of bookTree.children) {
+        renderBookNode(currentBookBody, child, child.label, callbacks.onSelectCurrent);
+      }
+    }
   }
 
   saveButton.addEventListener("click", () => {

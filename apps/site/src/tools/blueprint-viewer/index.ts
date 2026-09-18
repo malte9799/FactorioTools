@@ -1,6 +1,7 @@
 import {
   BlueprintError,
   collectBlueprints,
+  buildBlueprintTree,
   decodeBlueprintString,
   encodeBlueprintString,
   toBlueprint,
@@ -19,14 +20,14 @@ import {
   boxOf,
   overlaps,
 } from "@factoriotools/engine";
-import type { CalculationResult, Timescale, Blueprint, PlacedEntity, QualityName, MachineGroup, ModuleStack, ThroughputContext, BottleneckSubgroup, WireColor, WireLink } from "@factoriotools/engine";
+import type { CalculationResult, Timescale, Blueprint, BlueprintTreeNode, PlacedEntity, QualityName, MachineGroup, ModuleStack, ThroughputContext, BottleneckSubgroup, WireColor, WireLink } from "@factoriotools/engine";
 import { mountRenderer, isPoleLike, isTwoDirectionOnly, rotationStep, effectiveFootprint, summariseRecording, slowestFrames, worstPhase, autoConnectPole, canWire, dropWiresFor, toggleWire, type BlueprintRenderer, type HighlightRole } from "@factoriotools/renderer";
 import { buildRecipeCard, renderResults, type ViewOptions } from "./legacy-view/panels.js";
 import { icon } from "./legacy-view/icons.js";
 import { makeFloatingWindow } from "../../window-manager.js";
-import { buildPalette } from "./edit-palette.js";
+import { buildPalette, placeableEntries } from "./edit-palette.js";
 import { appendQualityOptions, QUALITY_TIERS } from "./quality-options.js";
-import { buildPropertiesPanel, buildRecipeMenu, buildModuleMenu } from "./edit-properties.js";
+import { buildPropertiesPanel, buildRecipeMenu, buildModuleMenu, buildFilterItemMenu } from "./edit-properties.js";
 import type { GridMenuHandle } from "./grid-menu.js";
 import { buildLibrarySidebar } from "./library-sidebar.js";
 import { saveToLibrary } from "./blueprint-library.js";
@@ -200,6 +201,16 @@ const TEMPLATE = `
     </div>
   </div>
 
+  <div id="filter-window" class="gui-window floating-window menu-window" hidden>
+    <div class="gui-titlebar">
+      <span>Select filter item</span>
+      <span class="grip" aria-hidden="true"></span>
+    </div>
+    <div class="gui-body">
+      <div id="filter-body"></div>
+    </div>
+  </div>
+
   <div id="window-toolbar">
     <button type="button" data-toggle="library-window">Library</button>
     <button type="button" data-toggle="intake-window">Blueprint Viewer</button>
@@ -221,6 +232,7 @@ const TEMPLATE = `
         <button type="button" class="debug-tab" data-debug-tab="phases">Frame</button>
         <button type="button" class="debug-tab" data-debug-tab="entities">Entities</button>
         <button type="button" class="debug-tab" data-debug-tab="record">Record</button>
+        <button type="button" class="debug-tab" data-debug-tab="stress">Stress</button>
       </div>
 
       <section class="debug-pane is-active" data-debug-pane="overview">
@@ -270,6 +282,28 @@ const TEMPLATE = `
           <thead><tr><th>t</th><th>Frame</th><th>Render</th><th>Outside</th><th>Slowest phase</th><th>Painted</th><th>Atlas</th><th>Rebuild</th></tr></thead>
           <tbody id="debug-record-rows"><tr><td colspan="8" class="debug-empty">Nothing recorded yet.</td></tr></tbody>
         </table>
+      </section>
+
+      <section class="debug-pane" data-debug-pane="stress">
+        <p class="debug-hint">Fills the canvas with copies of one building in a grid —
+        for isolating a single sprite's own rendering cost from everything else on
+        screen. Replaces whatever's currently loaded; use Undo (Ctrl+Z) to get it back.</p>
+        <label class="debug-field">
+          <span>Building</span>
+          <select id="stress-entity" aria-label="Building type to stamp"></select>
+        </label>
+        <label class="debug-field">
+          <span>Grid size</span>
+          <input type="number" id="stress-grid-size" min="1" max="50" step="1" value="10" aria-label="Grid width/height, in buildings" />
+        </label>
+        <label class="debug-field">
+          <span>Spacing</span>
+          <input type="number" id="stress-spacing" min="0" max="20" step="0.5" value="1" aria-label="Extra empty tiles between buildings" />
+        </label>
+        <div class="debug-actions">
+          <button type="button" id="stress-place">Place grid</button>
+        </div>
+        <p id="stress-status" class="debug-hint"></p>
       </section>
     </div>
   </div>
@@ -351,6 +385,11 @@ export function mountBlueprintViewer(root: HTMLElement): () => void {
     y: 66,
     onClose: () => enterMenuState("machine-info"),
   });
+  const filterWindow = makeFloatingWindow($("#filter-window"), {
+    x: Math.max(16, window.innerWidth - 900),
+    y: 66,
+    onClose: () => enterMenuState("machine-info"),
+  });
 
   // All floating windows start hidden so the blueprint fills the screen
   // uninterrupted — the toolbar below (bottom-of-template, always visible)
@@ -371,6 +410,7 @@ export function mountBlueprintViewer(root: HTMLElement): () => void {
   propertiesWindow.hide();
   recipeWindow.hide();
   moduleWindow.hide();
+  filterWindow.hide();
   // The library starts open (unlike the others) — it's the entry point for
   // picking a blueprint to work on, matching the reference Surfaces panel
   // being a persistent, always-visible sidebar rather than a popup.
@@ -435,11 +475,16 @@ export function mountBlueprintViewer(root: HTMLElement): () => void {
   const debugRecordStatus = $<HTMLSpanElement>("#debug-record-status");
   const debugRecordSummary = $<HTMLDivElement>("#debug-record-summary");
   const debugRecordRows = $<HTMLTableSectionElement>("#debug-record-rows");
+  const stressEntitySelect = $<HTMLSelectElement>("#stress-entity");
+  const stressGridSizeInput = $<HTMLInputElement>("#stress-grid-size");
+  const stressSpacingInput = $<HTMLInputElement>("#stress-spacing");
+  const stressPlaceButton = $<HTMLButtonElement>("#stress-place");
+  const stressStatus = $<HTMLParagraphElement>("#stress-status");
 
   /** Which pane is showing. Only the visible one is refreshed — the whole
    *  point of this panel is to diagnose slow frames, so it must not itself
    *  do avoidable per-tick DOM work. */
-  let debugTab: "overview" | "phases" | "entities" | "record" = "overview";
+  let debugTab: "overview" | "phases" | "entities" | "record" | "stress" = "overview";
   const debugPanes = [...root.querySelectorAll<HTMLElement>("[data-debug-pane]")];
   const debugTabs = [...root.querySelectorAll<HTMLButtonElement>("[data-debug-tab]")];
   for (const tab of debugTabs) {
@@ -673,6 +718,80 @@ export function mountBlueprintViewer(root: HTMLElement): () => void {
     );
   }, { signal });
 
+  // Stress test: stamps a size×size grid of one chosen building, spaced far
+  // enough apart that footprints never touch/overlap regardless of the
+  // building's own size or facing — for isolating a single sprite's own
+  // paint cost from everything else that could be slow (belt animation,
+  // wire drawing, other entity kinds mixed in).
+  function populateStressEntitySelect(): void {
+    // Keeps whatever was picked, if it's still in the (possibly now larger,
+    // post-loadData()) list — otherwise falls back to the first entry so the
+    // select is never left showing a stale selection with no matching
+    // option after the vanilla → real dataset swap below.
+    const previous = stressEntitySelect.value;
+    stressEntitySelect.replaceChildren();
+    for (const entry of placeableEntries(getData(), getRenderCatalog()).sort((a, b) => a.localised.localeCompare(b.localised))) {
+      stressEntitySelect.appendChild(new Option(entry.localised, entry.name));
+    }
+    if (previous && [...stressEntitySelect.options].some((o) => o.value === previous)) {
+      stressEntitySelect.value = previous;
+    }
+  }
+  populateStressEntitySelect();
+
+  stressPlaceButton.addEventListener("click", () => {
+    const name = stressEntitySelect.value;
+    if (!name) {
+      stressStatus.textContent = "No building selected.";
+      return;
+    }
+    const gridSize = Math.max(1, Math.min(50, Math.round(Number(stressGridSizeInput.value) || 10)));
+    const spacing = Math.max(0, Number(stressSpacingInput.value) || 0);
+    const visual = visualLookup().get(name);
+    const [fw, fh] = visual ? effectiveFootprint(visual, 0) : [1, 1];
+    const cellW = fw + spacing;
+    const cellH = fh + spacing;
+
+    const stamped: PlacedEntity[] = [];
+    let entityNumber = 1;
+    for (let row = 0; row < gridSize; row++) {
+      for (let col = 0; col < gridSize; col++) {
+        stamped.push({
+          entityNumber: entityNumber++,
+          name,
+          x: col * cellW,
+          y: row * cellH,
+          direction: 0,
+          quality: "normal",
+          modules: [],
+          filterItems: [],
+        });
+      }
+    }
+
+    // Replaces whatever's currently loaded rather than adding to it — a
+    // repeat click with a different building/size starts clean instead of
+    // piling grids on top of each other, and the existing undo stack still
+    // gets you back to what was there before (see the pane's own hint text).
+    currentBookTree = null;
+    librarySidebar?.refresh();
+    blueprints = [];
+    picker.replaceChildren();
+    picker.hidden = true;
+    input.value = "";
+    deselect();
+    nextEntityNumber = entityNumber;
+    applyEdit(() => {
+      entities = stamped;
+      wires = [];
+    });
+    const rect = canvas.getBoundingClientRect();
+    const box = { minX: 0, minY: 0, maxX: (gridSize - 1) * cellW, maxY: (gridSize - 1) * cellH };
+    renderer.camera.frame(box, rect.width, rect.height);
+    const label = stressEntitySelect.selectedOptions[0]?.textContent ?? name;
+    stressStatus.textContent = `Placed ${stamped.length} × ${label}.`;
+  }, { signal });
+
   // Polls at a fixed rate independent of the draw loop's own frame rate
   // (updating the DOM every rAF tick would itself be wasted layout/paint
   // work, and defeats the point of a panel meant to diagnose a SLOW frame
@@ -681,6 +800,12 @@ export function mountBlueprintViewer(root: HTMLElement): () => void {
   const debugPollHandle = setInterval(refreshDebug, DEBUG_POLL_MS);
 
   let blueprints: Blueprint[] = [];
+  /** The currently-loaded book's folder structure (nested sub-books kept
+   *  intact), for the library sidebar's "Current book" section — null for a
+   *  loose blueprint (nothing to show as a folder) or before anything's been
+   *  imported yet. Set by every load() call, read by the sidebar's own
+   *  refresh(). */
+  let currentBookTree: BlueprintTreeNode | null = null;
   let entities: PlacedEntity[] = [];
   /** The blueprint's wires — both the ones it was loaded with and any the
    *  user has since made, by placing a pole (copper auto-connects) or by
@@ -929,7 +1054,14 @@ export function mountBlueprintViewer(root: HTMLElement): () => void {
   }
   wireCameraPersistence();
 
-  function selectBlueprint(index: number) {
+  /** `restoreCameraFromSave` is true only for the one startup path that
+   *  re-opens whatever was on screen before a page reload (the autosave
+   *  restore) — every other caller (picking a blueprint from the library,
+   *  importing one, switching sub-blueprints in the picker) is loading
+   *  content the camera has never been positioned for, so it should
+   *  auto-frame like it always did rather than jump to wherever the
+   *  camera happened to be pointed for the PREVIOUS blueprint. */
+  function selectBlueprint(index: number, restoreCameraFromSave = false) {
     const blueprint = blueprints[index];
     if (!blueprint) return;
     entities = normaliseEntities(blueprint);
@@ -944,7 +1076,7 @@ export function mountBlueprintViewer(root: HTMLElement): () => void {
     redoWires = [];
     hasUnsavedChanges = false;
     deselect();
-    const savedCamera = readSavedCamera();
+    const savedCamera = restoreCameraFromSave ? readSavedCamera() : null;
     renderer.loadBlueprint(entities, wires);
     restoreCamera(savedCamera);
     recalculate();
@@ -959,6 +1091,8 @@ export function mountBlueprintViewer(root: HTMLElement): () => void {
    *  cleared. */
   function startNew(): void {
     blueprints = [];
+    currentBookTree = null;
+    librarySidebar?.refresh();
     entities = [];
     wires = [];
     nextEntityNumber = 1;
@@ -1419,12 +1553,13 @@ export function mountBlueprintViewer(root: HTMLElement): () => void {
    * function is what stops the four windows from being shown/hidden
    * ad-hoc from a dozen call sites and drifting into impossible
    * combinations. */
-  type MenuState = "default" | "build" | "machine-info" | "recipe" | "module";
+  type MenuState = "default" | "build" | "machine-info" | "recipe" | "module" | "filter";
   let menuState: MenuState = "default";
   /** The open menu's handle, for 'E' to confirm/cancel through. Undefined in
    *  the two states that aren't a grid menu (default, machine-info). */
   let activeMenu: GridMenuHandle | undefined;
   let activeModuleSlot = 0;
+  let activeFilterSlot = 0;
 
   /** Backing out of the recipe menu lands on the machine's own GUI once it
    *  has a recipe to show there, and on the bare canvas when it still
@@ -1462,6 +1597,7 @@ export function mountBlueprintViewer(root: HTMLElement): () => void {
     paletteWindow.hide();
     recipeWindow.hide();
     moduleWindow.hide();
+    filterWindow.hide();
     // The properties window is the machine-info state itself, so it closes
     // for every other state — including while a picker it launched is open,
     // keeping one menu on screen at a time.
@@ -1483,6 +1619,9 @@ export function mountBlueprintViewer(root: HTMLElement): () => void {
       case "module":
         openMenuWindow(moduleWindow, buildModuleMenuForSlot(activeModuleSlot));
         return;
+      case "filter":
+        openMenuWindow(filterWindow, buildFilterMenuForSlot(activeFilterSlot));
+        return;
     }
   }
 
@@ -1499,6 +1638,7 @@ export function mountBlueprintViewer(root: HTMLElement): () => void {
         enterMenuState(recipeExitState());
         return;
       case "module":
+      case "filter":
         enterMenuState("machine-info");
         return;
       case "default":
@@ -1556,6 +1696,24 @@ export function mountBlueprintViewer(root: HTMLElement): () => void {
     });
   }
 
+  /** Writes one filter slot (an item name, or "" to empty it) back onto the
+   *  selected entity's position-preserving filterItems array — see
+   *  PlacedEntity's own doc comment for why a gap is "" rather than
+   *  compacted away. Shared by the filter menu's confirm and the
+   *  right-click-a-slot removal, same as setModuleSlot above. */
+  function setFilterSlot(slotIndex: number, itemName: string): void {
+    updateSelectedEntity((e) => {
+      const slots = [...e.filterItems];
+      while (slots.length <= slotIndex) slots.push("");
+      slots[slotIndex] = itemName;
+      // Trim trailing empties so an emptied LAST slot doesn't leave the
+      // array permanently longer than what's actually filled — matches
+      // readFilterItems' own "length is the highest filled index" shape.
+      while (slots.length > 0 && !slots[slots.length - 1]) slots.pop();
+      e.filterItems = slots;
+    });
+  }
+
   /* ---------- held module ("module in cursor") ----------
    *
    * A module picked up with 'q' rides the cursor the same way a placeable
@@ -1608,6 +1766,18 @@ export function mountBlueprintViewer(root: HTMLElement): () => void {
       current?.quality ?? "normal",
       (module) => {
         setModuleSlot(slotIndex, module);
+        enterMenuState("machine-info");
+      },
+      () => enterMenuState("machine-info"),
+    );
+  }
+
+  function buildFilterMenuForSlot(slotIndex: number): GridMenuHandle {
+    return buildFilterItemMenu(
+      $<HTMLDivElement>("#filter-body"),
+      getRenderCatalog(),
+      (itemName) => {
+        setFilterSlot(slotIndex, itemName);
         enterMenuState("machine-info");
       },
       () => enterMenuState("machine-info"),
@@ -1711,6 +1881,35 @@ export function mountBlueprintViewer(root: HTMLElement): () => void {
       // Stays in machine-info: the panel rebuilds itself through applyEdit,
       // so the emptied slot just re-renders in place.
       onClearModuleSlot: (slotIndex) => setModuleSlot(slotIndex, null),
+      onFilterSlotClick(slotIndex) {
+        activeFilterSlot = slotIndex;
+        enterMenuState("filter");
+      },
+      onClearFilterSlot: (slotIndex) => setFilterSlot(slotIndex, ""),
+      onToggleUseFilters(enabled) {
+        updateSelectedEntity((e) => {
+          e.useFilters = enabled;
+          // Matches the real GUI: filterMode/filterItems default in the
+          // moment filters are first turned on, rather than staying
+          // undefined until something else sets them — an inserter that
+          // never had a filterMode still needs "whitelist" written out once
+          // useFilters is true (see denormaliseEntities), and the slot row
+          // needs SOME array to index into even before anything's picked.
+          if (enabled && e.filterMode === undefined) e.filterMode = "whitelist";
+        });
+      },
+      onSetFilterMode(mode) {
+        updateSelectedEntity((e) => { e.filterMode = mode; });
+      },
+      onToggleOverrideStackSize(enabled) {
+        updateSelectedEntity((e) => { e.overrideStackSize = enabled ? 1 : undefined; });
+      },
+      onSetOverrideStackSize(value) {
+        updateSelectedEntity((e) => { e.overrideStackSize = value; });
+      },
+      onSetSpoilPriority(priority) {
+        updateSelectedEntity((e) => { e.spoilPriority = priority; });
+      },
     });
     propertiesWindow.show();
     propertiesWindow.bringToFront();
@@ -1888,7 +2087,7 @@ export function mountBlueprintViewer(root: HTMLElement): () => void {
     startNew();
   }
 
-  function load(text: string) {
+  function load(text: string, restoreCameraFromSave = false) {
     try {
       const envelope = decodeBlueprintString(text);
       blueprints = collectBlueprints(envelope);
@@ -1896,6 +2095,11 @@ export function mountBlueprintViewer(root: HTMLElement): () => void {
         setStatus("That decoded fine but contains no blueprints.", "error");
         return;
       }
+      // null for a loose blueprint (no book) — the sidebar's "Current book"
+      // folder then simply has nothing to show, same as before this string
+      // was ever imported.
+      currentBookTree = buildBlueprintTree(envelope);
+      librarySidebar?.refresh();
 
       picker.replaceChildren();
       blueprints.forEach((bp, i) => {
@@ -1912,7 +2116,7 @@ export function mountBlueprintViewer(root: HTMLElement): () => void {
           ? `Read ${blueprints.length} blueprints, ${total} entities.`
           : `Read ${total} entities.`,
       );
-      selectBlueprint(0);
+      selectBlueprint(0, restoreCameraFromSave);
     } catch (error) {
       resultsWindow.hide();
       setStatus(
@@ -1933,6 +2137,12 @@ export function mountBlueprintViewer(root: HTMLElement): () => void {
       return encodeBlueprintString({ blueprint: toBlueprint(entities, template, wires) });
     },
     onNew: guardedStartNew,
+    getCurrentBookTree: () => currentBookTree,
+    // Same as the picker dropdown's own change handler just below — a
+    // sub-blueprint pick within the book already loaded stays a plain
+    // selectBlueprint call, no unsaved-changes guard, since that dropdown
+    // never had one either and this is the same gesture from the sidebar.
+    onSelectCurrent: (flatIndex) => selectBlueprint(flatIndex),
   });
 
   // Titlebar button slides the whole docked sidebar out to a slim collapsed
@@ -2375,7 +2585,7 @@ export function mountBlueprintViewer(root: HTMLElement): () => void {
   }
   if (autosaved) {
     input.value = autosaved;
-    load(autosaved);
+    load(autosaved, true);
   } else {
     loadExamplePool()
       .then((pool) => {
@@ -2419,6 +2629,7 @@ export function mountBlueprintViewer(root: HTMLElement): () => void {
 
     populateMeasureOptions();
     updateMeasure();
+    populateStressEntitySelect();
     // A menu open across the dataset swap is rebuilt against the new data
     // rather than left showing the vanilla fallback's much smaller set.
     if (menuState !== "default") enterMenuState(menuState);

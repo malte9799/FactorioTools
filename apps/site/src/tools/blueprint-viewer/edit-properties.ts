@@ -18,6 +18,25 @@ export interface PropertiesCallbacks {
    *  "right-click removes" gesture the canvas uses for entities, so the
    *  module menu never needs a remove option of its own. */
   onClearModuleSlot(slotIndex: number): void;
+  /** Left-click on a filter slot — opens the item picker for that slot, the
+   *  same separate-window flow the recipe gear and module slots use. */
+  onFilterSlotClick(slotIndex: number): void;
+  /** Right-click on a filled filter slot empties it — same "right-click
+   *  removes" gesture as a module slot. */
+  onClearFilterSlot(slotIndex: number): void;
+  /** The "Use filters" checkbox toggled. */
+  onToggleUseFilters(enabled: boolean): void;
+  /** The Whitelist/Blacklist switch toggled. */
+  onSetFilterMode(mode: "whitelist" | "blacklist"): void;
+  /** The "Override stack size" checkbox toggled — `false` clears the
+   *  override entirely (undefined, not left at whatever the slider showed). */
+  onToggleOverrideStackSize(enabled: boolean): void;
+  /** The override-stack-size slider/number field changed, while the
+   *  checkbox is on. */
+  onSetOverrideStackSize(value: number): void;
+  /** One of the Spoiled first / Fresh first radios picked, or neither
+   *  (clearing back to "no preference") — undefined clears it. */
+  onSetSpoilPriority(priority: "spoiled-first" | "fresh-first" | undefined): void;
 }
 
 /** Bottleneck lookup this GUI needs to show its status line — pass in
@@ -138,6 +157,37 @@ export function buildModuleMenu(
     onCancel,
   });
 }
+
+/** Builds the item-picker menu for ONE inserter/loader filter slot — same
+ *  grid-menu body as the others, but drawn from catalog.itemNames (every
+ *  real item prototype, ores and intermediates included), not just the
+ *  placeable/module/recipe subsets those other pickers cover, since an
+ *  inserter can filter for literally any item. No quality strip: a filter
+ *  slot names an item, not a specific quality of it (matches the real game's
+ *  own filter-inserter GUI, which has no quality picker on its filter
+ *  slots). */
+export function buildFilterItemMenu(
+  container: HTMLElement,
+  catalog: RenderCatalog,
+  onPick: (itemName: string) => void,
+  onCancel: () => void,
+): GridMenuHandle {
+  const entries: GridMenuEntry[] = Object.entries(catalog.itemNames).map(([name, localised]) => ({
+    name,
+    localised,
+    position: catalog.itemMenuPositions[name],
+  }));
+
+  return buildGridMenu(container, {
+    entries,
+    groups: catalog.menuGroups,
+    filterLabel: "Filter items",
+    showQuality: false,
+    onConfirm: ({ name }) => onPick(name),
+    onCancel,
+  });
+}
+
 /** Builds the real game's own machine-GUI look (per the user's reference
  *  screenshots): a checkered-background sprite preview, the entity name, a
  *  status line (recipe-shortage/working/no-recipe, from the bottleneck
@@ -257,6 +307,182 @@ export function buildPropertiesPanel(
       slotsRow.appendChild(cell);
     }
     container.appendChild(slotsRow);
+  }
+
+  // Inserter-only settings: filters (whitelist/blacklist + up to 5 item
+  // slots), override stack size, and spoil priority — matching the real
+  // game's own inserter GUI (see the user's own reference screenshot).
+  // Every field here round-trips through the blueprint's own flat
+  // `filters`/`filter_mode`/`use_filters`/`override_stack_size`/
+  // `spoil_priority` fields (see blueprint.ts's normaliseEntities/
+  // denormaliseEntities) — this panel is the only place that writes them.
+  const inserter = data.inserters[entity.name];
+  if (inserter) {
+    const FILTER_SLOT_COUNT = 5;
+    const filterSection = document.createElement("div");
+    filterSection.className = "entity-gui-section";
+
+    const filterHeader = document.createElement("label");
+    filterHeader.className = "entity-gui-checkbox-row";
+    const filterCheckbox = document.createElement("input");
+    filterCheckbox.type = "checkbox";
+    filterCheckbox.checked = entity.useFilters ?? false;
+    filterCheckbox.addEventListener("change", () => callbacks.onToggleUseFilters(filterCheckbox.checked));
+    filterHeader.append(filterCheckbox, document.createTextNode(" Use filters"));
+    filterSection.appendChild(filterHeader);
+
+    const filterBody = document.createElement("div");
+    filterBody.className = "entity-gui-filter-body";
+    filterBody.hidden = !filterCheckbox.checked;
+    filterCheckbox.addEventListener("change", () => { filterBody.hidden = !filterCheckbox.checked; });
+
+    const modeRow = document.createElement("div");
+    modeRow.className = "entity-gui-filter-mode-row";
+    const whitelistLabel = document.createElement("span");
+    whitelistLabel.className = "filter-mode-label";
+    whitelistLabel.textContent = "Whitelist";
+    const modeToggle = document.createElement("button");
+    modeToggle.type = "button";
+    modeToggle.className = "filter-mode-switch";
+    const isBlacklist = entity.filterMode === "blacklist";
+    modeToggle.classList.toggle("is-blacklist", isBlacklist);
+    modeToggle.setAttribute("role", "switch");
+    modeToggle.setAttribute("aria-checked", String(isBlacklist));
+    modeToggle.title = "Toggle whitelist/blacklist";
+    modeToggle.addEventListener("click", () => callbacks.onSetFilterMode(isBlacklist ? "whitelist" : "blacklist"));
+    const blacklistLabel = document.createElement("span");
+    blacklistLabel.className = "filter-mode-label";
+    blacklistLabel.textContent = "Blacklist";
+    modeRow.append(whitelistLabel, modeToggle, blacklistLabel);
+    filterBody.appendChild(modeRow);
+
+    const filterSlotsRow = document.createElement("div");
+    filterSlotsRow.className = "entity-gui-filter-slots";
+    for (let i = 0; i < FILTER_SLOT_COUNT; i++) {
+      const itemName = entity.filterItems[i] || undefined;
+      const slotButton = document.createElement("button");
+      slotButton.type = "button";
+      slotButton.className = "filter-slot-button";
+      const localisedItem = itemName ? (catalog.itemNames[itemName] ?? itemName) : undefined;
+      slotButton.title = localisedItem ? `${localisedItem} — right-click to remove` : "Empty filter slot";
+      if (itemName) slotButton.appendChild(icon(itemName, localisedItem ?? itemName, 28));
+      slotButton.addEventListener("click", () => callbacks.onFilterSlotClick(i));
+      slotButton.addEventListener("contextmenu", (event) => {
+        event.preventDefault();
+        if (itemName) callbacks.onClearFilterSlot(i);
+      });
+      filterSlotsRow.appendChild(slotButton);
+    }
+    filterBody.appendChild(filterSlotsRow);
+    filterSection.appendChild(filterBody);
+    container.appendChild(filterSection);
+
+    // Override stack size: checkbox + slider + numeric readout. The real
+    // game's own max depends on the force's stack-size research, which this
+    // tool has no notion of (no research/force model) — MAX_OVERRIDE_STACK
+    // is a generous fixed ceiling covering every vanilla tech tier instead.
+    const MAX_OVERRIDE_STACK = 20;
+    const stackSection = document.createElement("div");
+    stackSection.className = "entity-gui-section";
+    const stackHeader = document.createElement("label");
+    stackHeader.className = "entity-gui-checkbox-row";
+    const stackCheckbox = document.createElement("input");
+    stackCheckbox.type = "checkbox";
+    const stackEnabled = entity.overrideStackSize !== undefined;
+    stackCheckbox.checked = stackEnabled;
+    stackHeader.append(stackCheckbox, document.createTextNode(" Override stack size"));
+    stackSection.appendChild(stackHeader);
+
+    const stackBody = document.createElement("div");
+    stackBody.className = "entity-gui-stack-body";
+    stackBody.hidden = !stackEnabled;
+    const stackSlider = document.createElement("input");
+    stackSlider.type = "range";
+    stackSlider.min = "1";
+    stackSlider.max = String(MAX_OVERRIDE_STACK);
+    stackSlider.step = "1";
+    stackSlider.value = String(entity.overrideStackSize ?? 1);
+    stackSlider.className = "stack-size-slider";
+    const stackValue = document.createElement("input");
+    stackValue.type = "number";
+    stackValue.min = "1";
+    stackValue.max = String(MAX_OVERRIDE_STACK);
+    stackValue.step = "1";
+    stackValue.value = String(entity.overrideStackSize ?? 1);
+    stackValue.className = "stack-size-value";
+    // `input` only updates the live numeric readout — no callback there, and
+    // therefore no applyEdit/full-panel-rebuild — because onSetOverrideStackSize
+    // triggers renderPropertiesPanel(), which replaceChildren()s this very
+    // slider. Doing that on every `input` tick (dozens per second while
+    // dragging) swapped the DOM node out from under the pointer mid-drag,
+    // which is what broke dragging outright: the browser's own slider-drag
+    // gesture doesn't survive its element being replaced. `change` (fires
+    // once, on release) is the only point this commits the edit — matching
+    // the number field's own commit-on-change below, so a whole drag is one
+    // undo step, not one per pixel moved.
+    stackSlider.addEventListener("input", () => {
+      stackValue.value = stackSlider.value;
+    });
+    stackSlider.addEventListener("change", () => {
+      callbacks.onSetOverrideStackSize(Number(stackSlider.value));
+    });
+    stackValue.addEventListener("change", () => {
+      const clamped = Math.min(MAX_OVERRIDE_STACK, Math.max(1, Math.round(Number(stackValue.value)) || 1));
+      stackValue.value = String(clamped);
+      stackSlider.value = String(clamped);
+      callbacks.onSetOverrideStackSize(clamped);
+    });
+    stackBody.append(stackSlider, stackValue);
+    stackSection.appendChild(stackBody);
+    container.appendChild(stackSection);
+
+    stackCheckbox.addEventListener("change", () => {
+      stackBody.hidden = !stackCheckbox.checked;
+      callbacks.onToggleOverrideStackSize(stackCheckbox.checked);
+    });
+
+    // Spoiled priority: a main "Spoiled priority" checkbox (matching the
+    // Use filters/Override stack size sections above it) gates two
+    // mutually-exclusive radios. Unchecking the main box clears the
+    // preference entirely (undefined); checking it defaults to
+    // "spoiled-first" — the game's own first/emphasised option — rather
+    // than leaving the radios both unset with no way to tell which one a
+    // bare click would land on.
+    const spoilSection = document.createElement("div");
+    spoilSection.className = "entity-gui-section";
+    const spoilHeader = document.createElement("label");
+    spoilHeader.className = "entity-gui-checkbox-row";
+    const spoilCheckbox = document.createElement("input");
+    spoilCheckbox.type = "checkbox";
+    const spoilEnabled = entity.spoilPriority !== undefined;
+    spoilCheckbox.checked = spoilEnabled;
+    spoilHeader.append(spoilCheckbox, document.createTextNode(" Spoiled priority"));
+    spoilSection.appendChild(spoilHeader);
+
+    const spoilBody = document.createElement("div");
+    spoilBody.className = "entity-gui-spoil-body";
+    spoilBody.hidden = !spoilEnabled;
+
+    function makeSpoilRadio(value: "spoiled-first" | "fresh-first", text: string): HTMLLabelElement {
+      const label = document.createElement("label");
+      label.className = "spoil-priority-option";
+      const radio = document.createElement("input");
+      radio.type = "radio";
+      radio.name = `spoil-priority-${entity.entityNumber}`;
+      radio.checked = entity.spoilPriority === value;
+      radio.addEventListener("change", () => callbacks.onSetSpoilPriority(value));
+      label.append(radio, document.createTextNode(` ${text}`));
+      return label;
+    }
+    spoilBody.appendChild(makeSpoilRadio("spoiled-first", "Spoiled first"));
+    spoilBody.appendChild(makeSpoilRadio("fresh-first", "Fresh first"));
+    spoilSection.appendChild(spoilBody);
+    container.appendChild(spoilSection);
+
+    spoilCheckbox.addEventListener("change", () => {
+      spoilBody.hidden = !spoilCheckbox.checked;
+      callbacks.onSetSpoilPriority(spoilCheckbox.checked ? "spoiled-first" : undefined);
+    });
   }
 
   // mountEntityPreview's teardown fires when this panel is next rebuilt or

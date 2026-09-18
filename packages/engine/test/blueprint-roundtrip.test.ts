@@ -140,4 +140,79 @@ test("entity numbers renumber sequentially starting at 1", () => {
   assert.equal(bpEntities[1]!.entity_number, 2);
 });
 
+/* ---------- Inserter filter/override-stack-size/spoil-priority round trip ----------
+ *
+ * Real blueprint string with 5 bulk-inserters, each configured with one
+ * different setting from the entity GUI's own filter/override/spoil-priority
+ * panel — captured from a live game (Space Age) rather than hand-built, so
+ * this exercises the actual on-disk shapes (flat `filters`, `filter_mode`,
+ * `use_filters`, `override_stack_size`, `spoil_priority`) rather than a
+ * guessed one. */
+const FIVE_INSERTERS_BLUEPRINT =
+  "0eNq9k8tugzAQRf9l1iYqBBJA6pdUFeIxtKMYm45N1RTx7x1AyaY0YtUNEpbn3DNX8giVHrBnMh7yEai2xkH+MoKjN1Pq+cyUHUIO1aAvARmH7JFhUkCmwS/Iw+lVARpPnnAdXX6uhRm6Sm7modpGKOitkylr5hQhBVF4SBRcIY+Oh0QSGmKs1wvppH6Bo/3gp7/BClrSMra635a6o4mtCSyjUD+GUku+HBrLnZSjoLZdX3LprejAM8xVDA6LO9HzgBvmx93mYfrI3H4iMzVYOF/Wl8LRtzCTjcB4f2D2f1WttKKzzWKmZQdNzsO+EpP9O50f7eR6S7qQJ2B5VW4Z3XvQEovKrEkeu8Xv9lAUSO9umU9OURZnWZLGp7N8pukH0fkZyw==";
+
+test("normaliseEntities reads all four inserter GUI settings from a real blueprint", () => {
+  const envelope = decodeBlueprintString(FIVE_INSERTERS_BLUEPRINT);
+  const entities = normaliseEntities(envelope.blueprint!);
+  assert.equal(entities.length, 5);
+
+  const [plain, whitelisted, overridden, blacklisted, spoilPriority] = entities;
+  assert.deepEqual(plain!.filterItems, []);
+  assert.equal(plain!.useFilters, undefined);
+  assert.equal(plain!.overrideStackSize, undefined);
+  assert.equal(plain!.spoilPriority, undefined);
+
+  assert.deepEqual(whitelisted!.filterItems, ["iron-ore"]);
+  assert.equal(whitelisted!.useFilters, true);
+  assert.equal(whitelisted!.filterMode, "whitelist");
+
+  assert.equal(overridden!.overrideStackSize, 5);
+
+  assert.deepEqual(blacklisted!.filterItems, ["iron-ore"]);
+  assert.equal(blacklisted!.useFilters, true);
+  assert.equal(blacklisted!.filterMode, "blacklist");
+
+  assert.equal(spoilPriority!.spoilPriority, "fresh-first");
+});
+
+test("denormaliseEntities writes the inserter settings back out, and re-reading them matches", () => {
+  const envelope = decodeBlueprintString(FIVE_INSERTERS_BLUEPRINT);
+  const original = normaliseEntities(envelope.blueprint!);
+  const roundTripped = normaliseEntities({ item: "blueprint", entities: denormaliseEntities(original) });
+  assert.deepEqual(roundTripped.map((e) => e.filterItems), original.map((e) => e.filterItems));
+  assert.deepEqual(roundTripped.map((e) => e.useFilters), original.map((e) => e.useFilters));
+  assert.deepEqual(roundTripped.map((e) => e.filterMode), original.map((e) => e.filterMode));
+  assert.deepEqual(roundTripped.map((e) => e.overrideStackSize), original.map((e) => e.overrideStackSize));
+  assert.deepEqual(roundTripped.map((e) => e.spoilPriority), original.map((e) => e.spoilPriority));
+});
+
+test("a gap between filled filter slots survives the round trip (position, not just the names)", () => {
+  const entities: PlacedEntity[] = [
+    { entityNumber: 1, name: "filter-inserter", x: 0, y: 0, direction: 0, quality: "normal", modules: [], filterItems: ["iron-plate", "", "copper-plate"], useFilters: true, filterMode: "whitelist" },
+  ];
+  const [bpEntity] = denormaliseEntities(entities);
+  assert.deepEqual(bpEntity!.filters, [
+    { index: 1, name: "iron-plate" },
+    { index: 3, name: "copper-plate" },
+  ]);
+  const reread = normaliseEntities({ item: "blueprint", entities: [bpEntity!] });
+  assert.deepEqual(reread[0]!.filterItems, ["iron-plate", "", "copper-plate"]);
+});
+
+test("a chest's request_filters stay read-only: filterItems round-trips to display but useFilters is never set", () => {
+  const chestEntity: BpEntity = {
+    entity_number: 1,
+    name: "requester-chest",
+    position: { x: 0, y: 0 },
+    request_filters: { sections: [{ index: 1, filters: [{ index: 1, name: "iron-plate" }] }] },
+  };
+  const [chest] = normaliseEntities({ item: "blueprint", entities: [chestEntity] });
+  assert.deepEqual(chest!.filterItems, ["iron-plate"]);
+  assert.equal(chest!.useFilters, undefined, "a chest's filters shouldn't be mistaken for an inserter's flat filters");
+
+  const [reWritten] = denormaliseEntities([chest!]);
+  assert.equal(reWritten!.filters, undefined, "must not write chest display data back out as inserter-shaped filters");
+  assert.equal(reWritten!.request_filters, undefined, "chest requests are still not writable — dropped, not guessed wrong");
+});
+
 console.log(`\n${passed} passing`);

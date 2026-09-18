@@ -2,6 +2,7 @@ node_modules/
 dist/
 .vite/
 *.log
+.DS_Store
 
 # Extracted from a local Factorio install via extract-sprites — large
 # (100MB+) and fully reproducible, not source.

@@ -3,9 +3,12 @@ import type {
   Blueprint,
   BlueprintBook,
   BlueprintEnvelope,
+  BlueprintTreeNode,
   BpEntity,
+  BpFilterMode,
   BpItemFilter,
   BpItemRequest,
+  BpSpoilPriority,
   BpWire,
   ModuleStack,
   PlacedEntity,
@@ -70,6 +73,31 @@ export function collectBlueprints(envelope: BlueprintEnvelope): Blueprint[] {
   return out;
 }
 
+/** Same walk as collectBlueprints, but keeps the book/sub-book folder
+ *  structure instead of flattening it — for the library sidebar's "show the
+ *  imported book as nested collapsible folders" view. Each leaf's
+ *  `flatIndex` matches its position in collectBlueprints' own output, so a
+ *  click on a tree node can still call selectBlueprint(flatIndex) against
+ *  the flat list the rest of the app already works with. Returns null for a
+ *  single loose blueprint (no book, nothing to show as a folder) or an empty
+ *  envelope. */
+export function buildBlueprintTree(envelope: BlueprintEnvelope): BlueprintTreeNode | null {
+  if (!envelope.blueprint_book) return null;
+  let nextIndex = 0;
+  const walkBook = (book: BlueprintBook): BlueprintTreeNode => ({
+    kind: "book",
+    label: book.label || "Untitled book",
+    children: (book.blueprints ?? []).map((entry): BlueprintTreeNode | null => {
+      if (entry.blueprint) {
+        return { kind: "blueprint", label: entry.blueprint.label || "Untitled blueprint", flatIndex: nextIndex++ };
+      }
+      if (entry.blueprint_book) return walkBook(entry.blueprint_book);
+      return null;
+    }).filter((node): node is BlueprintTreeNode => node !== null),
+  });
+  return walkBook(envelope.blueprint_book);
+}
+
 const QUALITIES: QualityName[] = ["normal", "uncommon", "rare", "epic", "legendary"];
 
 function asQuality(value: string | undefined): QualityName {
@@ -127,18 +155,23 @@ export function readModules(entity: BpEntity): ModuleStack[] {
   return [...merged.values()];
 }
 
-/** Read explicit filter/request item names, sorted by their own `index` so
- *  alt-mode's badge row shows them in the same left-to-right order the
- *  game's own filter UI uses. Two different shapes depending on entity kind
- *  (confirmed by spike against a real 2.0 blueprint) — inserter `filters`
- *  is a flat array, a chest's `request_filters` nests under
- *  `sections[0].filters`. Neither exists on most entities (undefined, not
- *  an empty array), so this returns [] rather than assuming one shape. */
+/** Read explicit filter/request item names into a POSITION-preserving array
+ *  — index 0 is slot 1, an empty string marks an unfilled slot in between
+ *  two filled ones (e.g. only slots 1 and 3 set becomes ["iron-plate", "",
+ *  "copper-plate"], not the two names compacted together) so the entity
+ *  GUI's fixed 5-slot row can round-trip exactly what the player configured.
+ *  Two different shapes depending on entity kind (confirmed by spike against
+ *  a real 2.0 blueprint) — inserter/loader `filters` is a flat array, a
+ *  chest's `request_filters` nests under `sections[0].filters`. Neither
+ *  exists on most entities (undefined, not an empty array), so this returns
+ *  [] rather than assuming one shape. */
 function readFilterItems(entity: BpEntity): string[] {
   const flat: BpItemFilter[] = entity.filters ?? entity.request_filters?.sections?.[0]?.filters ?? [];
-  return [...flat]
-    .sort((a, b) => a.index - b.index)
-    .map((f) => safeName(f.name));
+  if (flat.length === 0) return [];
+  const maxIndex = Math.max(...flat.map((f) => f.index));
+  const slots = new Array<string>(maxIndex).fill("");
+  for (const f of flat) slots[f.index - 1] = safeName(f.name);
+  return slots;
 }
 
 /** Splits a `defines.wire_connector_id` into the colour it carries and the
@@ -196,6 +229,14 @@ export function normaliseEntities(blueprint: Blueprint): PlacedEntity[] {
     recipe: entity.recipe,
     modules: readModules(entity),
     filterItems: readFilterItems(entity),
+    // Only ever present on the entity.filters shape (inserters/loaders) —
+    // a chest's request_filters carries none of these, so they stay
+    // undefined there, which is also how denormaliseEntities tells the two
+    // kinds apart when deciding whether to write flat `filters` back out.
+    useFilters: entity.filters !== undefined ? (entity.use_filters ?? false) : undefined,
+    filterMode: entity.filters !== undefined ? (entity.filter_mode ?? "whitelist") : undefined,
+    overrideStackSize: entity.override_stack_size,
+    spoilPriority: entity.spoil_priority,
     undergroundType: entity.type === "input" || entity.type === "output" ? entity.type : undefined,
   }));
 }
@@ -216,6 +257,17 @@ function writeModules(modules: ModuleStack[]): BpItemRequest[] {
   }));
 }
 
+/** Inverse of readFilterItems' position-preserving array: index 0 -> slot 1,
+ *  an empty string is a gap and emits no entry at all (matching a real
+ *  blueprint, which never has a filter entry for an unset slot). */
+function writeFilterSlots(slots: string[]): BpItemFilter[] {
+  const out: BpItemFilter[] = [];
+  slots.forEach((name, i) => {
+    if (name) out.push({ index: i + 1, name });
+  });
+  return out;
+}
+
 /** Inverse of normaliseEntities(): PlacedEntity[] -> BpEntity[]. Entity
  *  numbers are renumbered sequentially (1-based, matching the fixture
  *  convention test/calc.test.ts's bp() helper already uses) — nothing
@@ -225,13 +277,17 @@ function writeModules(modules: ModuleStack[]): BpItemRequest[] {
  *  quality "normal", no recipe, no modules) are omitted entirely, matching
  *  how sparse real blueprint JSON is.
  *
- *  NOT round-tripped: `filterItems` (alt-mode-only, display-side data — see
- *  PlacedEntity's own doc comment). Writing it back out would need to know
- *  which of the two incompatible on-disk shapes (inserter's flat `filters`
- *  vs. a chest's nested `request_filters.sections`) applies, which isn't
- *  derivable from a bare entity name without a lookup this module doesn't
- *  have; re-exporting a blueprint that had filters set silently drops them
- *  rather than guessing wrong. */
+ *  filterItems/useFilters/filterMode round-trip ONLY for an inserter/loader
+ *  — signalled by useFilters being defined (normaliseEntities only ever sets
+ *  it when the SOURCE blueprint used the flat `filters` shape in the first
+ *  place). A chest's filterItems came from the incompatible nested
+ *  `request_filters.sections` shape instead (useFilters left undefined
+ *  there), which this project has no editor for, so it's still not written
+ *  back out — re-exporting a blueprint whose chest had requests set still
+ *  silently drops them rather than guessing the wrong shape. A freshly
+ *  PLACED inserter (never loaded from a blueprint) also has useFilters
+ *  undefined until its own GUI sets it, so a plain new inserter round-trips
+ *  with no filters block at all, matching a freshly-placed real one. */
 export function denormaliseEntities(entities: PlacedEntity[]): BpEntity[] {
   return entities.map((e, i) => {
     const bp: BpEntity = {
@@ -244,6 +300,13 @@ export function denormaliseEntities(entities: PlacedEntity[]): BpEntity[] {
     if (e.recipe) bp.recipe = e.recipe;
     if (e.modules.length) bp.items = writeModules(e.modules);
     if (e.undergroundType) bp.type = e.undergroundType;
+    if (e.useFilters !== undefined) {
+      bp.filters = writeFilterSlots(e.filterItems);
+      if (e.useFilters) bp.use_filters = true;
+      if (e.filterMode && e.filterMode !== "whitelist") bp.filter_mode = e.filterMode as BpFilterMode;
+    }
+    if (e.overrideStackSize !== undefined) bp.override_stack_size = e.overrideStackSize;
+    if (e.spoilPriority) bp.spoil_priority = e.spoilPriority as BpSpoilPriority;
     return bp;
   });
 }
