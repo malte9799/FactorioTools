@@ -10,7 +10,7 @@ import { buildHeatNetwork, HeatNetwork } from "./neighbours/heat.js";
 import type { PlatformBox } from "./neighbours/platform.js";
 import { buildWireNetwork, resolveWires, terminalFor, type ResolvedWire, type WireNetwork } from "./neighbours/wires.js";
 import { drawSupplyAreas, drawWires, type SupplyArea } from "./draw/wireDraw.js";
-import { collectEntity, type CollectContext } from "./draw/collect.js";
+import { collectEntity, collectInserterPlatform, type CollectContext } from "./draw/collect.js";
 import { paint, paintPlain, drawOutline, type PaintTally } from "./draw/paint.js";
 import { compareDrawCommands, type DrawCommand } from "./draw/commands.js";
 import { drawInserter } from "./sprites/inserter.js";
@@ -1163,7 +1163,15 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
     const costByName = entityAccounting ? new Map<string, EntityCost>() : null;
     for (const entity of visibleEntities) {
       const visual = visualFor(entity.name);
-      if (!visual?.graphics || visual.inserterGraphics) continue;
+      if (visual?.inserterGraphics) {
+        // The platform Y-sorts with everything else here; only the arm/hand
+        // (drawn separately, see the `procedural` pass below) always paints
+        // on top regardless of depth — see collectInserterPlatform's own
+        // doc comment for why the two are split.
+        collectInserterPlatform(commands, entity, visual.inserterGraphics, alphaFor(entity));
+        continue;
+      }
+      if (!visual?.graphics) continue;
       const before = commands.length;
       const tEntity = costByName ? performance.now() : 0;
       collectEntity(commands, entity, visual, baseCtx, alphaFor(entity));

@@ -89,16 +89,24 @@ const LONG_HANDED_RATIO = 1.5 / DEFAULT_HAND_SIZE;
 const LONG_HANDED_BY_DIR = scaleByDirTable(STANDARD_BY_DIR, LONG_HANDED_RATIO);
 
 /** Inserters are composited from a platform plate and a hand rotated to face
- *  the drop side, rather than drawn from a packed sheet — so they bypass the
- *  draw-command pipeline and paint directly. `tint`, when given, washes a
- *  CSS color over the composited result's own silhouette (source-atop) —
- *  the placement ghost's green/red valid/invalid cast. Applying it here
- *  rather than after the fact matters because source-atop composites
- *  against whatever the target canvas already holds: painting straight onto
- *  the main canvas would tint every entity already drawn underneath too,
- *  not just this inserter, so the hand/platform are composited onto a
- *  same-size offscreen canvas first and only that gets tinted, then the
- *  whole tinted result is drawn onto the main canvas in one call. */
+ *  the drop side, rather than drawn from a packed sheet — so the arm bypasses
+ *  the draw-command pipeline and paints directly (the platform itself DOES go
+ *  through that pipeline now, see collectInserterPlatform's own doc comment
+ *  for why: it needs to Y-sort against neighbours like any other entity's
+ *  body, only the arm always draws on top regardless of depth). For a real,
+ *  already-placed inserter this draws ONLY the arm — the platform was already
+ *  painted by the Y-sorted pass this call happens after. `tint`, when given,
+ *  washes a CSS color over the composited PLATFORM+ARM silhouette
+ *  (source-atop) instead — the placement ghost's green/red valid/invalid
+ *  cast, which (unlike a real placed entity) has no separate Y-sorted pass to
+ *  paint its own platform in, so drawTintedInserter composites both parts
+ *  itself. Applying the tint here rather than after the fact matters because
+ *  source-atop composites against whatever the target canvas already holds:
+ *  painting straight onto the main canvas would tint every entity already
+ *  drawn underneath too, not just this inserter, so the hand/platform are
+ *  composited onto a same-size offscreen canvas first and only that gets
+ *  tinted, then the whole tinted result is drawn onto the main canvas in one
+ *  call. */
 export function drawInserter(
   ctx: CanvasRenderingContext2D,
   atlas: SpriteAtlas,
@@ -111,7 +119,11 @@ export function drawInserter(
   const handBase = g && atlas.get(g.handBase.sheet);
   const handOpen = g && atlas.get(g.handOpen.sheet);
   if (!g || !platform || !handBase || !handOpen) {
-    drawOutline(ctx, entity.x, entity.y, 1, 1);
+    // The platform's own Y-sorted pass already falls back to an outline (via
+    // collectEntity's usual "no sprite loaded yet" handling) when its sheet
+    // isn't ready, so this would double up; only the tint path (which needs
+    // the whole composited shape) still draws its own outline here.
+    if (tint) drawOutline(ctx, entity.x, entity.y, 1, 1);
     return;
   }
 
@@ -120,7 +132,7 @@ export function drawInserter(
     return;
   }
 
-  drawInserterParts(ctx, entity, g, platform, handBase, handOpen);
+  drawArm(ctx, entity, g, handBase, handOpen);
 }
 
 /** Generous upper bound on how far the hand segment's far tip can land past
@@ -195,13 +207,11 @@ function drawArmSegment(
   ctx.restore();
 }
 
-function drawInserterParts(
+function drawPlatform(
   ctx: CanvasRenderingContext2D,
   entity: PlacedEntity,
   g: InserterGraphics,
   platform: SpriteSurface,
-  handBase: SpriteSurface,
-  handOpen: SpriteSurface,
 ): void {
   const cardinal = toCardinal(entity.direction);
   const column = Math.round(cardinal / 4) % g.platformDirections;
@@ -218,14 +228,41 @@ function drawInserterParts(
     column * g.platform.frameWidth, 0, g.platform.frameWidth, g.platform.frameHeight,
     entity.x + shiftX - pw / 2, entity.y + shiftY - ph / 2, pw, ph,
   );
+}
 
-  // The arm is two independently rotated/squished static sprites, not a
-  // single stretched piece — see ARM_ANGLE's doc comment. hand (handOpen,
-  // the grabber) lands at the drop side; arm (handBase) stays near the
-  // pivot and is drawn LAST so it overlaps the hand, matching the real
-  // game's foreground arm.
+/** The arm alone: two independently rotated/squished static sprites, not a
+ *  single stretched piece — see ARM_ANGLE's doc comment. hand (handOpen, the
+ *  grabber) lands at the drop side; arm (handBase) stays near the pivot and
+ *  is drawn LAST so it overlaps the hand, matching the real game's
+ *  foreground arm. Always drawn on top of whatever else is on screen — see
+ *  drawInserter's own doc comment for why that's correct for the arm but not
+ *  for the platform. */
+function drawArm(
+  ctx: CanvasRenderingContext2D,
+  entity: PlacedEntity,
+  g: InserterGraphics,
+  handBase: SpriteSurface,
+  handOpen: SpriteSurface,
+): void {
+  const cardinal = toCardinal(entity.direction);
   const byDir = entity.name === "long-handed-inserter" ? LONG_HANDED_BY_DIR : STANDARD_BY_DIR;
   const segs = byDir[cardinal] ?? byDir[0]!;
   drawArmSegment(ctx, entity, handOpen, g.handOpen, segs.hand);
   drawArmSegment(ctx, entity, handBase, g.handBase, segs.arm);
+}
+
+/** Platform + arm together, for the placement ghost's tinted preview — which
+ *  has no separate Y-sorted pass to paint its own platform in (a ghost isn't
+ *  a real committed entity), so drawTintedInserter needs both parts in one
+ *  composited silhouette. */
+function drawInserterParts(
+  ctx: CanvasRenderingContext2D,
+  entity: PlacedEntity,
+  g: InserterGraphics,
+  platform: SpriteSurface,
+  handBase: SpriteSurface,
+  handOpen: SpriteSurface,
+): void {
+  drawPlatform(ctx, entity, g, platform);
+  drawArm(ctx, entity, g, handBase, handOpen);
 }

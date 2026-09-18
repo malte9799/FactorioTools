@@ -1,4 +1,4 @@
-import { Layer, type GraphicsLayer, type PlacedEntity, type Sprite } from "@factoriotools/engine";
+import { Layer, type GraphicsLayer, type InserterGraphics, type PlacedEntity, type Sprite } from "@factoriotools/engine";
 import type { ResolvedVisual } from "../entityLookup.js";
 import { dir4Name, dir8Name, toCardinal, opposite, splitterLaneCells, step, Dir, type Cardinal, type NeighbourGrid } from "../neighbours/grid.js";
 import { classifyPipe } from "../neighbours/pipe.js";
@@ -435,6 +435,28 @@ function push(
     alpha,
     rotationDeg: sprite.rotationDeg,
   });
+}
+
+/** An inserter's platform (the static base plate under the swinging arm)
+ *  Y-sorts against neighbours like any other entity's body — confirmed
+ *  against the real game, where the platform sits at the same ordinary
+ *  "object" render layer everything else does, and only the arm/hand
+ *  pictures always draw above neighbours regardless of depth (they're
+ *  designed to swing out over neighbouring tiles). Emitting the platform
+ *  here, through the same push()/sort pipeline collectEntity's other
+ *  entities use, is what lets a taller neighbour correctly overlap an
+ *  inserter's base the way it would any other building — drawInserter's own
+ *  procedural pass (see render.ts) now only paints the arm on top of
+ *  whatever this pass already painted, never the platform. */
+export function collectInserterPlatform(
+  out: DrawCommand[],
+  entity: PlacedEntity,
+  graphics: InserterGraphics,
+  alpha: number,
+): void {
+  const cardinal = toCardinal(entity.direction);
+  const column = Math.round(cardinal / 4) % graphics.platformDirections;
+  push(out, graphics.platform, column, 0, entity, Layer.Object, 0, alpha);
 }
 
 /** Turns one entity into its draw commands. Nothing here touches the canvas —
