@@ -246,11 +246,9 @@ Alle permissiv, **keine Copyleft-Konflikte**, keine Lizenz mit
 Weitergabepflichten für den ausgelieferten Code.
 
 > Nicht geprüft, aber erwähnenswert: Die extrahierten Sprites sind
-> urheberrechtlich geschütztes Material von Wube Software. Das Repository
-> schließt sie korrekt über `.gitignore` aus und reproduziert sie lokal aus
-> einer vorhandenen Installation — genau der richtige Umgang. Für eine
+> urheberrechtlich geschütztes Material von Wube Software. Für eine
 > **öffentliche** Bereitstellung der gerenderten Sprites wäre die Rechtelage
-> allerdings gesondert zu klären. Das ist eine juristische, keine technische
+> gesondert zu klären. Das ist eine juristische, keine technische
 > Frage, und ich bewerte sie nicht.
 
 ### Veraltete Pakete

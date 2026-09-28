@@ -21,9 +21,8 @@ combinators, undo/redo, then export the result back to a blueprint string.
 
 ## Requirements
 
-The renderer draws real Factorio sprites, and those are Wube's copyrighted
-assets — they are not in this repository and never will be. You need your own
-copy of the game to generate them locally.
+The renderer draws real Factorio sprites. To regenerate them yourself you
+need your own copy of the game.
 
 - **Node.js 22+**
 - **Factorio 2.0** (Space Age, quality and elevated rails are all read if
@@ -104,5 +103,4 @@ The code is MIT (see `LICENSE`).
 
 Factorio, its prototype data and its sprite art are the property of
 [Wube Software](https://factorio.com) and are **not** covered by that licence.
-This project reads them from your own installation at build time and
-redistributes none of them.
+This project reads them from a Factorio installation at build time.

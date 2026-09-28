@@ -11,9 +11,7 @@ dist/
 apps/site/public/data/.build-cache.json
 # The audit's findings, reports and verification scripts ARE tracked — they
 # are project history, and the verify scripts are what prove the render path
-# unchanged across refactors. Only its bulk artefacts are excluded: both of
-# these hold Factorio sprite art copied out of a local install, same reason
-# apps/site/public/data/sprites/ is ignored.
+# unchanged across refactors. Only its bulk artefacts are excluded.
 audit/f06-rollout/
 audit/f06/*.png
 audit/recordings/

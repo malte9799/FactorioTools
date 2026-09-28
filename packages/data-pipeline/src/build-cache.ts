@@ -18,7 +18,7 @@
  *  file in the Factorio install, which nothing in this pipeline writes to.
  *
  *  The cache is advisory: deleting it, or any entry, only costs a rebuild.
- *  It is stored next to the generated data and is gitignored along with it.
+ *  It is stored next to the generated data.
  */
 import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import path from "node:path";

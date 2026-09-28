@@ -186,8 +186,8 @@ Getroffene Annahmen, da während des Audits keine Rückfragen möglich waren:
 5. **F-05 (Integer-Map-Schlüssel) ist hergeleitet, nicht gemessen** — der
    Anteil wurde nicht isoliert. Deshalb bewusst zurückgestellt.
 6. **Zur Rechtelage der extrahierten Sprites** (Material von Wube Software)
-   äußere ich mich nicht — das Repo behandelt sie korrekt über `.gitignore`,
-   für eine öffentliche Bereitstellung wäre die Frage aber gesondert zu klären.
+   äußere ich mich nicht — für eine öffentliche Bereitstellung wäre die Frage
+   gesondert zu klären.
 
 ---
 

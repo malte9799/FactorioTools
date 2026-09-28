@@ -1,9 +1,7 @@
 /** Locating the generated dataset, and skipping cleanly when it is absent.
  *
  *  game-data.json, render-catalog.json and the sprite sheets are produced
- *  from a local Factorio install (see the README) and are gitignored — they
- *  are not source. A fresh clone therefore has none of them, which includes
- *  every CI runner.
+ *  from a local Factorio install (see the README).
  *
  *  Tests that need real prototype data call requireDataset() at module top
  *  level. Locally, where the dataset exists, it returns the paths and the

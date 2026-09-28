@@ -193,7 +193,7 @@ aufsetzen (`audit/scripts/f06-verify-layers.ts` zeigt das Verfahren).
    keine meiner Konstellationen auslöst. **Ein gelöschter Frame fällt erst
    auf, wenn ein Nutzer die Entity in genau dem Zustand sieht.**
 2. **Wie gehst du mit den Rohdaten um?** Die Sprites werden aus deiner
-   Factorio-Installation reproduziert und sind gitignored. Nach dem Zuschnitt
+   Factorio-Installation reproduziert. Nach dem Zuschnitt
    ist `extract-sprites.ts` die einzige Quelle der Wahrheit — ein Fehler dort
    erfordert eine vollständige Neuextraktion.
 3. **Willst du Katalog-Umschreibung oder Sheet-Erhalt?** Zuschneiden verschiebt

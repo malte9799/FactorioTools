@@ -24,7 +24,4 @@ jobs:
 
       - run: npm test
 
-      # The dataset the site fetches at runtime is generated from a local
-      # Factorio install and is gitignored, so the build runs without it —
-      # that is fine, it is a static build and never reads those files.
       - run: npm run build

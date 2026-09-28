@@ -26,6 +26,4 @@ This licence covers the source code of this project only.
 
 Factorio, its prototype data, its locale files and its sprite art are the
 property of Wube Software Ltd. and are not licensed under the terms above.
-This project reads them from a local Factorio installation at build time and
-does not redistribute them; the generated dataset and extracted sprites are
-excluded from version control.
+This project reads them from a local Factorio installation at build time.
