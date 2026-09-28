@@ -19,9 +19,10 @@ import {
   TIMESCALE_FACTOR,
   boxOf,
   overlaps,
+  remapSelectionForPaste,
 } from "@factoriotools/engine";
 import type { CalculationResult, Timescale, Blueprint, BlueprintTreeNode, PlacedEntity, QualityName, MachineGroup, ModuleStack, ThroughputContext, BottleneckSubgroup, WireColor, WireLink } from "@factoriotools/engine";
-import { mountRenderer, isPoleLike, isTwoDirectionOnly, rotationStep, effectiveFootprint, summariseRecording, slowestFrames, worstPhase, autoConnectPole, canWire, dropWiresFor, toggleWire, type BlueprintRenderer, type HighlightRole } from "@factoriotools/renderer";
+import { mountRenderer, isPoleLike, isTwoDirectionOnly, rotationStep, effectiveFootprint, rotateAroundCenter, summariseRecording, slowestFrames, worstPhase, autoConnectPole, canWire, dropWiresFor, toggleWire, type BlueprintRenderer, type HighlightRole } from "@factoriotools/renderer";
 import { buildRecipeCard, renderResults, type ViewOptions } from "./legacy-view/panels.js";
 import { icon } from "./legacy-view/icons.js";
 import { makeFloatingWindow } from "../../window-manager.js";
@@ -874,6 +875,21 @@ export function mountBlueprintViewer(root: HTMLElement): () => void {
     altModeButton.classList.toggle("is-active", altModeOn);
   }
   altModeButton.addEventListener("click", () => setAltMode(!altModeOn), { signal });
+
+  /** True while one of the three box-drag action modes (copyBox/cutBox/
+   *  deleteBox) is active — Cmd+C/Cmd+X/Alt+D each set this via setMode
+   *  (see setMode's own comment). No toolbar button for these: they're
+   *  keyboard-only, matching the user's "Cmd+C activates the copy tool"
+   *  framing (real Factorio doesn't toolbar-button its own cut/copy/delete
+   *  shortcuts either). */
+  let boxModeOn = false;
+  /** True while a copy/cut's multi-entity ghost is armed on the cursor
+   *  ('paste' mode) — set by copyBoxToClipboardAndGhost, cleared by setMode
+   *  (any call puts the renderer into a mode other than 'paste'). Tracked
+   *  separately from boxModeOn since a completed copy/cut box hands off
+   *  from copyBox/cutBox mode straight to paste mode; Escape needs to know
+   *  about both to decide whether it should intercept the keypress. */
+  let pasteArmed = false;
   // Toggles on key-UP, not key-DOWN — matches the real game's own Alt-mode
   // gesture (holding Alt doesn't preview it here, it's a plain toggle) and
   // avoids a held key's own OS-level repeat re-firing this on every
@@ -1294,6 +1310,75 @@ export function mountBlueprintViewer(root: HTMLElement): () => void {
     });
   }
 
+  /** Batch delete for the box-drag delete tool (Alt+D) and the delete half
+   *  of cut — same shape as removeEntity, generalized to a Set so the whole
+   *  box undoes as ONE step instead of one per entity. */
+  function removeEntities(numbers: ReadonlySet<number>) {
+    if (numbers.size === 0) return;
+    if (selectedEntity && numbers.has(selectedEntity.entityNumber)) deselect();
+    if (pendingWireFrom !== null && numbers.has(pendingWireFrom)) setPendingWireFrom(null);
+    applyEdit(() => {
+      entities = entities.filter((e) => !numbers.has(e.entityNumber));
+      wires = dropWiresFor(wires, new Set(numbers));
+    });
+  }
+
+  /** Shared by the copy and cut box tools: writes the given entities to the
+   *  system clipboard as a real, Factorio-compatible blueprint string (same
+   *  encode path the Export button uses, just filtered to the box), AND
+   *  arms them as a multi-entity paste ghost so the group can be stamped
+   *  straight back down without a separate Cmd+V. Entities carry placeholder
+   *  entityNumbers in the ghost — onPaste below remaps to fresh ones on
+   *  every stamp, since the ghost stays armed for repeated placement. Takes
+   *  the box's entity numbers directly (not read from renderer state) since
+   *  both callers already have them as the argument their onCopyBox/onCutBox
+   *  callback was fired with. */
+  async function copyBoxToClipboardAndGhost(numbers: ReadonlySet<number>): Promise<void> {
+    const boxedEntities = entities.filter((e) => numbers.has(e.entityNumber));
+    if (boxedEntities.length === 0) return;
+    const boxedWires = wires.filter((w) => numbers.has(w.from) && numbers.has(w.to));
+
+    const template = blueprints[0] ?? { item: "blueprint" as const, label: undefined, version: undefined };
+    try {
+      const bpString = encodeBlueprintString({ blueprint: toBlueprint(boxedEntities, template, boxedWires) });
+      await navigator.clipboard.writeText(bpString);
+    } catch {
+      setStatus("Copied as a ghost, but couldn't write to the system clipboard.", "error");
+    }
+
+    // The ghost is held from the group's CENTER, not a corner — matches
+    // where the cursor naturally sits relative to what you're dragging.
+    // minX/maxX use each entity's own center coordinate (PlacedEntity.x is
+    // already a center), not footprint-inset edges, same precision the
+    // rest of this feature already uses (e.g. the marquee-box hit test).
+    const minX = Math.min(...boxedEntities.map((e) => e.x));
+    const minY = Math.min(...boxedEntities.map((e) => e.y));
+    const maxX = Math.max(...boxedEntities.map((e) => e.x));
+    const maxY = Math.max(...boxedEntities.map((e) => e.y));
+    // Placeholder ids are per-copy array indices (-1, -2, ...), NOT the
+    // original entityNumbers — boxedWires still points at the originals, so
+    // it must be remapped onto the placeholders here too, or every wire
+    // between two entities in the group (e.g. two power poles) silently
+    // fails to find its endpoints once onPaste's remapSelectionForPaste
+    // looks them up by the placeholder ids it actually has.
+    const placeholderIdByOriginal = new Map(boxedEntities.map((e, i) => [e.entityNumber, -1 - i]));
+    const placeholders = boxedEntities.map((e) => ({ ...e, entityNumber: placeholderIdByOriginal.get(e.entityNumber)! }));
+    const placeholderWires = boxedWires.map((w) => ({
+      ...w,
+      from: placeholderIdByOriginal.get(w.from)!,
+      to: placeholderIdByOriginal.get(w.to)!,
+    }));
+    pasteArmed = true;
+    renderer.setInteractionMode({
+      kind: "paste",
+      entities: placeholders,
+      wires: placeholderWires,
+      anchor: { x: (minX + maxX) / 2, y: (minY + maxY) / 2 },
+      groupRotation: 0,
+    });
+    setStatus(`Copied ${boxedEntities.length} ${boxedEntities.length === 1 ? "entity" : "entities"} — click to place (Esc to stop).`);
+  }
+
   /** Groups a "one slot = one module" working array back into the data
    *  model's ModuleStack[] shape (same name+quality collapsed with a
    *  count) — keeps entity.modules exactly what the calc engine already
@@ -1401,9 +1486,20 @@ export function mountBlueprintViewer(root: HTMLElement): () => void {
    *  toggle to remember. "idle" means nothing's in hand: left-click on an
    *  entity opens it, left-click on empty space pans. "place" means an
    *  entity IS in hand (picked from the palette, or via the 'q' pipette
-   *  below): left-click places it. Right-click erases in either mode
-   *  (wired once in render.ts, not here). */
-  function setMode(newMode: "idle" | { place: string; quality?: QualityName; direction?: number } | { wire: WireColor }) {
+   *  below): left-click places it. "copyBox"/"cutBox"/"deleteBox" are the
+   *  three box-drag action tools (Cmd+C/Cmd+X/Alt+D): drag a marquee, or
+   *  click one entity, and the box acts immediately — no intermediate
+   *  "selected, now confirm" step. Right-click erases in every mode except
+   *  these three (wired once in render.ts, not here). */
+  function setMode(
+    newMode:
+      | "idle"
+      | "copyBox"
+      | "cutBox"
+      | "deleteBox"
+      | { place: string; quality?: QualityName; direction?: number }
+      | { wire: WireColor },
+  ) {
     // Leaving wire mode always drops a half-finished pick — otherwise the
     // first end would still be armed the next time wire mode came back on.
     const hadWire = wireColorInHand !== null;
@@ -1411,9 +1507,22 @@ export function mountBlueprintViewer(root: HTMLElement): () => void {
       setPendingWireFrom(null);
       wireColorInHand = null;
     }
+    // Any explicit setMode call means the app is switching to a mode OTHER
+    // than 'paste' (a completed copy/cut box arms 'paste' directly through
+    // the renderer, bypassing setMode entirely) — so a paste ghost armed
+    // before this call is no longer current and should stop being tracked
+    // as such.
+    pasteArmed = false;
     if (newMode === "idle") {
       paletteSelection = null;
       renderer.setInteractionMode({ kind: "idle" });
+    } else if (newMode === "copyBox" || newMode === "cutBox" || newMode === "deleteBox") {
+      paletteSelection = null;
+      if (heldModule) {
+        heldModule = null;
+        updateCursorIcon(lastPointerPos.x, lastPointerPos.y);
+      }
+      renderer.setInteractionMode({ kind: newMode });
     } else if ("wire" in newMode) {
       // Switching straight from one wire colour to another abandons a pick
       // made in the old colour: its second click would otherwise create a
@@ -1447,6 +1556,13 @@ export function mountBlueprintViewer(root: HTMLElement): () => void {
     // something in hand" cue, matching the real game's own cursor-ghost
     // feedback — on only while actually placing, off once idle.
     canvas.classList.toggle("edit-mode", newMode !== "idle");
+    // Centralized here (not just each shortcut's own keydown handler) so
+    // ANY path that changes mode — Cmd+C/X, Alt+D, a palette pick, Escape —
+    // keeps this in sync. There's no toolbar button to sync anymore (see
+    // boxModeOn's own comment), just the cursor styling and the Escape
+    // guard's own flag.
+    boxModeOn = newMode === "copyBox" || newMode === "cutBox" || newMode === "deleteBox";
+    canvas.classList.toggle("select-mode", boxModeOn);
   }
 
   /** Wired onto whichever BlueprintRenderer instance is currently mounted —
@@ -1515,6 +1631,85 @@ export function mountBlueprintViewer(root: HTMLElement): () => void {
       usedAltAsModifier = true;
       const entity = entities.find((e) => e.entityNumber === entityNumber);
       if (entity) fillAllModuleSlots(entity);
+    });
+    // A box drawn in delete mode acts immediately — no intermediate
+    // "selected, now confirm" step — and one applyEdit call inside
+    // removeEntities gives the whole box one undo step. Mode stays
+    // 'deleteBox' (the renderer itself never changes it), ready for the
+    // next box.
+    renderer.onDeleteBox((numbers) => {
+      const count = numbers.size;
+      removeEntities(numbers);
+      setStatus(`Deleted ${count} ${count === 1 ? "entity" : "entities"}.`);
+    });
+    // A box drawn in cut mode copies (clipboard + armed paste ghost, same
+    // as copy) THEN deletes the originals — confirmed with the user: cut
+    // both moves (via the ghost) and clears the source in one gesture.
+    renderer.onCutBox((numbers) => {
+      void copyBoxToClipboardAndGhost(numbers).then(() => removeEntities(numbers));
+    });
+    // A box drawn in copy mode copies (clipboard + armed paste ghost) and
+    // leaves the originals untouched.
+    renderer.onCopyBox((numbers) => {
+      void copyBoxToClipboardAndGhost(numbers);
+    });
+    // Commits one stamp of an armed paste ghost (see copyBoxToClipboardAndGhost).
+    // Stays in 'paste' mode afterward — the ghost is repeat-stampable,
+    // matching place mode's own "stays in hand until you put it away" feel.
+    renderer.onPaste((pasteEntities, pasteWires, newAnchor, origAnchor, groupRotation, collisionMode) => {
+      const dx = newAnchor.x - origAnchor.x;
+      const dy = newAnchor.y - origAnchor.y;
+      // Apply the ghost's rotation FIRST (around the original center), then
+      // the cursor offset — matches exactly what render.ts's draw() loop
+      // previewed, so the placed result is never a surprise relative to
+      // what the ghost showed.
+      const rotationSteps = groupRotation / 4;
+      const rotated = rotationSteps === 0 ? pasteEntities : pasteEntities.map((e) => rotateAroundCenter(e, origAnchor, rotationSteps));
+      const remapped = remapSelectionForPaste(
+        rotated.map((e) => ({ ...e, x: e.x + dx, y: e.y + dy })),
+        pasteWires,
+        nextEntityNumber,
+      );
+      nextEntityNumber = remapped.nextNumber;
+
+      const footprintOf = (e: PlacedEntity): [number, number] => {
+        const visual = visualLookup().get(e.name);
+        return visual ? effectiveFootprint(visual, e.direction) : ([1, 1] as [number, number]);
+      };
+      const collidesWithAny = (e: PlacedEntity, against: PlacedEntity[]) =>
+        against.some((other) => overlaps(boxOf(e.x, e.y, footprintOf(e)), boxOf(other.x, other.y, footprintOf(other))));
+
+      let toPlace = remapped.entities;
+      let toRemoveFirst: number[] = [];
+      if (collisionMode === "block") {
+        if (toPlace.some((e) => collidesWithAny(e, entities))) {
+          setStatus("Can't place here — something in the group overlaps existing entities.", "error");
+          return;
+        }
+      } else if (collisionMode === "skip") {
+        toPlace = toPlace.filter((e) => !collidesWithAny(e, entities));
+        if (toPlace.length === 0) {
+          setStatus("Nothing to place — everything overlaps.", "error");
+          return;
+        }
+      } else {
+        // "replace": place everything; whatever an incoming entity overlaps
+        // gets erased first, mirroring the real game's own build-over-it
+        // replace gesture rather than leaving two footprints on one tile.
+        toRemoveFirst = entities.filter((existing) => collidesWithAny(existing, toPlace)).map((e) => e.entityNumber);
+      }
+
+      applyEdit(() => {
+        if (toRemoveFirst.length > 0) {
+          const removed = new Set(toRemoveFirst);
+          entities = entities.filter((e) => !removed.has(e.entityNumber));
+          wires = dropWiresFor(wires, removed);
+        }
+        entities = [...entities, ...toPlace];
+        const placedIds = new Set(toPlace.map((e) => e.entityNumber));
+        wires = [...wires, ...remapped.wires.filter((w) => placedIds.has(w.from) && placedIds.has(w.to))];
+      });
+      setStatus(`Placed ${toPlace.length} ${toPlace.length === 1 ? "entity" : "entities"}.`);
     });
     // Small non-blocking "still loading sprites" badge — fires while a
     // pan/zoom brings never-before-seen entities into view (or the
@@ -2225,6 +2420,61 @@ export function mountBlueprintViewer(root: HTMLElement): () => void {
     else undo();
   }, { signal });
 
+  // Alt+D activates the delete tool: drag a box (or click one entity) and
+  // it's gone immediately, one undo step per box. Pressing Alt+D again
+  // while already in delete mode is a harmless no-op re-arm — only 'q' or
+  // Escape leaves the mode (see their own handlers). e.code, not e.key —
+  // same reasoning as the Alt+C/R/G wire shortcuts just below: macOS emits
+  // a special character for Alt+D as e.key.
+  window.addEventListener("keydown", (e) => {
+    if (!e.altKey || e.metaKey || e.ctrlKey || e.shiftKey) return;
+    if (e.code !== "KeyD") return;
+    if (document.activeElement instanceof HTMLInputElement || document.activeElement instanceof HTMLTextAreaElement) return;
+    e.preventDefault();
+    usedAltAsModifier = true; // same guard as Alt+C/R/G — its release must not also toggle alt mode
+    setMode("deleteBox");
+    setStatus("Delete tool — drag a box to delete what's inside.");
+  }, { signal });
+
+  // Cmd/Ctrl+C activates the copy tool: drag a box (or click one entity)
+  // and it's copied immediately — a real blueprint string to the system
+  // clipboard, plus an in-app paste ghost armed on the cursor (see
+  // copyBoxToClipboardAndGhost, fired from onCopyBox). Guarded against
+  // text-input focus so the browser's native copy still works in the
+  // blueprint-string textarea and anywhere else text might be selected.
+  window.addEventListener("keydown", (e) => {
+    if (!(e.metaKey || e.ctrlKey) || e.key.toLowerCase() !== "c") return;
+    if (document.activeElement instanceof HTMLInputElement || document.activeElement instanceof HTMLTextAreaElement) return;
+    e.preventDefault();
+    setMode("copyBox");
+    setStatus("Copy tool — drag a box to copy it onto the cursor.");
+  }, { signal });
+
+  // Cmd/Ctrl+X activates the cut tool: drag a box and it's copied (as
+  // above) AND removed from the blueprint, in one undo step (see
+  // onCutBox) — the armed ghost then lets the group be moved elsewhere in
+  // one gesture.
+  window.addEventListener("keydown", (e) => {
+    if (!(e.metaKey || e.ctrlKey) || e.key.toLowerCase() !== "x") return;
+    if (document.activeElement instanceof HTMLInputElement || document.activeElement instanceof HTMLTextAreaElement) return;
+    e.preventDefault();
+    setMode("cutBox");
+    setStatus("Cut tool — drag a box to cut it.");
+  }, { signal });
+
+  // Escape cancels an active box-drag mode or an armed paste ghost,
+  // returning to idle — checked and consumed here, BEFORE the existing
+  // menu-state Escape handler below, via stopImmediatePropagation, so a
+  // box/paste-mode Escape doesn't also fall through and try to back out of
+  // a (default, no-op) menu state.
+  window.addEventListener("keydown", (e) => {
+    if (e.key !== "Escape") return;
+    if (!boxModeOn && !pasteArmed) return;
+    e.preventDefault();
+    e.stopImmediatePropagation();
+    setMode("idle");
+  }, { signal });
+
   // Cmd/Ctrl+V anywhere on the tool pastes a blueprint string straight in,
   // matching the real game's own "paste a blueprint to import it" gesture —
   // no need to focus the textarea and click Import first. Guarded against
@@ -2326,6 +2576,8 @@ export function mountBlueprintViewer(root: HTMLElement): () => void {
     // leaving the system cursor invisible until the next mousemove.
     if (paletteSelection) {
       renderer.rotateGhost(e.shiftKey);
+    } else if (pasteArmed) {
+      renderer.rotatePasteGhost(e.shiftKey);
     } else if (selectedEntity) {
       rotateSelected(e.shiftKey);
     } else {

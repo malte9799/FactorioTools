@@ -1,4 +1,4 @@
-import type { EntityGraphics, GameData, HeatConnectionPoint, InserterGraphics, PipeConnectionPoint, RenderCatalog, WireAttachPoints } from "@factoriotools/engine";
+import type { EntityGraphics, GameData, HeatConnectionPoint, InserterGraphics, PipeConnectionPoint, PlacedEntity, RenderCatalog, WireAttachPoints } from "@factoriotools/engine";
 import { toCardinal, Dir } from "./neighbours/grid.js";
 
 /** One lookup over both GameData (entities with rates) and the RenderCatalog
@@ -180,6 +180,29 @@ export function isUndergroundLike(name: string): boolean {
  *  that future auto-orientation. */
 export function isPoleLike(name: string): boolean {
   return name.endsWith("electric-pole") || name === "substation";
+}
+
+/** Rotates one entity's position around `center` by `steps` quarter-turns
+ *  (each step = 90°, i.e. 4 of the 16-way direction scheme), and advances
+ *  its own facing by the same amount — the position half of a *group*
+ *  rotation (the paste ghost's R/Shift+R), kept separate from a
+ *  single-entity in-place rotate since a group rotation must also move
+ *  WHERE each member sits, not just which way it faces. `steps` can be
+ *  negative for counter-clockwise. Exported (rather than kept local to
+ *  render.ts) so the app layer's onPaste commit can apply the exact same
+ *  math the ghost previewed — any drift between the two would mean what
+ *  you see is not what gets placed. */
+export function rotateAroundCenter(e: PlacedEntity, center: { x: number; y: number }, steps: number): PlacedEntity {
+  const normalizedSteps = ((steps % 4) + 4) % 4;
+  let rx = e.x - center.x;
+  let ry = e.y - center.y;
+  for (let i = 0; i < normalizedSteps; i++) {
+    const nx = -ry;
+    const ny = rx;
+    rx = nx;
+    ry = ny;
+  }
+  return { ...e, x: center.x + rx, y: center.y + ry, direction: (e.direction + steps * 4 + 16 * 4) % 16 };
 }
 
 /** Entities that rotate in 22.5° increments (step 1 of the 16-way scheme)

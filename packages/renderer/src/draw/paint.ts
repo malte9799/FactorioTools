@@ -207,3 +207,48 @@ export function drawOutline(
   ctx.strokeRect(x - w / 2 + 0.05, y - h / 2 + 0.05, w - 0.1, h - 0.1);
   ctx.restore();
 }
+
+/** How large the corner sprite reads on screen, in world tiles — sized to
+ *  read as a bracket around a 1x1 machine without a 6x6 building's corners
+ *  drifting apart into four disconnected commas. */
+const HOVER_CORNER_SIZE = 0.75;
+
+/** Stamps Factorio's own cursor-box corner art at each corner of an
+ *  entity's footprint: the source cell is the sheet's single top-left
+ *  bracket (already yellow), cloned and rotated 0/90/180/270deg the same
+ *  way the reference renderer's createCorners() builds a full box from one
+ *  corner sprite, rather than a spritesheet that already contains all
+ *  four. Source art is plain yellow for now; a colour parameter can be
+ *  added later (e.g. via paintTinted's source-atop wash technique) once
+ *  something other than the default hover colour is needed. */
+export function drawHoverHighlight(
+  ctx: CanvasRenderingContext2D,
+  corner: HTMLImageElement,
+  x: number,
+  y: number,
+  w: number,
+  h: number,
+): void {
+  const size = HOVER_CORNER_SIZE;
+  const left = x - w / 2;
+  const top = y - h / 2;
+  const right = x + w / 2;
+  const bottom = y + h / 2;
+
+  const corners: { cx: number; cy: number; rotationDeg: number }[] = [
+    { cx: left, cy: top, rotationDeg: 0 },
+    { cx: right, cy: top, rotationDeg: 90 },
+    { cx: right, cy: bottom, rotationDeg: 180 },
+    { cx: left, cy: bottom, rotationDeg: 270 },
+  ];
+
+  ctx.save();
+  for (const c of corners) {
+    ctx.save();
+    ctx.translate(c.cx, c.cy);
+    ctx.rotate((c.rotationDeg * Math.PI) / 180);
+    ctx.drawImage(corner, 0, 0, corner.width, corner.height, 0, 0, size, size);
+    ctx.restore();
+  }
+  ctx.restore();
+}

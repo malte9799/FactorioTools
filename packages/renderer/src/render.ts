@@ -2,7 +2,7 @@ import type { GameData, PlacedEntity, QualityName, RenderCatalog, WireColor, Wir
 import { Camera } from "./camera.js";
 import { getSharedSpriteAtlas } from "./spriteAtlas.js";
 import { getSharedIconAtlas } from "./iconAtlas.js";
-import { activeFluidConnections, buildVisualLookup, effectiveFootprint, hasAnimatedLayer, isPoleLike, isTwoDirectionOnly, isUndergroundLike, makeConnectorPredicates, rotationStep, type ResolvedVisual } from "./entityLookup.js";
+import { activeFluidConnections, buildVisualLookup, effectiveFootprint, hasAnimatedLayer, isPoleLike, isTwoDirectionOnly, isUndergroundLike, makeConnectorPredicates, rotateAroundCenter, rotationStep, type ResolvedVisual } from "./entityLookup.js";
 import { drawAltModeOverlay, drawQualityBadge } from "./entityDraw.js";
 import { buildGrid, NeighbourGrid } from "./neighbours/grid.js";
 import { buildFluidNetwork, FluidNetwork } from "./neighbours/fluid.js";
@@ -11,7 +11,8 @@ import type { PlatformBox } from "./neighbours/platform.js";
 import { buildWireNetwork, resolveWires, terminalFor, type ResolvedWire, type WireNetwork } from "./neighbours/wires.js";
 import { drawSupplyAreas, drawWires, type SupplyArea } from "./draw/wireDraw.js";
 import { collectEntity, collectInserterPlatform, type CollectContext } from "./draw/collect.js";
-import { paint, paintPlain, drawOutline, type PaintTally } from "./draw/paint.js";
+import { paint, paintPlain, drawOutline, drawHoverHighlight, type PaintTally } from "./draw/paint.js";
+import { getHoverHighlightSprite } from "./hoverHighlightSprite.js";
 import { compareDrawCommands, type DrawCommand } from "./draw/commands.js";
 import { drawInserter } from "./sprites/inserter.js";
 import { SpatialIndex, type IndexedBox } from "./spatialIndex.js";
@@ -185,7 +186,38 @@ export type InteractionMode =
    *  clicks make or break a wire between the pair. Clicks that miss an
    *  entity are inert rather than cancelling, so a stray click into empty
    *  space never silently drops a half-finished connection. */
-  | { kind: "wire"; color: WireColor };
+  | { kind: "wire"; color: WireColor }
+  /** The three box-drag action tools: a left-drag draws a marquee, and on
+   *  release every entity whose footprint overlaps it is acted on
+   *  IMMEDIATELY (no intermediate "selected, now confirm" state) — a plain
+   *  click (no drag) acts on just the one entity under the cursor. Mode
+   *  stays the same afterward, ready for another box, EXCEPT copyBox/
+   *  cutBox: those hand off to 'paste' once a box completes (see onCopyBox/
+   *  onCutBox), since the whole point is to arm a ghost with what was just
+   *  grabbed. deleteBox has no such handoff — it just keeps deleting. */
+  | { kind: "copyBox" }
+  | { kind: "cutBox" }
+  | { kind: "deleteBox" }
+  /** A copied/cut selection "on the cursor", ready to stamp — the
+   *  multi-entity equivalent of 'place'. `entities`/`wires` are the
+   *  ORIGINAL copied entities (placeholder entityNumbers, untouched
+   *  positions) offset from `anchor` (their bounding box's CENTER at copy
+   *  time — the ghost is held from its middle, not a corner); the app
+   *  remaps to fresh entityNumbers on every commit (see onPaste), since the
+   *  ghost stays armed for repeated stamping rather than being consumed by
+   *  one click. `groupRotation` is an extra 90°-step rotation (0/4/8/12 in
+   *  the 16-way scheme) applied on top of the copied data at draw/commit
+   *  time (see rotatePasteGhost) — kept separate from mutating
+   *  `entities`/`anchor` directly so repeated R presses compose exactly
+   *  (no drift) and `entities` always stays an honest, stable copy of what
+   *  was actually selected. */
+  | {
+      kind: "paste";
+      entities: PlacedEntity[];
+      wires: WireLink[];
+      anchor: { x: number; y: number };
+      groupRotation: 0 | 4 | 8 | 12;
+    };
 
 export interface BlueprintRenderer {
   canvas: HTMLCanvasElement;
@@ -214,6 +246,15 @@ export interface BlueprintRenderer {
    *  `reverse` turns counter-clockwise (Shift+R) instead of the default
    *  clockwise (R). */
   rotateGhost(reverse?: boolean): void;
+  /** Rotates the armed paste ghost as a whole — both each entity's position
+   *  (orbiting the group's center, `mode.anchor`) and its own facing — by
+   *  one 90° step. `reverse` turns counter-clockwise. A no-op while not in
+   *  'paste' mode; unlike a single pole's own in-place rotate (rotateGhost,
+   *  which refuses), a pole inside a GROUP still orbits with everything
+   *  else when the group rotates — only its own facing has no visual
+   *  effect, which is harmless. Free rotation has no per-entity
+   *  restrictions (flip, separately, is meant to). */
+  rotatePasteGhost(reverse?: boolean): void;
   hitTest(clientX: number, clientY: number): number | undefined;
   /** Fires on pointermove while not panning, with the entity under the
    *  cursor (or undefined). */
@@ -252,6 +293,45 @@ export interface BlueprintRenderer {
    *  two-click connect is half-finished. The app owns the pick itself; this
    *  only tells the renderer what to draw. */
   setPendingWire(entityNumber: number | null): void;
+  /** Fires when a box drawn in 'deleteBox' mode completes (drag-release or
+   *  a plain click) and hits at least one entity — the app deletes them
+   *  immediately. Mode stays 'deleteBox' afterward; the renderer does not
+   *  change it. */
+  onDeleteBox(callback: (entityNumbers: ReadonlySet<number>) => void): void;
+  /** Fires when a box drawn in 'cutBox' mode completes and hits at least
+   *  one entity — the app is expected to both copy (clipboard) and delete
+   *  the entities, then arm 'paste' with them (via setInteractionMode),
+   *  mirroring onCopyBox. The renderer does not change mode on its own. */
+  onCutBox(callback: (entityNumbers: ReadonlySet<number>) => void): void;
+  /** Fires when a box drawn in 'copyBox' mode completes and hits at least
+   *  one entity — the app is expected to copy (clipboard) and arm 'paste'
+   *  with them (via setInteractionMode). The renderer does not change mode
+   *  on its own. */
+  onCopyBox(callback: (entityNumbers: ReadonlySet<number>) => void): void;
+  /** Fires on a left-click while a copied/cut selection is on the cursor
+   *  ('paste' mode) — the app resolves collisions (via `collisionMode`,
+   *  read from the click's modifier keys: plain = block the whole stamp on
+   *  any collision, Shift = place only the non-colliding entities, Shift+Alt
+   *  = place everything, replacing whatever it overlaps) and adds the
+   *  placed entities to the blueprint. The ghost stays armed afterward for
+   *  another stamp — the app does not need to re-arm it. `newAnchor` is the
+   *  snapped world position the group's bounding-box CENTER should land at;
+   *  `origAnchor` is the same point in the original copied positions.
+   *  `groupRotation` is the ghost's current R/Shift+R rotation (0/4/8/12) —
+   *  the app must apply it (e.g. via rotateAroundCenter from entityLookup)
+   *  BEFORE offsetting, so `entity.(x|y) - origAnchor.(x|y) + newAnchor.(x|y)`
+   *  is only correct once each entity has already been rotated around
+   *  `origAnchor` by `groupRotation`. */
+  onPaste(
+    callback: (
+      entities: PlacedEntity[],
+      wires: WireLink[],
+      newAnchor: { x: number; y: number },
+      origAnchor: { x: number; y: number },
+      groupRotation: 0 | 4 | 8 | 12,
+      collisionMode: "block" | "skip" | "replace",
+    ) => void,
+  ): void;
   /** Fires whenever the shared sprite atlas's pending-load count changes —
    *  `loading` is true while at least one sheet is still fetching/decoding
    *  (a pan/zoom bringing new entities into view, or the initial burst on
@@ -387,6 +467,10 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
   let spatialIndex = new SpatialIndex([]);
   let platformBoxes: PlatformBox[] = [];
   let highlight: HighlightRole | null = null;
+  /** The entity under the cursor right now, tracked independently of
+   *  hoverCallback (an app-level subscriber, which may not even be set) so
+   *  the hover-highlight overlay always has something to draw from. */
+  let hoveredEntityNumber: number | undefined;
   let altMode = false;
   let animationFrame = 0;
   let dpr = window.devicePixelRatio || 1;
@@ -518,6 +602,13 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
     needsRedraw = true;
   }
 
+  /** True for the three box-drag action modes (copyBox/cutBox/deleteBox) —
+   *  they share the same drag-tracking/marquee/pointer-handling shape and
+   *  differ only in what onPointerUp does with the resulting entity set. */
+  function isBoxMode(kind: InteractionMode["kind"]): boolean {
+    return kind === "copyBox" || kind === "cutBox" || kind === "deleteBox";
+  }
+
   // The camera announces its own pans/zooms rather than every gesture handler
   // remembering to invalidate (see Camera.onChange).
   camera.onChange(invalidate);
@@ -565,6 +656,20 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
   let mode: InteractionMode = { kind: "idle" };
   let ghostWorldPos: { x: number; y: number } | null = null;
   let ghostDirection = 0;
+
+  // Shared drag-box state for the three box-drag action modes (copyBox/
+  // cutBox/deleteBox). The box is tracked in world space (converted once per
+  // pointer event via worldAtPointer) rather than screen space, since world
+  // coordinates are what both the draw loop and spatialIndex.queryRect need
+  // — screen space would mean re-deriving world coords a second time just to
+  // query/draw. boxDownScreenPos is the one exception: the click-vs-drag
+  // threshold itself is inherently a screen-space distance
+  // (CLICK_MOVE_THRESHOLD, shared with idle-mode's own click/drag check).
+  let boxDownPointerId: number | undefined;
+  let boxDownWorldPos: { x: number; y: number } | undefined;
+  let boxDownScreenPos: { x: number; y: number } | undefined;
+  let boxDragCurrentWorldPos: { x: number; y: number } | undefined;
+  let boxDragMoved = false;
 
   // Right-click erase state: instant on press, then drags across more
   // entities keep erasing for the rest of the gesture — no start delay
@@ -755,6 +860,69 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
       }
     }
 
+    // Multi-entity paste ghost ('paste' mode — a copied/cut selection on the
+    // cursor). Kept as its own block rather than folding into the
+    // single-entity ghost above: the two differ in shape (one validity flag
+    // vs. an array, no same-entity "rebuild in place" exception here) enough
+    // that a shared abstraction would be more convoluted than the
+    // duplication.
+    let pasteGhosts: PlacedEntity[] = [];
+    let pasteGhostValid: boolean[] = [];
+    if (mode.kind === "paste" && ghostWorldPos) {
+      // The group anchor (the copied selection's bounding-box CENTER) snaps
+      // to a whole grid tile; each entity keeps its exact original offset
+      // from the anchor, rotated by groupRotation first if the ghost has
+      // been turned. A group can mix odd- and even-footprint entities, so
+      // there is no single "snap parity" for the whole group the way a
+      // single ghost's own footprint determines — only the anchor point
+      // itself needs a rule, and a whole-tile snap is the simplest one that
+      // behaves reasonably for every mix.
+      const snappedAnchor = { x: Math.round(ghostWorldPos.x), y: Math.round(ghostWorldPos.y) };
+      const { entities: copiedEntities, anchor: origAnchor, groupRotation } = mode;
+      const rotationSteps = groupRotation / 4;
+      pasteGhosts = copiedEntities.map((e) => {
+        const rotated = rotationSteps === 0 ? e : rotateAroundCenter(e, origAnchor, rotationSteps);
+        return {
+          ...rotated,
+          x: snappedAnchor.x + (rotated.x - origAnchor.x),
+          y: snappedAnchor.y + (rotated.y - origAnchor.y),
+        };
+      });
+      const previewKey = `${entitiesVersion}|paste|${snappedAnchor.x},${snappedAnchor.y}|${groupRotation}`;
+      if (previewKey !== ghostPreviewKey) {
+        ghostPreviewKey = previewKey;
+        const withGhosts = [...entities, ...pasteGhosts];
+        ghostPreviewGrid = buildGrid(withGhosts);
+        ghostPreviewFluid = buildFluidNetwork(withGhosts, (e) => {
+          const points = visualFor(e.name)?.pipeConnections;
+          return points && activeFluidConnections(points, e.recipe, data);
+        });
+        ghostPreviewHeat = buildHeatNetwork(withGhosts, (name) => visualFor(name)?.heatConnections);
+      }
+      if (ghostPreviewGrid) previewGrid = ghostPreviewGrid;
+      previewFluidNetwork = ghostPreviewFluid ?? previewFluidNetwork;
+      previewHeatNetwork = ghostPreviewHeat ?? previewHeatNetwork;
+
+      // Per-entity validity (unlike the single ghost's one flag): each piece
+      // of the group is checked against the REAL placed entities only — a
+      // copied group never legitimately overlaps itself, so no
+      // self-exclusion is needed the way the single ghost forgives
+      // rebuilding the exact same entity in place.
+      const epsilon = 0.01;
+      pasteGhostValid = pasteGhosts.map((pg) => {
+        const visual = visualFor(pg.name);
+        if (!visual) return true;
+        const [gfw, gfh] = effectiveFootprint(visual, pg.direction);
+        const overlapping = spatialIndex.queryRect(
+          pg.x - gfw / 2 + epsilon,
+          pg.y - gfh / 2 + epsilon,
+          pg.x + gfw / 2 - epsilon,
+          pg.y + gfh / 2 - epsilon,
+        );
+        return overlapping.size === 0;
+      });
+    }
+
     // Collect every sprite first, then paint them in one globally sorted
     // pass, so no entity's shadow can land on a neighbour drawn before it.
     // Real entities always classify against the placed-only grid, never
@@ -908,6 +1076,58 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
       }
     }
 
+    if (hoveredEntityNumber !== undefined) {
+      const hovered = entityById.get(hoveredEntityNumber);
+      const visual = hovered && visualFor(hovered.name);
+      const corner = getHoverHighlightSprite();
+      if (hovered && visual && corner) {
+        const [fw, fh] = effectiveFootprint(visual, hovered.direction);
+        drawHoverHighlight(ctx, corner, hovered.x, hovered.y, fw, fh);
+      }
+    }
+
+    // Marquee rectangle while a box-drag action (copyBox/cutBox/deleteBox)
+    // is in progress — tinted per mode so the color itself hints at what
+    // releasing the drag will do (reddish = delete, blue = copy/cut,
+    // matching the cursor badge drawn further below). Line width is 1
+    // screen px expressed in world units (matches the grid's own
+    // zoom-independent line width elsewhere in this file) so the outline
+    // stays a hairline regardless of zoom instead of thickening at high
+    // zoom the way a world-unit constant would.
+    if (isBoxMode(mode.kind) && boxDragMoved && boxDownWorldPos && boxDragCurrentWorldPos) {
+      const left = Math.min(boxDownWorldPos.x, boxDragCurrentWorldPos.x);
+      const right = Math.max(boxDownWorldPos.x, boxDragCurrentWorldPos.x);
+      const top = Math.min(boxDownWorldPos.y, boxDragCurrentWorldPos.y);
+      const bottom = Math.max(boxDownWorldPos.y, boxDragCurrentWorldPos.y);
+      const [fill, stroke] =
+        mode.kind === "deleteBox" ? ["rgba(255,100,90,0.15)", "rgba(255,100,90,0.9)"] : ["rgba(120,170,255,0.15)", "rgba(120,170,255,0.9)"];
+      ctx.save();
+      ctx.fillStyle = fill;
+      ctx.fillRect(left, top, right - left, bottom - top);
+      ctx.strokeStyle = stroke;
+      ctx.lineWidth = 1 / camera.state.pixelsPerTile;
+      ctx.strokeRect(left, top, right - left, bottom - top);
+      ctx.restore();
+
+      // Live preview of what releasing the drag right now would act on —
+      // every entity the box currently overlaps gets the same corner
+      // highlight as a hover, reusing drawHoverHighlight as-is. Recomputed
+      // every frame the box is visible rather than cached: cheap (one
+      // spatial query) and always exactly matches what onPointerUp would
+      // hit-test if the drag ended this instant.
+      const corner = getHoverHighlightSprite();
+      if (corner) {
+        const inBox = spatialIndex.queryRect(left, top, right, bottom);
+        for (const num of inBox) {
+          const entity = entityById.get(num);
+          const visual = entity && visualFor(entity.name);
+          if (!entity || !visual) continue;
+          const [fw, fh] = effectiveFootprint(visual, entity.direction);
+          drawHoverHighlight(ctx, corner, entity.x, entity.y, fw, fh);
+        }
+      }
+    }
+
     // Alt-mode badges: a separate pass over every entity, after all sprites
     // are drawn, so a badge never gets painted over by a neighboring
     // entity's own sprite depending on entity list order — matches the
@@ -944,9 +1164,52 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
       }
     }
 
+    for (let i = 0; i < pasteGhosts.length; i++) {
+      const pg = pasteGhosts[i]!;
+      const visual = visualFor(pg.name);
+      if (!visual) continue;
+      const ghostTint = pasteGhostValid[i] ? GHOST_VALID_TINT : GHOST_INVALID_TINT;
+      if (visual.inserterGraphics) {
+        drawInserter(ctx, atlas, pg, visual.inserterGraphics, ghostTint, tintedRes);
+      } else if (visual.graphics) {
+        const ghostCommands: DrawCommand[] = [];
+        collectEntity(ghostCommands, pg, visual, { grid: previewGrid, fluidNetwork: previewFluidNetwork, heatNetwork: previewHeatNetwork, ...connectors, platformBoxes, animationFrame }, 1);
+        for (const c of ghostCommands) c.tint = ghostTint;
+        paint(ctx, atlas, ghostCommands, tintedRes);
+      }
+      drawQualityBadge(ctx, iconAtlas, pg, visual);
+    }
+
     phases.ghost += performance.now() - tGhostDraw;
 
     ctx.restore();
+
+    // Cursor-mode badge for the three box-drag action modes: a small icon
+    // near the pointer so the active tool is legible without checking a
+    // toolbar. Drawn in SCREEN space (outside the world transform above,
+    // hence after ctx.restore()) so it stays a fixed pixel size at any zoom
+    // — a world-space draw would grow/shrink with the camera the way the
+    // hover-highlight corners deliberately do, which is wrong for a cursor
+    // badge that represents the tool, not something anchored to the map.
+    if (isBoxMode(mode.kind)) {
+      const iconId = mode.kind === "deleteBox" ? "deconstruction-planner" : mode.kind === "cutBox" ? "cut-paste-tool" : "copy-paste-tool";
+      const icon = iconAtlas.get(iconId);
+      if (icon) {
+        // lastPointer is in CLIENT coordinates (matches every other
+        // pointer-event field this file reads) — canvas-relative like the
+        // 0,0-anchored transform just set above needs getBoundingClientRect
+        // subtracted first, the same conversion setInteractionMode/onWheel
+        // already do for their own screenToWorld calls.
+        const rect = canvas.getBoundingClientRect();
+        const size = 28;
+        const offset = 14; // clear of the actual cursor hotspot
+        ctx.drawImage(
+          icon.sheet,
+          icon.cell.x, icon.cell.y, icon.cell.w, icon.cell.h,
+          lastPointer.x - rect.left + offset, lastPointer.y - rect.top + offset, size, size,
+        );
+      }
+    }
   }
 
   let animationFrozen = false;
@@ -1368,6 +1631,18 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
     placeCallback?.(snapped.x, snapped.y, ghostDirection);
   }
 
+  /** Commits the paste ghost's current stamp. Unlike placeAtGhost, the
+   *  ghost is not consumed by this — mode stays 'paste' so the next click
+   *  stamps again, matching the real game's own "keep the item in hand
+   *  until you put it away" convention. Modifier keys read at commit time
+   *  (not copy time) decide how the app should resolve any collision. */
+  function placePasteGhost(e: PointerEvent): void {
+    if (mode.kind !== "paste" || !ghostWorldPos) return;
+    const snappedAnchor = { x: Math.round(ghostWorldPos.x), y: Math.round(ghostWorldPos.y) };
+    const collisionMode: "block" | "skip" | "replace" = e.shiftKey && e.altKey ? "replace" : e.shiftKey ? "skip" : "block";
+    pasteCallback?.(mode.entities, mode.wires, snappedAnchor, mode.anchor, mode.groupRotation, collisionMode);
+  }
+
   /** Midpoint (screen px) and distance (screen px) between the two active
    *  touches — undefined unless exactly two fingers are down. */
   function pinchGeometry(): { mid: { x: number; y: number }; distance: number } | undefined {
@@ -1431,6 +1706,22 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
       return;
     }
 
+    if (isBoxMode(mode.kind)) {
+      const world = worldAtPointer(e);
+      boxDownPointerId = e.pointerId;
+      boxDownWorldPos = world;
+      boxDownScreenPos = { x: e.clientX, y: e.clientY };
+      boxDragCurrentWorldPos = world;
+      boxDragMoved = false;
+      canvas.setPointerCapture(e.pointerId);
+      return;
+    }
+
+    if (mode.kind === "paste") {
+      placePasteGhost(e);
+      return;
+    }
+
     // Wire mode: a click on an entity is a wire pick, never a pan or an
     // "open the building" select. Reported on press rather than deferred to
     // release like a select, because there is no click-vs-drag ambiguity to
@@ -1491,6 +1782,25 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
       invalidate(); // the ghost follows the cursor, so the picture changed
       if (isPlacingDrag) placeAtGhost();
     }
+    if (mode.kind === "paste") {
+      ghostWorldPos = worldAtPointer(e); // reuses the same field the single ghost uses
+      invalidate();
+    }
+    if (isBoxMode(mode.kind)) {
+      if (boxDownWorldPos) {
+        boxDragCurrentWorldPos = worldAtPointer(e);
+        if (!boxDragMoved && boxDownScreenPos) {
+          const dx = e.clientX - boxDownScreenPos.x;
+          const dy = e.clientY - boxDownScreenPos.y;
+          if (Math.hypot(dx, dy) > CLICK_MOVE_THRESHOLD) boxDragMoved = true;
+        }
+      }
+      // The cursor-mode badge (drawn near lastPointer) follows the cursor
+      // even before any drag starts, same as the ghost sprites do.
+      lastPointer = { x: e.clientX, y: e.clientY };
+      invalidate();
+      return; // box-drag modes never pan
+    }
     // An armed wire trails to the cursor, so the picture changes on every
     // move even though nothing in the scene itself did.
     if (mode.kind === "wire" && pendingWireFrom !== null) invalidate();
@@ -1533,6 +1843,42 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
       isErasing = false;
       return;
     }
+    if (isBoxMode(mode.kind)) {
+      if (e.pointerId === boxDownPointerId) {
+        let hitSet: ReadonlySet<number> = new Set<number>();
+        if (boxDragMoved && boxDownWorldPos && boxDragCurrentWorldPos) {
+          const left = Math.min(boxDownWorldPos.x, boxDragCurrentWorldPos.x);
+          const right = Math.max(boxDownWorldPos.x, boxDragCurrentWorldPos.x);
+          const top = Math.min(boxDownWorldPos.y, boxDragCurrentWorldPos.y);
+          const bottom = Math.max(boxDownWorldPos.y, boxDragCurrentWorldPos.y);
+          hitSet = spatialIndex.queryRect(left, top, right, bottom);
+        } else if (boxDownWorldPos) {
+          const hit = spatialIndex.hitTest(boxDownWorldPos.x, boxDownWorldPos.y);
+          if (hit !== undefined) hitSet = new Set([hit]);
+        }
+        // Acted on immediately — nothing is stored for later. delete stays
+        // in deleteBox mode (the callback has no mode-changing side effect
+        // here); copy/cut's app-side handlers arm 'paste' themselves via
+        // setInteractionMode, same as any other cross-mode transition.
+        if (hitSet.size > 0) {
+          if (mode.kind === "deleteBox") deleteBoxCallback?.(hitSet);
+          else if (mode.kind === "cutBox") cutBoxCallback?.(hitSet);
+          else copyBoxCallback?.(hitSet);
+        }
+        invalidate();
+      }
+      boxDownPointerId = undefined;
+      boxDownWorldPos = undefined;
+      boxDownScreenPos = undefined;
+      boxDragCurrentWorldPos = undefined;
+      boxDragMoved = false;
+      try {
+        canvas.releasePointerCapture(e.pointerId);
+      } catch {
+        /* already released */
+      }
+      return;
+    }
     isPlacingDrag = false;
     if (!isPanning) return;
     isPanning = false;
@@ -1559,11 +1905,27 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
   let eraseCallback: ((entityNumber: number) => void) | null = null;
   let altRightClickCallback: ((entityNumber: number) => void) | null = null;
   let wireClickCallback: ((entityNumber: number) => void) | null = null;
+  let deleteBoxCallback: ((entityNumbers: ReadonlySet<number>) => void) | null = null;
+  let cutBoxCallback: ((entityNumbers: ReadonlySet<number>) => void) | null = null;
+  let copyBoxCallback: ((entityNumbers: ReadonlySet<number>) => void) | null = null;
+  let pasteCallback:
+    | ((
+        entities: PlacedEntity[],
+        wires: WireLink[],
+        newAnchor: { x: number; y: number },
+        origAnchor: { x: number; y: number },
+        groupRotation: 0 | 4 | 8 | 12,
+        collisionMode: "block" | "skip" | "replace",
+      ) => void)
+    | null = null;
   const onHoverMove = (e: PointerEvent) => {
-    if (!hoverCallback) return;
     const world = worldAtPointer(e);
     const hit = spatialIndex.hitTest(world.x, world.y);
-    hoverCallback(hit, e);
+    if (hit !== hoveredEntityNumber) {
+      hoveredEntityNumber = hit;
+      invalidate(); // the highlighted corners moved (or appeared/vanished)
+    }
+    hoverCallback?.(hit, e);
   };
 
   const resizeObserver = new ResizeObserver(() => {
@@ -1751,16 +2113,27 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
           ghostDirection = 0;
         }
       }
+      // Leaving any box-drag mode (including a copy/cut box handing off to
+      // 'paste' once it completes) drops an in-progress drag rather than
+      // letting a stale box linger into an unrelated mode.
+      if (isBoxMode(mode.kind) && !isBoxMode(newMode.kind)) {
+        boxDownPointerId = undefined;
+        boxDownWorldPos = undefined;
+        boxDownScreenPos = undefined;
+        boxDragCurrentWorldPos = undefined;
+        boxDragMoved = false;
+      }
       mode = newMode;
       invalidate();
-      if (mode.kind !== "place") {
+      if (mode.kind !== "place" && mode.kind !== "paste") {
         ghostWorldPos = null;
       } else {
-        // Entering place mode (e.g. the 'q' pipette, which fires on a
-        // keypress rather than a pointer move) needs the ghost to draw at
-        // the cursor's current position right away — otherwise it stays
-        // invisible until the next actual mousemove recomputes
-        // ghostWorldPos, since that's normally the only place this gets set.
+        // Entering place/paste mode (e.g. the 'q' pipette, or a fresh
+        // Cmd+C, both of which arm on a keypress rather than a pointer
+        // move) needs the ghost to draw at the cursor's current position
+        // right away — otherwise it stays invisible until the next actual
+        // mousemove recomputes ghostWorldPos, since that's normally the
+        // only place this gets set.
         const rect = canvas.getBoundingClientRect();
         ghostWorldPos = camera.screenToWorld(lastPointer.x - rect.left, lastPointer.y - rect.top, rect.width, rect.height);
       }
@@ -1786,6 +2159,20 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
       }
       const step = rotationStep(mode.entityName);
       ghostDirection = (ghostDirection + (reverse ? -step : step) + 16) % 16;
+      invalidate();
+    },
+    rotatePasteGhost(reverse) {
+      if (mode.kind !== "paste") return;
+      // Unlike a single pole's own in-place rotate (rotateGhost, which
+      // refuses — a lone pole's facing is meaningless, later derived from
+      // its wires), rotating a GROUP always turns the whole arrangement:
+      // a pole inside the group still orbits to its new position along
+      // with everything else, even though its own facing has no visual
+      // effect. Only flip (a separate, more restrictive gesture — not yet
+      // implemented) is meant to have per-entity eligibility limits; free
+      // rotation is unrestricted here by design.
+      const delta = reverse ? -4 : 4;
+      mode = { ...mode, groupRotation: (((mode.groupRotation + delta) % 16) + 16) % 16 as 0 | 4 | 8 | 12 };
       invalidate();
     },
     hitTest(clientX, clientY) {
@@ -1815,6 +2202,18 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
       if (pendingWireFrom === entityNumber) return;
       pendingWireFrom = entityNumber;
       invalidate();
+    },
+    onDeleteBox(callback) {
+      deleteBoxCallback = callback;
+    },
+    onCutBox(callback) {
+      cutBoxCallback = callback;
+    },
+    onCopyBox(callback) {
+      copyBoxCallback = callback;
+    },
+    onPaste(callback) {
+      pasteCallback = callback;
     },
     onLoadingChange(callback) {
       atlas.setOnPendingChange((pending) => callback(pending > 0));

@@ -79,23 +79,34 @@
 }
 
 :root {
-  /* Factorio's own GUI palette: warm charcoal panels on a raised tan frame,
-     the way every in-game window is built. */
-  --frame: #45392a;
-  --frame-light: #6b5940;
-  --frame-dark: #2a2118;
-  --panel: #292826;
-  --panel-2: #1f1e1c;
-  --panel-3: #333230;
-  --row-alt: rgba(255, 255, 255, 0.02);
-  --border: #0d0c0b;
-  --bevel-light: rgba(255, 255, 255, 0.06);
-  --bevel-dark: rgba(0, 0, 0, 0.45);
+  /* Factorio's own GUI palette: neutral charcoal, not the warm tan this
+     used to guess at. Sampled from the game's window chrome — the outer
+     frame is a mid grey, every content area is a darker inset, and slots
+     are darker still. */
+  --frame: #414040;
+  --frame-light: #5a5958;
+  --frame-dark: #262625;
+  --panel: #313031;
+  --panel-2: #242324;
+  --panel-3: #4a4948;
+  --row-alt: rgba(255, 255, 255, 0.025);
+  --border: #171717;
+  --bevel-light: rgba(255, 255, 255, 0.11);
+  --bevel-dark: rgba(0, 0, 0, 0.5);
 
-  --text: #e6ddce;
-  --text-dim: #9c9284;
+  --slot: #242324;
+  --slot-hover: #4a4948;
+  --button: #575757;
+  --button-hover: #6d6c6b;
+
+  --text: #e6e0d8;
+  --text-dim: #a5a19a;
   --gold: #ffcc80;
-  --gold-strong: #ffe6ad;
+  --gold-strong: #ffe6c0;
+
+  /* The fine grain every Factorio panel surface carries. Inline so there is
+     no asset to ship or fail to load. */
+  --grain: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='64' height='64'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2'/%3E%3C/filter%3E%3Crect width='64' height='64' filter='url(%23n)' opacity='0.05'/%3E%3C/svg%3E");
 
   --surplus: #93d977;
   --deficit: #e2765a;
@@ -116,20 +127,42 @@ body {
   margin: 0;
   height: 100%;
   overflow: hidden;
-  background: #16140f;
+  background: #1a1a1a;
   color: var(--text);
   font-family: var(--body);
   font-size: 14px;
   line-height: 1.5;
   /* A faint suggestion of the game's concrete-tile backdrop behind every window. */
   background-image:
-    radial-gradient(ellipse at top, rgba(120, 100, 70, 0.16), transparent 60%),
+    radial-gradient(ellipse at top, rgba(140, 140, 140, 0.1), transparent 60%),
     linear-gradient(rgba(255, 255, 255, 0.015) 1px, transparent 1px),
     linear-gradient(90deg, rgba(255, 255, 255, 0.015) 1px, transparent 1px);
   background-size: auto, 24px 24px, 24px 24px;
 }
 
 a { color: var(--link); text-decoration-thickness: 1px; text-underline-offset: 2px; }
+
+/* The game's scrollbar everywhere, rather than per-panel opt-in: every
+   scrollable surface in the tool sits inside GUI chrome, so a default
+   platform bar is always the wrong one. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--button) var(--panel-2);
+}
+
+*::-webkit-scrollbar { width: 12px; height: 12px; }
+*::-webkit-scrollbar-track {
+  background: var(--panel-2);
+  box-shadow: inset 0 0 3px rgba(0, 0, 0, 0.6);
+}
+*::-webkit-scrollbar-thumb {
+  background: var(--button);
+  border: 1px solid var(--border);
+  border-radius: 2px;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.18);
+}
+*::-webkit-scrollbar-thumb:hover { background: var(--button-hover); }
+*::-webkit-scrollbar-corner { background: var(--panel-2); }
 
 /* ---------- site nav (multi-tool shell) ---------- */
 /* Overlays the top of the full-screen canvas rather than pushing it down —
@@ -256,26 +289,28 @@ button:focus-visible,
 /* Factorio buttons: a raised bevel that inverts on press, sandy fill. */
 button, select, input[type="number"] {
   font: inherit;
+  font-family: var(--display);
+  font-weight: 600;
   border-radius: 3px;
   border: 1px solid var(--border);
-  background: var(--panel-3);
+  background: var(--button);
   color: var(--text);
-  padding: 8px 14px;
+  padding: 7px 14px;
   cursor: pointer;
-  box-shadow: inset 0 1px 0 var(--bevel-light), inset 0 -2px 0 var(--bevel-dark);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.18),
+    inset 0 -2px 0 rgba(0, 0, 0, 0.3);
 }
 
-button:active { box-shadow: inset 0 -1px 0 var(--bevel-light), inset 0 2px 0 var(--bevel-dark); }
+button:hover, select:hover { background: var(--button-hover); }
+button:active { box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.5); }
 
 button.primary {
-  background: linear-gradient(180deg, #7a9c4a, #5c7a35);
-  border-color: #2e3d1a;
+  background: #5a8a3c;
   color: #f4ffe0;
-  font-weight: 600;
 }
 
-button.primary:hover { background: linear-gradient(180deg, #89ad55, #688a3d); }
-button.ghost:hover, select:hover { border-color: var(--frame-light); }
+button.primary:hover { background: #6fa34b; }
 
 #status {
   margin: 0;
@@ -836,88 +871,251 @@ button.ghost:hover, select:hover { border-color: var(--frame-light); }
    icon buttons in the top-right rather than a bare text "X". */
 
 .gui-window {
-  border-radius: 6px;
-  background: var(--frame);
-  border: 2px solid var(--frame-dark);
+  border-radius: 3px;
+  background: var(--frame) var(--grain);
+  border: 1px solid var(--border);
   box-shadow:
-    inset 0 1px 0 var(--bevel-light),
-    inset 0 0 12px 5px rgba(0, 0, 0, 0.35),
+    inset 0 0 0 1px var(--bevel-light),
     0 14px 32px rgba(0, 0, 0, 0.55),
     0 4px 10px rgba(0, 0, 0, 0.35);
 }
 
+/* The title sits directly on the frame — no strip of its own. The game
+   separates the titlebar from the body by the body's inset edge alone. */
 .gui-titlebar {
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 10px 8px 10px 14px;
-  margin: 4px 4px 0;
+  gap: 8px;
+  padding: 6px 8px 2px 12px;
   color: var(--gold-strong);
   font-family: var(--display);
   font-weight: 700;
-  font-size: 17px;
+  font-size: 18px;
   letter-spacing: 0.01em;
-  background: linear-gradient(180deg, var(--frame-light) 0%, var(--frame) 60%);
-  border-radius: 2px;
-  box-shadow: 0 1px 0 var(--bevel-light) inset, 0 -1px 0 var(--bevel-dark) inset;
 }
 
+/* The stack of horizontal lines filling the space between title and
+   buttons — the game's drag affordance. */
 .gui-titlebar .grip {
   flex: 1;
   align-self: stretch;
-  margin: 2px 0;
+  margin: 8px 2px;
+  min-height: 14px;
   background-image: repeating-linear-gradient(
-    90deg,
-    var(--bevel-dark) 0 2px,
-    var(--bevel-light) 2px 4px
+    180deg,
+    var(--bevel-dark) 0 1px,
+    var(--bevel-light) 1px 2px,
+    transparent 2px 4px
   );
-  border-radius: 1px;
-  box-shadow: 0 1px 0 var(--bevel-light) inset, inset 0 1px 2px var(--bevel-dark);
-  opacity: 0.9;
+  opacity: 0.55;
 }
 
 .gui-header-button,
 .gui-close {
   flex: none;
-  width: 30px;
-  height: 30px;
+  width: 24px;
+  height: 24px;
   padding: 0;
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 13px;
+  font-size: 12px;
   line-height: 1;
-  color: var(--frame-dark);
-  background: var(--text-dim);
-  border: none;
+  color: var(--text);
+  background: var(--button);
+  border: 1px solid var(--border);
   border-radius: 2px;
   box-shadow:
-    inset 0 2px 0 rgba(255, 255, 255, 0.3),
-    inset 0 -3px 5px rgba(0, 0, 0, 0.3),
-    inset 0 0 0 1px rgba(0, 0, 0, 0.35);
+    inset 0 1px 0 rgba(255, 255, 255, 0.18),
+    inset 0 -1px 0 rgba(0, 0, 0, 0.3);
   cursor: pointer;
 }
 
-.gui-header-button:hover { background: var(--text); }
-.gui-close {
-  color: var(--frame-dark);
-  background: var(--deficit);
-  box-shadow:
-    inset 0 0 0 2px #a8402b,
-    inset 0 2px 0 rgba(255, 255, 255, 0.22),
-    inset 0 -3px 5px rgba(0, 0, 0, 0.16);
+.gui-header-button:hover { background: var(--button-hover); }
+/* Grey at rest, red only on hover — the game highlights the close button
+   rather than colouring it permanently. */
+.gui-close:hover {
+  background: #c4402b;
+  color: #fff;
 }
-.gui-close:hover { background: #ea9585; }
-.gui-close:active, .gui-header-button:active { box-shadow: inset 0 3px 6px rgba(0, 0, 0, 0.45); }
+.gui-close:active,
+.gui-header-button:active {
+  box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.5);
+}
 
 .gui-body {
-  margin: 6px;
-  background: var(--panel);
-  border: 1px solid var(--frame-dark);
-  box-shadow: inset 0 2px 4px var(--bevel-dark), inset 0 0 0 1px rgba(255, 255, 255, 0.02);
+  margin: 0 4px 4px;
+  background: var(--panel) var(--grain);
+  border: 1px solid var(--border);
+  box-shadow:
+    inset 0 2px 4px var(--bevel-dark),
+    inset 0 -1px 0 var(--bevel-light);
   border-radius: 2px;
-  padding: 14px;
+  padding: 12px;
 }
+
+/* ---------- Factorio GUI primitives, shared by every window ---------- */
+/* The building blocks the game reuses everywhere: inventory slot grids,
+   icon tab strips, bevelled buttons, progress bars and inset sub-panels.
+   Defined once here so each window composes them instead of restyling. */
+
+.f-panel {
+  background: var(--panel-2) var(--grain);
+  border: 1px solid var(--border);
+  border-radius: 2px;
+  box-shadow: inset 0 2px 4px var(--bevel-dark);
+  padding: 8px;
+}
+
+.f-slot-grid {
+  display: grid;
+  grid-template-columns: repeat(var(--cols, 10), 38px);
+  gap: 2px;
+}
+
+.f-slot {
+  width: 38px;
+  height: 38px;
+  padding: 0;
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--slot);
+  border: 1px solid var(--border);
+  border-radius: 2px;
+  box-shadow:
+    inset 0 1px 2px rgba(0, 0, 0, 0.55),
+    inset 0 -1px 0 rgba(255, 255, 255, 0.05);
+  cursor: pointer;
+}
+
+.f-slot:hover { background: var(--slot-hover); }
+.f-slot.is-selected {
+  background: var(--slot-hover);
+  box-shadow: inset 0 0 0 2px var(--gold);
+}
+.f-slot:active { box-shadow: inset 0 2px 5px rgba(0, 0, 0, 0.6); }
+.f-slot img { max-width: 32px; max-height: 32px; image-rendering: pixelated; }
+
+/* Stack count, bottom-right of the slot, as the game draws it. */
+.f-slot .f-slot-count {
+  position: absolute;
+  right: 2px;
+  bottom: 0;
+  font-family: var(--display);
+  font-weight: 700;
+  font-size: 12px;
+  color: #fff;
+  text-shadow: 1px 1px 0 #000, -1px 1px 0 #000, 1px -1px 0 #000, -1px -1px 0 #000;
+  pointer-events: none;
+}
+
+.f-tabs {
+  display: flex;
+  gap: 2px;
+  padding: 0 2px;
+}
+
+.f-tab {
+  flex: 1;
+  min-width: 0;
+  height: 48px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 10px;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 3px 3px 0 0;
+  box-shadow: inset 0 -3px 6px rgba(0, 0, 0, 0.35);
+  cursor: pointer;
+}
+
+.f-tab:hover { background: var(--panel-3); }
+/* The active tab merges into the body below it: lighter, and its bottom
+   edge removed so the two read as one surface. */
+.f-tab.is-active {
+  background: var(--frame-light);
+  border-bottom-color: transparent;
+  box-shadow: inset 0 2px 0 rgba(255, 255, 255, 0.14);
+}
+.f-tab img { max-height: 32px; image-rendering: pixelated; }
+
+.f-button {
+  padding: 5px 14px;
+  font-family: var(--display);
+  font-weight: 600;
+  font-size: 14px;
+  color: var(--text);
+  background: var(--button);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.18),
+    inset 0 -2px 0 rgba(0, 0, 0, 0.3);
+  cursor: pointer;
+}
+
+.f-button:hover { background: var(--button-hover); }
+.f-button:active {
+  box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.5);
+}
+.f-button.is-primary { background: #5a8a3c; }
+.f-button.is-primary:hover { background: #6fa34b; }
+.f-button.is-danger { background: #a83a28; }
+.f-button.is-danger:hover { background: #c4402b; }
+
+.f-progressbar {
+  height: 26px;
+  position: relative;
+  background: var(--slot);
+  border: 1px solid var(--border);
+  border-radius: 2px;
+  box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.55);
+  overflow: hidden;
+}
+
+.f-progressbar-fill {
+  height: 100%;
+  width: var(--value, 0%);
+  background: linear-gradient(180deg, #86d05a 0%, #5fa93a 100%);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.25);
+}
+
+.f-progressbar-label {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  padding-right: 8px;
+  font-family: var(--display);
+  font-weight: 600;
+  font-size: 13px;
+  color: var(--text);
+  text-shadow: 1px 1px 0 rgba(0, 0, 0, 0.6);
+}
+
+/* The game's scrollbar: a narrow inset channel with a flat bevelled thumb. */
+.f-scroll {
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: var(--button) var(--panel-2);
+}
+
+.f-scroll::-webkit-scrollbar { width: 12px; }
+.f-scroll::-webkit-scrollbar-track {
+  background: var(--panel-2);
+  box-shadow: inset 0 0 3px rgba(0, 0, 0, 0.6);
+}
+.f-scroll::-webkit-scrollbar-thumb {
+  background: var(--button);
+  border: 1px solid var(--border);
+  border-radius: 2px;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.18);
+}
+.f-scroll::-webkit-scrollbar-thumb:hover { background: var(--button-hover); }
 
 /* ---------- the drawing ---------- */
 /* Full-viewport backdrop, not content inside a window — the canvas IS the
@@ -950,6 +1148,16 @@ button.ghost:hover, select:hover { border-color: var(--frame-light); }
   box-shadow:
     inset 0 0 60px 10px rgba(255, 196, 64, 0.35),
     inset 0 0 140px 40px rgba(255, 196, 64, 0.12);
+}
+
+/* The three box-drag action tools (copy/cut/delete): a crosshair cursor is
+   the at-a-glance "drag a box" cue — the yellow edit-mode glow above already
+   fires for these modes too (nothing's technically "in hand", but the cue
+   still reads as "something's active"), this just adds the mode-specific
+   cursor. The renderer's own cursor-mode badge (drawn on the canvas near the
+   pointer) is what distinguishes copy/cut/delete from each other. */
+canvas.select-mode {
+  cursor: crosshair;
 }
 
 /* Follows the cursor while it's over the Build window with something
@@ -1348,38 +1556,37 @@ button.ghost:hover, select:hover { border-color: var(--frame-light); }
 /* Category tabs — one icon-button per group, matching the real game's
    crafting-menu tabs (a strip of item icons, not text labels) sitting right
    above the grid they switch. */
+/* Sits directly on the frame and merges into the grid below: the strip has
+   no inset panel of its own, and the active tab's bottom edge is dropped so
+   it reads as continuous with the grid — the way the game draws it. */
 .palette-tabs {
   display: flex;
   flex-wrap: wrap;
-  gap: 3px;
-  padding: 6px;
-  margin-bottom: 8px;
-  background: var(--panel-2);
-  border: 1px solid var(--frame-dark);
-  border-radius: 3px;
-  box-shadow: inset 0 2px 4px var(--bevel-dark);
+  gap: 2px;
+  padding: 0 2px;
+  margin-bottom: -1px;
 }
 
 .palette-tab {
   width: 52px;
-  height: 52px;
+  height: 50px;
   padding: 4px;
   display: flex;
   align-items: center;
   justify-content: center;
-  border-radius: 2px;
-  border: 1px solid var(--frame-dark);
-  background: var(--panel);
-  box-shadow: inset 0 1px 0 var(--bevel-light), inset 0 -2px 0 var(--bevel-dark);
+  border-radius: 3px 3px 0 0;
+  border: 1px solid var(--border);
+  background: var(--panel-2);
+  box-shadow: inset 0 -3px 6px rgba(0, 0, 0, 0.35);
   cursor: pointer;
 }
 
 .palette-tab:hover { background: var(--panel-3); }
 
 .palette-tab.is-active {
-  background: var(--panel-3);
-  border-color: var(--gold);
-  box-shadow: inset 0 2px 4px var(--bevel-dark), 0 0 0 1px rgba(255, 204, 128, 0.25);
+  background: var(--frame-light);
+  border-bottom-color: transparent;
+  box-shadow: inset 0 2px 0 rgba(255, 255, 255, 0.14);
 }
 
 .palette-tab .icon { pointer-events: none; }
@@ -1415,8 +1622,8 @@ button.ghost:hover, select:hover { border-color: var(--frame-light); }
   gap: 2px;
   align-content: start;
   padding: 6px;
-  background: var(--panel-2);
-  border: 1px solid var(--frame-dark);
+  background: var(--panel-2) var(--grain);
+  border: 1px solid var(--border);
   border-radius: 2px;
   box-shadow: inset 0 2px 4px var(--bevel-dark);
 }
@@ -1428,14 +1635,16 @@ button.ghost:hover, select:hover { border-color: var(--frame-light); }
   display: flex;
   align-items: center;
   justify-content: center;
-  background: var(--panel);
-  border: 1px solid var(--frame-dark);
-  border-radius: 1px;
-  box-shadow: inset 0 1px 3px var(--bevel-dark);
+  background: var(--slot);
+  border: 1px solid var(--border);
+  border-radius: 2px;
+  box-shadow:
+    inset 0 1px 2px rgba(0, 0, 0, 0.55),
+    inset 0 -1px 0 rgba(255, 255, 255, 0.05);
   cursor: pointer;
 }
 
-.palette-cell:hover { background: var(--panel-3); border-color: var(--frame-light); }
+.palette-cell:hover { background: var(--slot-hover); }
 .palette-cell:focus-visible { outline: 2px solid var(--gold); outline-offset: -2px; }
 .palette-cell .icon { --icon-size: 34px; pointer-events: none; }
 
@@ -1467,11 +1676,11 @@ button.ghost:hover, select:hover { border-color: var(--frame-light); }
 .palette-cell-filler {
   width: 42px;
   height: 42px;
-  background: var(--panel);
-  border: 1px solid var(--frame-dark);
-  border-radius: 1px;
-  box-shadow: inset 0 1px 3px var(--bevel-dark);
-  opacity: 0.35;
+  background: var(--slot);
+  border: 1px solid var(--border);
+  border-radius: 2px;
+  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.55);
+  opacity: 0.45;
 }
 
 .palette-grid .empty { grid-column: 1 / -1; }

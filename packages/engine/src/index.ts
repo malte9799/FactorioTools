@@ -1,5 +1,6 @@
 export * from "./types.js";
 export * from "./blueprint.js";
+export * from "./selection.js";
 export * from "./format.js";
 export * from "./calc/effects.js";
 export * from "./calc/rates.js";
