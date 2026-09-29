@@ -328,9 +328,10 @@ export class LabFactory {
         return { kind: "none" };
       };
       const handSize = e.overrideStackSize ?? handSizeFor(e.name, research);
-      // Quality speeds the arm up the same way it speeds up machines.
+      // Quality speeds the arm's rotation up the same way it speeds up
+      // machines. Kept fractional: a legendary stack arm takes 9.6 ticks.
       const swing = (SWING_TICKS[e.name] ?? Math.round(60 / proto.throughput)) / (data.qualityMachineSpeed[e.quality] ?? 1);
-      const tripTicks = Math.max(4, Math.round(swing));
+      const tripTicks = Math.max(4, swing);
       const ins: InserterSim = {
         entity: e,
         pickup: target(pickupAt, false),
@@ -720,6 +721,13 @@ export class LabFactory {
   private stepInserter(ins: InserterSim) {
     const half = ins.tripTicks / 2;
     let delivered = 0;
+    // Travel first. Arriving at either end picks up or drops in the same
+    // tick, and the unused part of the tick carries into the next leg, so a
+    // round trip takes exactly tripTicks rather than rounding up.
+    if (ins.phase === "out" || ins.phase === "back") {
+      ins.t -= 1;
+      if (ins.t <= 0) ins.phase = ins.phase === "out" ? "drop" : "home";
+    }
     if (ins.phase === "home") {
       // An arm tops its hand up tick by tick and only swings once it holds
       // all it can carry — or all the drop target will take. One item kind
@@ -788,10 +796,8 @@ export class LabFactory {
       }
       if (ins.hand !== undefined && ins.handCount >= this.handTarget(ins, ins.hand)) {
         ins.phase = "out";
-        ins.t = half;
-      }
-    } else if (ins.phase === "out") {
-      if (--ins.t <= 0) ins.phase = "drop";
+        ins.t += half;
+      } else ins.t = 0;
     } else if (ins.phase === "drop") {
       const d = ins.drop;
       if (d.kind === "machine") {
@@ -831,9 +837,9 @@ export class LabFactory {
       if (ins.handCount === 0) {
         ins.hand = undefined;
         ins.phase = "back";
-        ins.t = half;
-      }
-    } else if (--ins.t <= 0) ins.phase = "home";
+        ins.t += half;
+      } else ins.t = 0;
+    }
     ins.busy += ((ins.phase !== "home" ? 1 : 0) - ins.busy) * EMA;
     ins.moved += (delivered * 60 - ins.moved) * EMA;
   }
