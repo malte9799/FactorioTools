@@ -37,7 +37,7 @@ export function setData(data: GameData): void {
  *  fetch fails, so the app always has something to calculate with — though
  *  only the site's own dataset carries a render catalog, so the sprite
  *  renderer only lights up once that specific fetch succeeds. */
-export async function loadData(gameDataUrl = "/data/game-data.json"): Promise<GameData> {
+export async function loadData(gameDataUrl = "./data/game-data.json"): Promise<GameData> {
   const catalogUrl = gameDataUrl.replace(/game-data\.json$/, "render-catalog.json");
   // Both requests go out together: neither file's contents feed the other's
   // URL, so awaiting game-data.json to completion (download AND parse) before

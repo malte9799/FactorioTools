@@ -102,7 +102,7 @@ export function groupTabIcon(group: MenuGroup, size: number): HTMLSpanElement {
   el.className = "icon palette-group-icon";
   el.style.setProperty("--icon-size", `${size}px`);
   const basename = group.icon.split("/").pop();
-  el.style.backgroundImage = `url(/data/sprites/item-groups/${basename})`;
+  el.style.backgroundImage = `url(./data/sprites/item-groups/${basename})`;
   el.setAttribute("role", "img");
   el.setAttribute("aria-label", group.localised);
   return el;

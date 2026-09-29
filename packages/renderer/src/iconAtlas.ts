@@ -5,8 +5,8 @@
  *  mirroring Factorio's own alt-mode: a small recipe icon centered on a
  *  crafting machine, module icons in a row beneath it. */
 
-const SHEET_URL = "/data/sprites/icons.png";
-const MANIFEST_URL = "/data/sprite-icon-manifest.json";
+const SHEET_URL = "./data/sprites/icons.png";
+const MANIFEST_URL = "./data/sprite-icon-manifest.json";
 
 export interface IconCell {
   x: number;

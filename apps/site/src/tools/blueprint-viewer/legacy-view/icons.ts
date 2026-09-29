@@ -7,8 +7,8 @@
  *  the main blueprint canvas draws full entity sprites via
  *  packages/renderer instead, not just icons. */
 
-const SHEET_URL = "/data/sprites/icons.png";
-const MANIFEST_URL = "/data/sprite-icon-manifest.json";
+const SHEET_URL = "./data/sprites/icons.png";
+const MANIFEST_URL = "./data/sprite-icon-manifest.json";
 
 interface IconEntry {
   id: string;

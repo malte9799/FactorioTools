@@ -325,7 +325,7 @@ interface ExampleBlueprint {
 let examplePool: Promise<ExampleBlueprint[]> | undefined;
 function loadExamplePool(): Promise<ExampleBlueprint[]> {
   if (!examplePool) {
-    examplePool = fetch("/data/example-blueprints.json")
+    examplePool = fetch("./data/example-blueprints.json")
       .then((res) => (res.ok ? res.json() : Promise.reject(new Error(`HTTP ${res.status}`))))
       .catch((err) => {
         examplePool = undefined; // let a later click retry instead of caching the failure

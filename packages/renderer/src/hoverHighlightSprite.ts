@@ -5,7 +5,7 @@
  *  time from `core/graphics/cursor-boxes.png`'s top-left ("regular", full
  *  size) sprite — see [[apps/site/public/data/sprites/ui/cursor-box-corner.png]]. */
 
-const SHEET_URL = "/data/sprites/ui/cursor-box-corner.png";
+const SHEET_URL = "./data/sprites/ui/cursor-box-corner.png";
 
 let sheet: HTMLImageElement | undefined;
 let loadStarted = false;

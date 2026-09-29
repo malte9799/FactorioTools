@@ -9,7 +9,7 @@
  *  valid drawImage sources, so callers never need to tell them apart. */
 export type SpriteSurface = ImageBitmap | HTMLImageElement;
 
-const ENTITY_SPRITE_BASE = "/data/sprites/entities/";
+const ENTITY_SPRITE_BASE = "./data/sprites/entities/";
 
 /** Mirrors dump-to-gamedata.ts's mod-path convention: a GameData/RenderCatalog
  *  `graphics.sheet` value looks like "__base__/graphics/entity/foo/foo.png".
