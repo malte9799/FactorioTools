@@ -1,5 +1,7 @@
 # FactorioTools
 
+### [malte9799.github.io/](https://malte9799.github.io/FactorioTools)[`FactorioTools`](https://malte9799.github.io/FactorioTools)
+
 A browser-based Factorio blueprint viewer and rate calculator. Paste a
 blueprint string and it renders the factory with real game sprites, then tells
 you what it produces, what it consumes, and where the bottleneck is.
