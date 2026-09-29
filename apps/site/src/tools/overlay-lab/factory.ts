@@ -31,10 +31,11 @@ const SWING_TICKS: Record<string, number> = {
   "stack-inserter": 24,
 };
 
-/** Approximate hand sizes without and with full inserter capacity research. */
+/** Approximate hand sizes without and with inserter capacity research (a
+ *  stack inserter tops out at 12, as seen in game). */
 function handSizeFor(name: string, research: Research): number {
   const full = research.hands === "full";
-  if (name.includes("stack")) return full ? 16 : 4;
+  if (name.includes("stack")) return full ? 12 : 4;
   if (name.includes("bulk")) return full ? 12 : 2;
   return full ? 3 : 1;
 }
@@ -708,18 +709,32 @@ export class LabFactory {
     return true;
   }
 
+  /** How many of an item the arm waits for before it swings: a full hand,
+   *  or less when the drop target is a chest that can't take a full hand.
+   *  A machine gets the whole hand once it's below its insertion limit. */
+  private handTarget(ins: InserterSim, item: string): number {
+    const d = ins.drop;
+    const cap = d.kind === "box" ? d.box.capacity - d.box.total : ins.handSize;
+    return Math.max(1, Math.min(ins.handSize, cap));
+  }
+
   private stepInserter(ins: InserterSim) {
     const half = ins.tripTicks / 2;
     let delivered = 0;
     if (ins.phase === "home") {
+      // An arm tops its hand up tick by tick and only swings once it holds
+      // all it can carry — or all the drop target will take. One item kind
+      // per hand: once something is held, only more of it is picked.
       const p = ins.pickup;
+      const accept = (item: string) => (ins.hand === undefined || item === ins.hand) && this.wants(ins, item);
+      const room = (item: string) => Math.max(0, this.handTarget(ins, item) - ins.handCount);
       let got: string | undefined;
       let count = 0;
       if (p.kind === "machine") {
         for (const prod of p.machine.products) {
           const have = p.machine.out.get(prod.name) ?? 0;
-          if (have > 0 && this.wants(ins, prod.name)) {
-            count = Math.min(have, ins.handSize);
+          if (have > 0 && accept(prod.name)) {
+            count = Math.min(have, room(prod.name));
             p.machine.out.set(prod.name, have - count);
             got = prod.name;
             break;
@@ -729,9 +744,9 @@ export class LabFactory {
         // An endless supply: hand over the next listed item the arm wants.
         for (let k = 0; k < p.items.length; k++) {
           const item = p.items[(p.next + k) % p.items.length]!;
-          if (this.wants(ins, item)) {
+          if (accept(item)) {
             got = item;
-            count = ins.handSize;
+            count = room(item);
             p.next = (p.next + k + 1) % p.items.length;
             break;
           }
@@ -740,29 +755,39 @@ export class LabFactory {
         // The outside world: an endless supply of the port's items, while
         // the port is on.
         if (this.portEnabled.get(p.port.id)) {
-          got = p.port.items.find((item) => this.wants(ins, item));
-          if (got) count = ins.handSize;
+          got = p.port.items.find(accept);
+          if (got) count = room(got);
         }
       } else if (p.kind === "box") {
         for (const [item, have] of p.box.contents) {
-          if (have > 0 && this.wants(ins, item)) {
+          if (have > 0 && accept(item)) {
             got = item;
-            count = Math.min(have, ins.handSize);
+            count = Math.min(have, room(item));
             p.box.contents.set(item, have - count);
             p.box.total -= count;
             break;
           }
         }
       } else if (p.kind === "belt") {
-        const took = this.belts.takeFromTile(p.node, (item) => this.wants(ins, item), ins.handSize);
+        // The first item decides what the hand carries; then take only as
+        // many more as the target allows.
+        let took = ins.hand === undefined ? this.belts.takeFromTile(p.node, accept, 1) : undefined;
+        const item = took?.item ?? ins.hand;
+        if (item !== undefined) {
+          const more = room(item) - (took?.count ?? 0);
+          const rest = more > 0 ? this.belts.takeFromTile(p.node, (i) => i === item && accept(i), more) : undefined;
+          if (rest) took = { item, count: (took?.count ?? 0) + rest.count };
+        }
         if (took) {
           got = took.item;
           count = took.count;
         }
       }
-      if (got) {
+      if (got && count > 0) {
         ins.hand = got;
-        ins.handCount = count;
+        ins.handCount += count;
+      }
+      if (ins.hand !== undefined && ins.handCount >= this.handTarget(ins, ins.hand)) {
         ins.phase = "out";
         ins.t = half;
       }
