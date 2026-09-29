@@ -31,11 +31,10 @@ const SWING_TICKS: Record<string, number> = {
   "stack-inserter": 24,
 };
 
-/** Approximate hand sizes without and with inserter capacity research (a
- *  stack inserter tops out at 12, as seen in game). */
+/** Approximate hand sizes without and with full inserter capacity research. */
 function handSizeFor(name: string, research: Research): number {
   const full = research.hands === "full";
-  if (name.includes("stack")) return full ? 12 : 4;
+  if (name.includes("stack")) return full ? 16 : 4;
   if (name.includes("bulk")) return full ? 12 : 2;
   return full ? 3 : 1;
 }
