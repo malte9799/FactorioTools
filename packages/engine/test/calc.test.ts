@@ -62,6 +62,14 @@ test("two unmodded assemblers on gears", () => {
   close(result.totalPower, 300_000, "power");
 });
 
+test("a very fast machine is not capped at one craft per tick", () => {
+  // 2.0 finishes several crafts a tick when speed allows; a machine 100×
+  // faster than an assembling machine 2 on gears (0.5 s) makes 150/s, not 60.
+  const fast = { ...vanilla, machines: { ...vanilla.machines, "assembling-machine-2": { ...vanilla.machines["assembling-machine-2"]!, speed: 75 } } };
+  const placed = normaliseEntities({ item: "blueprint", entities: [{ entity_number: 1, name: "assembling-machine-2", position: { x: 0, y: 0 }, recipe: "iron-gear-wheel" }] });
+  close(calculate(fast, placed).groups[0]!.craftsPerSecond, 150, "crafts/s");
+});
+
 test("productivity modules slow the machine and boost output", () => {
   const result = ratesOf([
     {

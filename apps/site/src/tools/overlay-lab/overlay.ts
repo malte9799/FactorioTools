@@ -2,11 +2,12 @@
  *  real renderer's, in the same world coordinates its camera uses. */
 import type { Camera, IconAtlas } from "@factoriotools/renderer";
 import { DX, DY, lanePoint, type BeltNode, type Lane, type LaneSegment, type Port } from "@factoriotools/sim";
-import { machineStatus, type InserterSim, type LabFactory, type MachineSim, type MachineStatus } from "./factory.js";
+import { machineStatus, type Box, type InserterSim, type LabFactory, type MachineSim, type MachineStatus } from "./factory.js";
 import type { Issue } from "./issues.js";
 import { formatRate, PALETTES, type LabSettings, type Palette } from "./settings.js";
 
 export type HoverTarget =
+  | { kind: "box"; box: Box }
   | { kind: "machine"; machine: MachineSim }
   | { kind: "inserter"; inserter: InserterSim }
   | { kind: "belt"; node: BeltNode }
@@ -240,8 +241,35 @@ export function drawOverlay(fr: OverlayFrame): PortTabRect[] {
     }
   }
 
-  /* ---------- machines ---------- */
   const labels: (() => void)[] = [];
+
+  /* ---------- chests and ground between arms ---------- */
+  if (L.items && ppt >= 7) {
+    for (const box of f.boxes) {
+      if (!visible(box.x, box.y)) continue;
+      const top = [...box.contents].filter(([, n]) => n > 0).sort((a, b) => b[1] - a[1])[0];
+      if (!top) continue;
+      const icon = fr.icons.get(top[0]);
+      if (icon) ctx.drawImage(icon.sheet, icon.cell.x, icon.cell.y, icon.cell.w, icon.cell.h, box.x - 0.3, box.y - 0.34, 0.6, 0.6);
+      labels.push(() => {
+        if (detail <= 0.05) return;
+        const p = toScreen(box.x + 0.45, box.y + 0.38);
+        ctx.globalAlpha = detail;
+        ctx.font = `600 ${Math.max(9, Math.min(14, ppt * 0.24)) * S.labelScale}px "IBM Plex Mono", monospace`;
+        ctx.textAlign = "right";
+        ctx.textBaseline = "alphabetic";
+        ctx.lineWidth = 3;
+        ctx.strokeStyle = "rgba(0,0,0,0.8)";
+        ctx.strokeText(String(box.total), p.x, p.y);
+        ctx.fillStyle = "#e6e0d8";
+        ctx.fillText(String(box.total), p.x, p.y);
+        ctx.textAlign = "left";
+        ctx.globalAlpha = 1;
+      });
+    }
+  }
+
+  /* ---------- machines ---------- */
   if (L.rings) {
     for (const m of f.machines) {
       const cx = m.entity.x;
@@ -381,6 +409,7 @@ export function drawOverlay(fr: OverlayFrame): PortTabRect[] {
     ctx.lineWidth = Math.max(0.05, 2 / ppt);
     const hv = fr.hover;
     if (hv.kind === "machine") ctx.strokeRect(hv.machine.box.left, hv.machine.box.top, hv.machine.box.right - hv.machine.box.left, hv.machine.box.bottom - hv.machine.box.top);
+    else if (hv.kind === "box") ctx.strokeRect(hv.box.x - 0.5, hv.box.y - 0.5, 1, 1);
     else if (hv.kind === "inserter") ctx.strokeRect(hv.inserter.entity.x - 0.5, hv.inserter.entity.y - 0.5, 1, 1);
     else if (hv.kind === "belt") ctx.strokeRect(hv.node.x, hv.node.y, 1, 1);
   }

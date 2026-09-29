@@ -224,10 +224,12 @@ export function calculate(
     }
 
     const speed = resolved.baseSpeed * (1 + resolved.totalEffects.speed);
-    // The engine can't finish more than one craft per tick (60 ticks/s) no
-    // matter how much speed bonus is stacked — real ceiling for a heavily
-    // beaconed setup, not a theoretical one.
-    const craftsPerSecond = Math.min(speed / recipe.energyRequired, 60);
+    // No one-craft-per-tick ceiling: 2.0 machines finish several crafts in a
+    // tick when speed allows. A legendary, beaconed build that fills a
+    // stacked turbo belt with 240 green science/s depends on an inserter
+    // assembler making ~125 crafts/s, which the old 60/s cap made look
+    // impossible.
+    const craftsPerSecond = speed / recipe.energyRequired;
     const power =
       machine.energySource === "electric"
         ? machine.energyUsage * (1 + resolved.totalEffects.consumption) + (machine.drain ?? 0)

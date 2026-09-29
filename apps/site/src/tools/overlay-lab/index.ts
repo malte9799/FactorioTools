@@ -539,6 +539,8 @@ export function mountOverlayLab(root: HTMLElement, _options: LabOptions = {}): (
     if (m) return { kind: "machine", machine: m };
     const ins = factory.inserters.find((i) => Math.abs(i.entity.x - wx) < 0.5 && Math.abs(i.entity.y - wy) < 0.5);
     if (ins) return { kind: "inserter", inserter: ins };
+    const box = factory.boxes.find((b) => Math.abs(b.x - wx) < 0.5 && Math.abs(b.y - wy) < 0.5);
+    if (box) return { kind: "box", box };
     const node = factory.net.nodeAt(Math.floor(wx), Math.floor(wy));
     if (node?.line) return { kind: "belt", node };
     return undefined;
@@ -583,6 +585,17 @@ export function mountOverlayLab(root: HTMLElement, _options: LabOptions = {}): (
         ${row(escapeHtml(itemLabel(f.data, product)), `${rate(f.machineRate(m))} of ${rate(f.machineMaxRate(m))}`)}
         ${m.ingredients.map((i) => row(escapeHtml(itemLabel(f.data, i.name)), `${m.buffer.get(i.name) ?? 0} held · uses ${rate(f.machineNeed(m, i.name))}`)).join("")}
         <div class="lab-card-why" style="color:${col}">${why}</div>`;
+    } else if (hover.kind === "box") {
+      const box = hover.box;
+      const into = f.inserters.filter((i) => i.drop.kind === "box" && i.drop.box === box);
+      const outOf = f.inserters.filter((i) => i.pickup.kind === "box" && i.pickup.box === box);
+      const held = [...box.contents].filter(([, n]) => n > 0);
+      const name = box.entity ? (f.data.items[box.entity.name]?.localised ?? box.entity.name) : "Items on the ground";
+      html = `<div class="lab-card-title">${escapeHtml(name)}</div>
+        ${held.length ? held.map(([n, c]) => row(escapeHtml(itemLabel(f.data, n)), String(c))).join("") : row("Holding", "nothing")}
+        ${row("In", `${rate(into.reduce((a, i) => a + i.moved, 0))} from ${into.length} arm${into.length === 1 ? "" : "s"}`)}
+        ${row("Out", `${rate(outOf.reduce((a, i) => a + i.moved, 0))} to ${outOf.length} arm${outOf.length === 1 ? "" : "s"}`)}
+        <div class="lab-card-why">${box.entity ? "A buffer between the arms that fill and empty it." : "One arm drops here and another picks up."} Holds up to ${box.capacity}.</div>`;
     } else if (hover.kind === "inserter") {
       const ins = hover.inserter;
       html = `<div class="lab-card-title">${escapeHtml(f.data.inserters[ins.entity.name]?.localised ?? ins.entity.name)}</div>

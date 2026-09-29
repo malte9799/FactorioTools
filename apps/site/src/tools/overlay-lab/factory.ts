@@ -77,11 +77,23 @@ export type Target =
   /** Nothing on either side: the arm never moves. */
   | { kind: "none" };
 
+/** Items held between arms: a plain chest one arm fills and another
+ *  empties, or the bare ground where one arm drops and another picks up. */
 export interface Box {
   contents: Map<string, number>;
   total: number;
+  capacity: number;
+  /** The entity it is, or undefined for items lying on the ground. */
+  entity?: PlacedEntity;
+  /** Tile centre. */
+  x: number;
+  y: number;
 }
-const BOX_CAPACITY = 1600;
+/** Roughly a steel chest's worth; enough that a buffer never fills in a
+ *  session unless nothing empties it. */
+const CHEST_CAPACITY = 1600;
+/** An arm only drops onto the ground where there's space under its hand. */
+const GROUND_CAPACITY = 16;
 
 /** An inserter whose pickup or drop side is open. An input brings items in
  *  from outside; an output takes them away. */
@@ -216,7 +228,8 @@ export class LabFactory {
           entity: e,
           recipe: g.recipeName,
           box: { left: e.x - w / 2, top: e.y - h / 2, right: e.x + w / 2, bottom: e.y + h / 2 },
-          craftTicks: Math.max(1, 60 / g.craftsPerSecond),
+          // Can be under one tick: fast machines finish several crafts a tick.
+          craftTicks: 60 / g.craftsPerSecond,
           ingredients: g.ingredients.filter((l) => l.kind === "item").map((l) => ({ name: l.name, amount: l.ratePerMachine / g.craftsPerSecond })),
           products: g.products.filter((l) => l.kind === "item").map((l) => ({ name: l.name, amount: l.ratePerMachine / g.craftsPerSecond })),
           buffer: new Map(),
@@ -283,9 +296,23 @@ export class LabFactory {
         if (chest) return { kind: "chest", items: chest, next: 0 };
         const key = tileKey(p);
         const onTile = byTile.get(key);
-        if (onTile && CONTAINER.test(onTile.name) && filled.has(key) && emptied.has(key)) {
+        // A plain chest, or bare ground, that one arm drops onto and another
+        // picks up from passes items between them.
+        const container = onTile && CONTAINER.test(onTile.name);
+        if ((container || !onTile) && filled.has(key) && emptied.has(key)) {
           let box = boxes.get(key);
-          if (!box) boxes.set(key, (box = { contents: new Map(), total: 0 }));
+          if (!box) {
+            box = {
+              contents: new Map(),
+              total: 0,
+              capacity: container ? CHEST_CAPACITY : GROUND_CAPACITY,
+              entity: onTile,
+              x: Math.floor(p.x) + 0.5,
+              y: Math.floor(p.y) + 0.5,
+            };
+            boxes.set(key, box);
+            this.boxes.push(box);
+          }
           return { kind: "box", box };
         }
         // Open: filled in below, once both sides are known.
@@ -475,6 +502,8 @@ export class LabFactory {
   /** What each belt input feeds when it's on; kept while it's off. */
   readonly inputs = new Map<string, [LaneFeed | null, LaneFeed | null]>();
   readonly armPorts: ArmPort[] = [];
+  /** Chests and ground tiles that pass items between arms. */
+  readonly boxes: Box[] = [];
   /** On/off per port, belt or arm. An input that's off brings nothing; an
    *  output that's off is a dead end. */
   readonly portEnabled = new Map<string, boolean>();
@@ -557,63 +586,82 @@ export class LabFactory {
     }
   }
 
+  /** How much of an ingredient arms keep topping a machine up to: a couple
+   *  of crafts' worth, more for a fast machine (the game's insertion limit
+   *  grows with crafting speed), and never less than one full hand. */
   private limitFor(m: MachineSim, name: string): number {
     const ing = m.ingredients.find((i) => i.name === name);
+    if (!ing) return 0;
     const hands = Math.max(1, ...m.feeders.map((f) => f.handSize));
-    return ing ? Math.max(2, Math.ceil(ing.amount * 2), hands) : 0;
+    const crafts = Math.max(2, Math.ceil((60 / m.craftTicks) * 1.2));
+    return Math.max(Math.ceil(ing.amount * crafts), hands);
   }
 
   /** A machine stops once its output holds a few crafts' worth — or two
    *  hands' worth for whatever arm empties it, so big hands still fill. */
   private outputFull(m: MachineSim): boolean {
     const hands = Math.max(1, ...m.takers.map((t) => t.handSize));
-    return m.products.some((p) => (m.out.get(p.name) ?? 0) >= Math.max(4, Math.ceil(p.amount * 3), hands * 2));
+    const crafts = Math.max(3, Math.ceil((60 / m.craftTicks) * 1.2));
+    return m.products.some((p) => (m.out.get(p.name) ?? 0) >= Math.max(4, Math.ceil(p.amount * crafts), hands * 2));
   }
 
   private stepMachine(m: MachineSim) {
     const tryStart = () => {
-      if (m.crafting || this.outputFull(m)) return;
+      if (this.outputFull(m)) return false;
       for (const ing of m.ingredients) {
         if ((m.buffer.get(ing.name) ?? 0) < Math.ceil(ing.amount - 1e-9)) {
           m.missing = ing.name;
-          return;
+          return false;
         }
       }
       for (const ing of m.ingredients) m.buffer.set(ing.name, (m.buffer.get(ing.name) ?? 0) - Math.ceil(ing.amount - 1e-9));
       m.crafting = true;
+      return true;
+    };
+    const finish = () => {
+      for (const p of m.products) {
+        // A rocket silo builds its parts into the rocket and launches it;
+        // nothing is ever taken out.
+        if (m.entity.name.includes("rocket-silo")) continue;
+        const total = (m.outFraction.get(p.name) ?? 0) + p.amount;
+        const whole = Math.floor(total + 1e-9);
+        m.outFraction.set(p.name, total - whole);
+        m.out.set(p.name, (m.out.get(p.name) ?? 0) + whole);
+      }
+      m.crafting = false;
       m.progress = 0;
     };
-    tryStart();
-    if (m.crafting) {
-      m.progress++;
-      if (m.progress >= m.craftTicks) {
-        for (const p of m.products) {
-          // A rocket silo builds its parts into the rocket and launches it;
-          // nothing is ever taken out.
-          if (m.entity.name.includes("rocket-silo")) continue;
-          const total = (m.outFraction.get(p.name) ?? 0) + p.amount;
-          const whole = Math.floor(total + 1e-9);
-          m.outFraction.set(p.name, total - whole);
-          m.out.set(p.name, (m.out.get(p.name) ?? 0) + whole);
-        }
-        m.crafting = false;
-        tryStart();
+    // Spend one tick of work: finish the current craft, start the next,
+    // and keep going while the tick lasts — a fast enough machine finishes
+    // several crafts in one tick.
+    let budget = 1;
+    while (budget > 1e-9) {
+      if (!m.crafting && !tryStart()) break;
+      const need = m.craftTicks - m.progress;
+      if (need <= budget) {
+        budget -= need;
+        finish();
+      } else {
+        m.progress += budget;
+        budget = 0;
       }
     }
-    const working = m.crafting ? 1 : 0;
+    const working = 1 - budget;
+    const idle = budget;
     let arm = 0;
     let starved = 0;
     let full = 0;
-    if (!working) {
-      if (this.outputFull(m)) full = 1;
-      else if (m.feeders.some((f) => f.phase !== "home")) arm = 1;
-      else starved = 1;
+    if (idle > 0) {
+      if (this.outputFull(m)) full = idle;
+      else if (m.feeders.some((f) => f.phase !== "home")) arm = idle;
+      else starved = idle;
     }
     m.uptime += (working - m.uptime) * EMA;
     m.armBound += (arm - m.armBound) * EMA;
     m.starved += (starved - m.starved) * EMA;
     m.outFull += (full - m.outFull) * EMA;
   }
+
 
   private wants(ins: InserterSim, item: string): boolean {
     const e = ins.entity;
@@ -702,11 +750,13 @@ export class LabFactory {
           delivered = n;
         }
       } else if (d.kind === "box") {
-        if (d.box.total + ins.handCount <= BOX_CAPACITY) {
-          d.box.contents.set(ins.hand!, (d.box.contents.get(ins.hand!) ?? 0) + ins.handCount);
-          d.box.total += ins.handCount;
-          delivered = ins.handCount;
-          ins.handCount = 0;
+        // As much of the hand as fits; the rest waits for space.
+        const n = Math.min(ins.handCount, d.box.capacity - d.box.total);
+        if (n > 0) {
+          d.box.contents.set(ins.hand!, (d.box.contents.get(ins.hand!) ?? 0) + n);
+          d.box.total += n;
+          ins.handCount -= n;
+          delivered = n;
         }
       } else if (d.kind === "port") {
         // An output port that's off is a dead end: the arm waits.
