@@ -197,7 +197,7 @@ export function detectIssues(f: LabFactory): Issue[] {
           const last = down.path[down.path.length - 1] ?? at(taker.entity);
           const endLabel =
             down.end.kind === "open"
-              ? f.outputs.get(down.end.port.id) === "blocked" ? "Belt ends here, blocked" : "Belt leaves here"
+              ? f.portEnabled.get(down.end.port.id) === false ? "Belt ends here, blocked" : "Belt leaves here"
               : down.end.kind === "splitter" ? "Into a splitter" : "Side-loads into a full lane";
           steps.push({ at: last, label: `Lane full · ${endLabel}`, tone: "held" });
         } else if (taker.drop.kind === "machine") {

@@ -7,14 +7,14 @@
 import "./overlay-lab.css";
 import { getData, getRenderCatalog, loadData, type PlacedEntity } from "@factoriotools/engine";
 import { getSharedIconAtlas, mountRenderer, type BlueprintRenderer } from "@factoriotools/renderer";
-import type { LaneFeed, Port } from "@factoriotools/sim";
+import type { LaneFeed } from "@factoriotools/sim";
 import { makeFloatingWindow, type FloatingWindow } from "../../window-manager.js";
 import { escapeHtml } from "../blueprint-viewer/html.js";
 import { BUILDS, entitiesFromString } from "./builds.js";
 import { FULL_RESEARCH, LabFactory, machineStatus, type Research } from "./factory.js";
 import { detectIssues, itemLabel, recipeLabel, type Issue } from "./issues.js";
 import { drawOverlay, laneState, statusColor, type HoverTarget } from "./overlay.js";
-import { DEFAULTS, loadSettings, PALETTES, saveSettings, type LabSettings } from "./settings.js";
+import { DEFAULTS, formatRate, loadSettings, PALETTES, saveSettings, type LabSettings } from "./settings.js";
 
 const TEMPLATE = `
   <div id="lab-stage" class="schematic-frame"></div>
@@ -91,7 +91,7 @@ const TEMPLATE = `
   <div id="lab-ports" class="gui-window floating-window lab-window lab-ports-window" hidden>
     <div class="gui-titlebar"><span>Ports</span><span class="grip" aria-hidden="true"></span></div>
     <div class="gui-body">
-      <p class="lab-note">Blueprints don't record what's on a belt, so every open belt end is a port. An input takes its items from a constant combinator or display panel next to the belt, or a requester or infinity chest behind it. A belt that machines in the blueprint put items onto gets nothing from outside. Anything else is guessed from what the machines downstream need.</p>
+      <p class="lab-note">Every open belt end is a port, and so is an inserter connected on one side only. Switch any of them on or off here or by clicking its tab on the map. A belt input takes its items from a constant combinator or display panel next to it, or a requester or infinity chest behind it; a belt that machines in the blueprint fill gets nothing from outside; anything else is guessed from what the machines downstream need.</p>
       <div id="lab-port-list" class="lab-port-list"></div>
     </div>
   </div>
@@ -267,6 +267,11 @@ export function mountOverlayLab(root: HTMLElement, _options: LabOptions = {}): (
         { value: "icons", label: "Item icons" },
         { value: "dots", label: "Dots" },
       ])),
+      group("Rates", segmented("rateUnit", [
+        { value: "s", label: "Per second" },
+        { value: "min", label: "Per minute" },
+        { value: "h", label: "Per hour" },
+      ])),
       group("Labels and zoom", slider("labelScale", 0.7, 1.6, 0.05, FORMATS.labelScale!) + `<span class="lab-field-label">Detail appears from</span>` + slider("detailZoom", 6, 48, 1, FORMATS.detailZoom!)),
     ].join("");
   }
@@ -409,13 +414,9 @@ export function mountOverlayLab(root: HTMLElement, _options: LabOptions = {}): (
   }, { signal });
   $("#lab-restart").addEventListener("click", () => {
     if (!factory) return;
-    const inputs = [...factory.inputs];
-    const outputs = [...factory.outputs];
-    const entities = currentEntities;
-    currentEntities = entities;
-    factory = new LabFactory(getData(), entities, research);
-    for (const [id, [l, r]] of inputs) factory.setInput(id, l, r);
-    for (const [id, m] of outputs) factory.setOutput(id, m);
+    const next = new LabFactory(getData(), currentEntities, research);
+    factory.copyPortsTo(next);
+    factory = next;
     issues = [];
     renderSim();
   }, { signal });
@@ -442,51 +443,93 @@ export function mountOverlayLab(root: HTMLElement, _options: LabOptions = {}): (
   syncResearch();
 
   /* ---------- ports ---------- */
-  function portPlace(p: Port) {
-    return `${p.x}, ${p.y}`;
-  }
+  let highlightPort: string | undefined;
+  const portsOpen = () => !windows["lab-ports"]!.el.hidden;
+
   function renderPorts() {
     if (!factory) return;
     const f = factory;
-    const options = (cur: LaneFeed | null) =>
-      `<option value="">(empty)</option>` +
-      [...new Set([...f.knownItems, ...(cur ? [cur.item] : [])])]
-        .map((n) => `<option value="${escapeHtml(n)}" ${cur?.item === n ? "selected" : ""}>${escapeHtml(itemLabel(f.data, n))}</option>`)
-        .join("");
-    const inputs = f.net.ports.filter((p) => p.kind === "input");
-    const fed = inputs.filter((p) => f.inputs.get(p.id)?.some(Boolean));
-    const unfed = inputs.filter((p) => !f.inputs.get(p.id)?.some(Boolean));
-    const row = (p: Port) => {
-      const [l, r] = f.inputs.get(p.id) ?? [null, null];
-      const stack = (l ?? r)?.stack ?? 1;
-      return `<div class="lab-port" data-port="${escapeHtml(p.id)}">
-        <span class="lab-port-where">In · ${portPlace(p)}${f.inputReason.get(p.id) ? ` · <span class="lab-port-why">${escapeHtml(f.inputReason.get(p.id)!)}</span>` : ""}</span>
-        <label>Left <select data-lane="0">${options(l)}</select></label>
-        <label>Right <select data-lane="1">${options(r)}</select></label>
-        <label>Stacked <select data-stack>${[1, 2, 3, 4].map((n) => `<option value="${n}" ${n === stack ? "selected" : ""}>×${n}</option>`).join("")}</select></label>
-      </div>`;
+    const label = (n: string) => escapeHtml(itemLabel(f.data, n));
+    const options = (cur: string | undefined, empty = "(empty)") =>
+      `<option value="">${empty}</option>` +
+      [...new Set([...f.knownItems, ...(cur ? [cur] : [])])].map((n) => `<option value="${escapeHtml(n)}" ${cur === n ? "selected" : ""}>${label(n)}</option>`).join("");
+    const all = f.ports();
+    const head = (p: (typeof all)[number]) =>
+      `<label class="lab-port-head"><input type="checkbox" data-toggle-port ${p.enabled ? "checked" : ""}>
+        <span class="lab-port-where">${p.via === "belt" ? "Belt" : "Arm"} · ${Math.floor(p.x)}, ${Math.floor(p.y)}</span>
+        ${p.reason ? `<span class="lab-port-why">${escapeHtml(p.reason)}</span>` : ""}</label>`;
+    const row = (p: (typeof all)[number]) => {
+      let body = "";
+      if (p.kind === "input" && p.via === "belt") {
+        const [l, r] = f.inputs.get(p.id) ?? [null, null];
+        const stack = (l ?? r)?.stack ?? 1;
+        body = `<label>Left <select data-lane="0">${options(l?.item)}</select></label>
+          <label>Right <select data-lane="1">${options(r?.item)}</select></label>
+          <label>Stacked <select data-stack>${[1, 2, 3, 4].map((n) => `<option value="${n}" ${n === stack ? "selected" : ""}>×${n}</option>`).join("")}</select></label>`;
+      } else if (p.kind === "input") {
+        const arm = f.armPorts.find((a) => a.id === p.id)!;
+        const onto = arm.onto ? ` from the ${escapeHtml(arm.onto.replace(/-/g, " "))}` : "";
+        body = `<label>Brings${onto} <select data-arm-items>${options(arm.items.length === 1 ? arm.items[0] : undefined, arm.items.length > 1 ? `What the machine needs (${arm.items.length})` : "(nothing)")}</select></label>`;
+      }
+      return `<div class="lab-port ${p.enabled ? "" : "is-off"}" data-port="${escapeHtml(p.id)}">${head(p)}${body}</div>`;
     };
-    const outputs = f.net.ports.filter((p) => p.kind === "output");
-    $("#lab-port-list").innerHTML =
-      `<h3>Inputs</h3>${fed.map(row).join("") || `<p class="lab-empty">No belt feeds a machine directly.</p>`}` +
-      (unfed.length ? `<details><summary>${unfed.length} more open belt starts</summary>${unfed.map(row).join("")}</details>` : "") +
-      `<h3>Outputs</h3><details><summary>${outputs.length} open belt ends (all take everything)</summary>${outputs
-        .map((p) => `<div class="lab-port" data-port="${escapeHtml(p.id)}"><span class="lab-port-where">Out · ${portPlace(p)}</span><label>Mode <select data-mode><option value="sink" ${f.outputs.get(p.id) !== "blocked" ? "selected" : ""}>Take everything</option><option value="blocked" ${f.outputs.get(p.id) === "blocked" ? "selected" : ""}>Dead end</option></select></label></div>`)
-        .join("")}</details>`;
+    const group = (title: string, kind: "input" | "output") => {
+      const ps = all.filter((p) => p.kind === kind);
+      const main = kind === "input" ? ps.filter((p) => p.via === "arm" || p.items.length) : ps;
+      const rest = kind === "input" ? ps.filter((p) => p.via === "belt" && !p.items.length) : [];
+      return `<div class="lab-port-group"><h3>${title} <span class="lab-port-count">${ps.filter((p) => p.enabled).length} of ${ps.length} on</span></h3>
+        <div class="lab-row"><button type="button" data-all="${kind}" data-on="1">All on</button><button type="button" data-all="${kind}" data-on="0">All off</button></div>
+        ${main.map(row).join("") || `<p class="lab-empty">None.</p>`}
+        ${rest.length ? `<details><summary>${rest.length} belt starts with nothing on them</summary>${rest.map(row).join("")}</details>` : ""}</div>`;
+    };
+    $("#lab-port-list").innerHTML = group("Inputs", "input") + group("Outputs", "output");
   }
-  $("#lab-port-list").addEventListener("change", (e) => {
+  const portList = $("#lab-port-list");
+  portList.addEventListener("change", (e) => {
     if (!factory) return;
-    const el = e.target as HTMLSelectElement;
-    const id = el.closest<HTMLElement>("[data-port]")?.dataset.port;
-    if (!id) return;
-    if (el.dataset.mode !== undefined) factory.setOutput(id, el.value as "sink" | "blocked");
-    else {
+    const el = e.target as HTMLInputElement & HTMLSelectElement;
+    const rowEl = el.closest<HTMLElement>("[data-port]");
+    const id = rowEl?.dataset.port;
+    if (!id || !rowEl) return;
+    if (el.dataset.togglePort !== undefined) {
+      factory.setPortEnabled(id, el.checked);
+    } else if (el.dataset.armItems !== undefined) {
+      const arm = factory.armPorts.find((a) => a.id === id)!;
+      const needs = arm.inserter.drop.kind === "machine" ? arm.inserter.drop.machine.ingredients.map((i) => i.name) : [];
+      factory.setArmPortItems(id, el.value ? [el.value] : needs);
+      if (el.value || needs.length) factory.setPortEnabled(id, true);
+    } else {
       const cur = [...(factory.inputs.get(id) ?? [null, null])] as [LaneFeed | null, LaneFeed | null];
-      const row = el.closest<HTMLElement>("[data-port]")!;
-      const stack = Number(row.querySelector<HTMLSelectElement>("[data-stack]")!.value);
+      const stack = Number(rowEl.querySelector<HTMLSelectElement>("[data-stack]")!.value);
       if (el.dataset.lane !== undefined) cur[Number(el.dataset.lane)] = el.value ? { item: el.value, rate: "full", stack } : null;
       factory.setInput(id, cur[0] && { ...cur[0], stack }, cur[1] && { ...cur[1], stack });
     }
+    renderPorts();
+  }, { signal });
+  portList.addEventListener("click", (e) => {
+    const b = (e.target as HTMLElement).closest<HTMLButtonElement>("[data-all]");
+    if (!b || !factory) return;
+    for (const p of factory.ports()) if (p.kind === b.dataset.all) factory.setPortEnabled(p.id, b.dataset.on === "1");
+    renderPorts();
+  }, { signal });
+  portList.addEventListener("pointerover", (e) => {
+    highlightPort = (e.target as HTMLElement).closest<HTMLElement>("[data-port]")?.dataset.port;
+  }, { signal });
+  portList.addEventListener("pointerleave", () => (highlightPort = undefined), { signal });
+
+  // Clicking a port's tab on the map switches it on or off.
+  let portTabs: { id: string; x: number; y: number; w: number; h: number }[] = [];
+  let downAt: { x: number; y: number } | undefined;
+  stage.addEventListener("pointerdown", (e) => (downAt = { x: e.clientX, y: e.clientY }), { signal, capture: true });
+  stage.addEventListener("click", (e) => {
+    if (!factory || !downAt || Math.hypot(e.clientX - downAt.x, e.clientY - downAt.y) > 4) return;
+    const r = stage.getBoundingClientRect();
+    const x = e.clientX - r.left;
+    const y = e.clientY - r.top;
+    const tab = portTabs.find((t) => x >= t.x && x <= t.x + t.w && y >= t.y && y <= t.y + t.h);
+    if (!tab) return;
+    factory.setPortEnabled(tab.id, !factory.portEnabled.get(tab.id));
+    if (portsOpen()) renderPorts();
   }, { signal });
 
   /* ---------- hover ---------- */
@@ -521,6 +564,7 @@ export function mountOverlayLab(root: HTMLElement, _options: LabOptions = {}): (
     const f = factory;
     const pal = PALETTES[settings.style.palette];
     const row = (a: string, b: string) => `<div class="lab-card-row"><span>${a}</span><span>${b}</span></div>`;
+    const rate = (perSecond: number) => formatRate(perSecond, settings.style.rateUnit);
     let html = "";
     if (hover.kind === "machine") {
       const m = hover.machine;
@@ -536,14 +580,14 @@ export function mountOverlayLab(root: HTMLElement, _options: LabOptions = {}): (
       html = `<div class="lab-card-title">${escapeHtml(recipeLabel(f.data, m.recipe))}</div>
         <div class="lab-card-bar"><i style="width:${Math.round(m.uptime * 100)}%;background:${col}"></i></div>
         ${row("Uptime", `${Math.round(m.uptime * 100)}%`)}
-        ${row(escapeHtml(itemLabel(f.data, product)), `${f.machineRate(m).toFixed(2)} of ${f.machineMaxRate(m).toFixed(2)}/s`)}
-        ${m.ingredients.map((i) => row(escapeHtml(itemLabel(f.data, i.name)), `${m.buffer.get(i.name) ?? 0} held · uses ${f.machineNeed(m, i.name).toFixed(2)}/s`)).join("")}
+        ${row(escapeHtml(itemLabel(f.data, product)), `${rate(f.machineRate(m))} of ${rate(f.machineMaxRate(m))}`)}
+        ${m.ingredients.map((i) => row(escapeHtml(itemLabel(f.data, i.name)), `${m.buffer.get(i.name) ?? 0} held · uses ${rate(f.machineNeed(m, i.name))}`)).join("")}
         <div class="lab-card-why" style="color:${col}">${why}</div>`;
     } else if (hover.kind === "inserter") {
       const ins = hover.inserter;
       html = `<div class="lab-card-title">${escapeHtml(f.data.inserters[ins.entity.name]?.localised ?? ins.entity.name)}</div>
         ${row("Busy", `${Math.round(ins.busy * 100)}%`)}
-        ${row("Moving", `${ins.moved.toFixed(2)}/s of ${ins.maxRate.toFixed(2)}`)}
+        ${row("Moving", `${rate(ins.moved)} of ${rate(ins.maxRate)}`)}
         ${row("Holding", ins.hand ? `${ins.handCount} × ${escapeHtml(itemLabel(f.data, ins.hand))}` : "nothing")}
         <div class="lab-card-why">${ins.busy > 0.9 ? "Swinging nonstop: this arm is a limit." : ins.pickup.kind === "belt" ? "Mostly waiting for something to pick up." : "Keeping up."}</div>`;
     } else if (hover.kind === "belt") {
@@ -555,11 +599,11 @@ export function mountOverlayLab(root: HTMLElement, _options: LabOptions = {}): (
         const here = items.filter((i) => i.pos >= seg.start && i.pos < seg.start + seg.length).map((i) => i.item);
         const what = [...new Set(here)].map((n) => itemLabel(f.data, n)).join(", ") || "—";
         const word = { flow: "moving", held: "backed up", empty: "empty", short: "running dry" }[ls.state];
-        return row(`${lane ? "Right" : "Left"} · ${escapeHtml(what)}`, `${ls.rate.toFixed(2)}/s · ${word}`);
+        return row(`${lane ? "Right" : "Left"} · ${escapeHtml(what)}`, `${rate(ls.rate)} · ${word}`);
       });
       const name = f.data.belts[node.name]?.localised ?? node.name;
       html = `<div class="lab-card-title">${escapeHtml(name)}</div>${lanes.join("")}
-        <div class="lab-card-why">Up to ${(node.speed * 60 / 64).toFixed(1)}/s per lane.</div>`;
+        <div class="lab-card-why">Up to ${rate((node.speed * 60) / 64)} per lane, times the stack size.</div>`;
     }
     const body = $("#lab-card-body");
     if (body.innerHTML !== html) body.innerHTML = html;
@@ -596,7 +640,20 @@ export function mountOverlayLab(root: HTMLElement, _options: LabOptions = {}): (
         overlay.width = Math.round(w * dpr);
         overlay.height = Math.round(h * dpr);
       }
-      drawOverlay({ ctx: octx, width: w, height: h, dpr, camera: renderer.camera, factory, settings, issues, hover: settings.layers.hover ? hover : undefined, icons });
+      portTabs = drawOverlay({
+        ctx: octx,
+        width: w,
+        height: h,
+        dpr,
+        camera: renderer.camera,
+        factory,
+        settings,
+        issues,
+        hover: settings.layers.hover ? hover : undefined,
+        icons,
+        showPorts: settings.layers.ports || portsOpen(),
+        highlightPort,
+      });
       if (now - lastUi > 400) {
         lastUi = now;
         issues = detectIssues(factory);

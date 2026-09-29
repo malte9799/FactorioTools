@@ -69,7 +69,54 @@ export type Target =
   /** A chest whose contents the blueprint states — a requester's or buffer's
    *  requests, an infinity or creative chest's filters. An endless source. */
   | { kind: "chest"; items: string[]; next: number }
-  | { kind: "other" };
+  /** The arm's other side connects to nothing the lab simulates: the arm
+   *  is a port to the world outside the blueprint. */
+  | { kind: "port"; port: ArmPort }
+  /** A plain chest that arms both fill and empty: a buffer between them. */
+  | { kind: "box"; box: Box }
+  /** Nothing on either side: the arm never moves. */
+  | { kind: "none" };
+
+export interface Box {
+  contents: Map<string, number>;
+  total: number;
+}
+const BOX_CAPACITY = 1600;
+
+/** An inserter whose pickup or drop side is open. An input brings items in
+ *  from outside; an output takes them away. */
+export interface ArmPort {
+  id: string;
+  kind: "input" | "output";
+  inserter: InserterSim;
+  /** Centre of the open tile, where the tab goes. */
+  at: { x: number; y: number };
+  /** Whatever stands on the open tile, if anything (a chest, a furnace…). */
+  onto?: string;
+  /** Input ports: what the arm brings, taking whichever the target wants. */
+  items: string[];
+}
+
+/** One row of the Ports window: a belt end or an arm. */
+export interface PortInfo {
+  id: string;
+  kind: "input" | "output";
+  via: "belt" | "arm";
+  /** Centre of the port's tile: the belt end, or the arm's open side. */
+  x: number;
+  y: number;
+  /** Belt ports: travel direction at the end, to set the tab beside it. */
+  dir?: Card;
+  enabled: boolean;
+  reason: string;
+  /** Items it brings (inputs) — for the tab's icons. */
+  items: string[];
+  /** Items per second through it right now. */
+  rate: number;
+}
+
+/** Things that store items, so an arm next to one is reaching into it. */
+const CONTAINER = /chest|container|wagon/;
 
 /** Chests whose blueprint settings say what they hold. */
 const KNOWN_CHEST = /requester|buffer|infinity|creative/;
@@ -196,16 +243,31 @@ export class LabFactory {
     };
     const machineAt = (x: number, y: number) =>
       this.machines.find((m) => x > m.box.left && x < m.box.right && y > m.box.top && y < m.box.bottom);
+    const tileKey = (p: { x: number; y: number }) => `${Math.floor(p.x)},${Math.floor(p.y)}`;
+    // Plain chests that arms both fill and empty are buffers, not ports.
+    const reach = (e: PlacedEntity) => {
+      const r = e.name.includes("long-handed") ? 2 : 1;
+      const f = cardOf(e.direction);
+      return { pickupAt: { x: e.x + DX[f] * r, y: e.y + DY[f] * r }, dropAt: { x: e.x - DX[f] * r, y: e.y - DY[f] * r } };
+    };
+    const filled = new Set<string>();
+    const emptied = new Set<string>();
+    for (const e of entities) {
+      if (!data.inserters[e.name]) continue;
+      const { pickupAt, dropAt } = reach(e);
+      emptied.add(tileKey(pickupAt));
+      filled.add(tileKey(dropAt));
+    }
+    const boxes = new Map<string, Box>();
+    const madeHere = new Set(this.machines.flatMap((m) => m.products.map((p) => p.name)));
     for (const e of entities) {
       const proto = data.inserters[e.name];
       if (!proto) continue;
-      const reach = e.name.includes("long-handed") ? 2 : 1;
       const facing = cardOf(e.direction);
       // An inserter faces its pickup: at direction 0 (north) it takes from
       // the tile above and drops on the tile below — the same tiles the
       // engine's bottleneck check (calc/throughput.ts) uses.
-      const pickupAt = { x: e.x + DX[facing] * reach, y: e.y + DY[facing] * reach };
-      const dropAt = { x: e.x - DX[facing] * reach, y: e.y - DY[facing] * reach };
+      const { pickupAt, dropAt } = reach(e);
       const target = (p: { x: number; y: number }, isDrop: boolean): Target => {
         const m = machineAt(p.x, p.y);
         if (m) return { kind: "machine", machine: m };
@@ -219,7 +281,15 @@ export class LabFactory {
         }
         const chest = chestAt(p.x, p.y);
         if (chest) return { kind: "chest", items: chest, next: 0 };
-        return { kind: "other" };
+        const key = tileKey(p);
+        const onTile = byTile.get(key);
+        if (onTile && CONTAINER.test(onTile.name) && filled.has(key) && emptied.has(key)) {
+          let box = boxes.get(key);
+          if (!box) boxes.set(key, (box = { contents: new Map(), total: 0 }));
+          return { kind: "box", box };
+        }
+        // Open: filled in below, once both sides are known.
+        return { kind: "none" };
       };
       const handSize = e.overrideStackSize ?? handSizeFor(e.name, research);
       // Quality speeds the arm up the same way it speeds up machines.
@@ -241,6 +311,27 @@ export class LabFactory {
         busy: 0,
         moved: 0,
       };
+      // An arm connected on one side only is a port on its open side.
+      const tile = (p: { x: number; y: number }) => ({ x: Math.floor(p.x) + 0.5, y: Math.floor(p.y) + 0.5 });
+      const where = `${Math.floor(e.x)},${Math.floor(e.y)}`;
+      if (ins.pickup.kind === "none" && ins.drop.kind !== "none") {
+        const needs = ins.drop.kind === "machine" ? ins.drop.machine.ingredients.map((i) => i.name) : [];
+        const outside = needs.filter((n) => !madeHere.has(n));
+        const port: ArmPort = { id: `arm-in:${where}`, kind: "input", inserter: ins, at: tile(pickupAt), onto: byTile.get(tileKey(pickupAt))?.name, items: outside.length ? outside : needs };
+        ins.pickup = { kind: "port", port };
+        this.armPorts.push(port);
+        this.portEnabled.set(port.id, port.items.length > 0 && outside.length > 0);
+        this.portReason.set(
+          port.id,
+          !port.items.length ? "Pick what it brings" : outside.length ? "Brings what the machine needs" : "Everything it could bring is made here",
+        );
+      } else if (ins.drop.kind === "none" && ins.pickup.kind !== "none") {
+        const port: ArmPort = { id: `arm-out:${where}`, kind: "output", inserter: ins, at: tile(dropAt), onto: byTile.get(tileKey(dropAt))?.name, items: [] };
+        ins.drop = { kind: "port", port };
+        this.armPorts.push(port);
+        this.portEnabled.set(port.id, true);
+        this.portReason.set(port.id, "Takes everything away");
+      }
       if (ins.drop.kind === "machine") ins.drop.machine.feeders.push(ins);
       if (ins.pickup.kind === "machine") ins.pickup.machine.takers.push(ins);
       this.inserters.push(ins);
@@ -253,7 +344,11 @@ export class LabFactory {
     // Every open belt end takes everything by default: a pasted blueprint is
     // usually a piece of a bigger factory whose belts carry on off the edge.
     // The Ports window can turn one into a dead end.
-    for (const port of this.net.ports) if (port.kind === "output") this.setOutput(port.id, "sink");
+    for (const port of this.net.ports) {
+      if (port.kind !== "output") continue;
+      this.portEnabled.set(port.id, true);
+      this.applyBeltPort(port.id);
+    }
   }
 
   private readonly entityAt: (x: number, y: number) => PlacedEntity | undefined;
@@ -265,8 +360,6 @@ export class LabFactory {
     return items.length ? items : undefined;
   }
 
-  /** Why each input port starts with what it has, for the Ports window. */
-  readonly inputReason = new Map<string, string>();
 
   /** Blueprints don't record what's on a belt, so each input port starts
    *  from the best evidence there is, in this order:
@@ -284,6 +377,7 @@ export class LabFactory {
     // belts arrive stacked too.
     const stack = this.inserters.some((i) => i.stacksOnBelt) ? this.research.beltStack : 1;
     const feed = (name: string | undefined): LaneFeed | null => (name ? { item: name, rate: "full", stack } : null);
+    const guessed: { id: string; items: string[] }[] = [];
     for (const port of this.net.ports) {
       // The synthetic input behind an unfed splitter half starts empty:
       // nothing is placed there in the blueprint.
@@ -292,7 +386,7 @@ export class LabFactory {
       const labelled = this.labelFor(port.line);
       if (labelled) {
         this.setInput(port.id, feed(labelled.items[0]), feed(labelled.items[1] ?? labelled.items[0]));
-        this.inputReason.set(port.id, `From the ${labelled.source}`);
+        this.portReason.set(port.id, `From the ${labelled.source}`);
         continue;
       }
 
@@ -306,13 +400,21 @@ export class LabFactory {
         const seg = (t: Target) => (t.kind === "belt" ? line.lanes[0].segments.findIndex((s) => s.node === t.node) : -1);
         const events = [
           ...this.inserters.filter((i) => on(i.pickup)).map((i) => ({ kind: "pickup" as const, at: seg(i.pickup), ins: i })),
-          ...this.inserters.filter((i) => on(i.drop) && (i.pickup.kind === "machine" || i.pickup.kind === "chest")).map((i) => ({ kind: "drop" as const, at: seg(i.drop), ins: i })),
+          ...this.inserters.filter((i) => on(i.drop) && (i.pickup.kind === "machine" || i.pickup.kind === "chest" || i.pickup.kind === "box" || i.pickup.kind === "port")).map((i) => ({ kind: "drop" as const, at: seg(i.drop), ins: i })),
         ].sort((a, b) => a.at - b.at);
         if (!first && events.length) first = events[0]!.kind;
         for (const ev of events) {
-          if (ev.kind !== "pickup" || ev.ins.drop.kind !== "machine") continue;
-          for (const ing of ev.ins.drop.machine.ingredients) {
-            if (!madeHere.has(ing.name)) wanted.set(ing.name, (wanted.get(ing.name) ?? 0) + 1);
+          if (ev.kind !== "pickup") continue;
+          // Look through a buffer chest to the machines its arms feed.
+          const d = ev.ins.drop;
+          const machines =
+            d.kind === "machine" ? [d.machine]
+            : d.kind === "box" ? this.inserters.flatMap((i) => (i.pickup.kind === "box" && i.pickup.box === d.box && i.drop.kind === "machine" ? [i.drop.machine] : []))
+            : [];
+          for (const m of machines) {
+            for (const ing of m.ingredients) {
+              if (!madeHere.has(ing.name)) wanted.set(ing.name, (wanted.get(ing.name) ?? 0) + 1);
+            }
           }
         }
         const end = line.end;
@@ -323,12 +425,27 @@ export class LabFactory {
       walk(port.line);
       if (first === "drop") {
         this.setInput(port.id, null, null);
-        this.inputReason.set(port.id, "Filled inside the blueprint");
+        this.portReason.set(port.id, "Filled inside the blueprint");
         continue;
       }
       const ranked = [...wanted.entries()].sort((a, b) => b[1] - a[1]).map(([n]) => n);
-      this.setInput(port.id, feed(ranked[0]), feed(ranked[1] ?? ranked[0]));
-      this.inputReason.set(port.id, ranked.length ? "Guessed from the machines it feeds" : "Nothing downstream takes from it");
+      guessed.push({ id: port.id, items: ranked });
+    }
+    // Belts that feed the same machines share out what those machines need,
+    // two items per belt (one per lane), so three belts into rocket silos
+    // carry all three ingredients rather than the same two three times.
+    const groups = new Map<string, string[]>();
+    for (const g of guessed) {
+      const key = [...g.items].sort().join("|");
+      groups.set(key, [...(groups.get(key) ?? []), g.id]);
+    }
+    for (const g of guessed) {
+      const peers = groups.get([...g.items].sort().join("|"))!;
+      const k = peers.indexOf(g.id);
+      const m = g.items.length;
+      const pick = (slot: number) => (m ? g.items[(k * 2 + slot) % m] : undefined);
+      this.setInput(g.id, feed(pick(0)), feed(pick(1)));
+      this.portReason.set(g.id, m ? "Guessed from the machines it feeds" : "Nothing downstream takes from it");
     }
   }
 
@@ -355,17 +472,79 @@ export class LabFactory {
     return undefined;
   }
 
+  /** What each belt input feeds when it's on; kept while it's off. */
   readonly inputs = new Map<string, [LaneFeed | null, LaneFeed | null]>();
-  readonly outputs = new Map<string, "sink" | "blocked">();
+  readonly armPorts: ArmPort[] = [];
+  /** On/off per port, belt or arm. An input that's off brings nothing; an
+   *  output that's off is a dead end. */
+  readonly portEnabled = new Map<string, boolean>();
+  readonly portReason = new Map<string, string>();
 
   setInput(portId: string, left: LaneFeed | null, right: LaneFeed | null) {
     this.inputs.set(portId, [left, right]);
-    this.belts.setInput(portId, left, right);
+    if (!this.portEnabled.has(portId)) this.portEnabled.set(portId, true);
+    this.applyBeltPort(portId);
   }
 
-  setOutput(portId: string, mode: "sink" | "blocked") {
-    this.outputs.set(portId, mode);
-    this.belts.setOutput(portId, mode);
+  setPortEnabled(portId: string, on: boolean) {
+    this.portEnabled.set(portId, on);
+    if (!portId.startsWith("arm-")) this.applyBeltPort(portId);
+  }
+
+  private applyBeltPort(portId: string) {
+    const port = this.net.ports.find((p) => p.id === portId);
+    if (!port) return;
+    const on = this.portEnabled.get(portId) ?? true;
+    if (port.kind === "output") this.belts.setOutput(portId, on ? "sink" : "blocked");
+    else {
+      const [l, r] = this.inputs.get(portId) ?? [null, null];
+      this.belts.setInput(portId, on ? l : null, on ? r : null);
+    }
+  }
+
+  setArmPortItems(portId: string, items: string[]) {
+    const port = this.armPorts.find((p) => p.id === portId);
+    if (port) port.items = items;
+  }
+
+  /** Every port, belt and arm, for the Ports window and the map tabs. */
+  ports(): PortInfo[] {
+    const belt = this.net.ports.map((p): PortInfo => {
+      const node = p.line.nodes[p.kind === "input" ? 0 : p.line.nodes.length - 1];
+      const feed = this.inputs.get(p.id) ?? [null, null];
+      return {
+        id: p.id,
+        kind: p.kind,
+        via: "belt",
+        x: p.x + 0.5,
+        y: p.y + 0.5,
+        dir: p.dir,
+        enabled: this.portEnabled.get(p.id) ?? true,
+        reason: this.portReason.get(p.id) ?? (p.kind === "output" ? "Takes everything away" : ""),
+        items: p.kind === "input" ? [...new Set(feed.filter((l): l is LaneFeed => !!l).map((l) => l.item))] : [],
+        rate: node ? this.tileRate(node, 0) + this.tileRate(node, 1) : 0,
+      };
+    });
+    const arms = this.armPorts.map((p): PortInfo => ({
+      id: p.id,
+      kind: p.kind,
+      via: "arm",
+      x: p.at.x,
+      y: p.at.y,
+      enabled: this.portEnabled.get(p.id) ?? true,
+      reason: this.portReason.get(p.id) ?? "",
+      items: p.kind === "input" ? p.items : [],
+      rate: p.inserter.moved,
+    }));
+    return [...belt, ...arms];
+  }
+
+  /** Carries every port choice (on/off, belt feeds, arm items) over to a
+   *  rebuilt model of the same blueprint. */
+  copyPortsTo(next: LabFactory) {
+    for (const [id, [l, r]] of this.inputs) next.setInput(id, l, r);
+    for (const p of this.armPorts) next.setArmPortItems(p.id, p.items);
+    for (const [id, on] of this.portEnabled) next.setPortEnabled(id, on);
   }
 
   step(ticks = 1) {
@@ -409,6 +588,9 @@ export class LabFactory {
       m.progress++;
       if (m.progress >= m.craftTicks) {
         for (const p of m.products) {
+          // A rocket silo builds its parts into the rocket and launches it;
+          // nothing is ever taken out.
+          if (m.entity.name.includes("rocket-silo")) continue;
           const total = (m.outFraction.get(p.name) ?? 0) + p.amount;
           const whole = Math.floor(total + 1e-9);
           m.outFraction.set(p.name, total - whole);
@@ -441,6 +623,7 @@ export class LabFactory {
     }
     const d = ins.drop;
     if (d.kind === "machine") return d.machine.ingredients.some((i) => i.name === item) && (d.machine.buffer.get(item) ?? 0) < this.limitFor(d.machine, item);
+    if (d.kind === "none") return false;
     return true;
   }
 
@@ -472,6 +655,23 @@ export class LabFactory {
             break;
           }
         }
+      } else if (p.kind === "port") {
+        // The outside world: an endless supply of the port's items, while
+        // the port is on.
+        if (this.portEnabled.get(p.port.id)) {
+          got = p.port.items.find((item) => this.wants(ins, item));
+          if (got) count = ins.handSize;
+        }
+      } else if (p.kind === "box") {
+        for (const [item, have] of p.box.contents) {
+          if (have > 0 && this.wants(ins, item)) {
+            got = item;
+            count = Math.min(have, ins.handSize);
+            p.box.contents.set(item, have - count);
+            p.box.total -= count;
+            break;
+          }
+        }
       } else if (p.kind === "belt") {
         const took = this.belts.takeFromTile(p.node, (item) => this.wants(ins, item), ins.handSize);
         if (took) {
@@ -500,6 +700,19 @@ export class LabFactory {
         if (this.belts.dropOnTile(d.node, d.lane, ins.hand!, n)) {
           ins.handCount -= n;
           delivered = n;
+        }
+      } else if (d.kind === "box") {
+        if (d.box.total + ins.handCount <= BOX_CAPACITY) {
+          d.box.contents.set(ins.hand!, (d.box.contents.get(ins.hand!) ?? 0) + ins.handCount);
+          d.box.total += ins.handCount;
+          delivered = ins.handCount;
+          ins.handCount = 0;
+        }
+      } else if (d.kind === "port") {
+        // An output port that's off is a dead end: the arm waits.
+        if (this.portEnabled.get(d.port.id)) {
+          delivered = ins.handCount;
+          ins.handCount = 0;
         }
       } else {
         delivered = ins.handCount;

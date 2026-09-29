@@ -4,7 +4,7 @@ import type { Camera, IconAtlas } from "@factoriotools/renderer";
 import { DX, DY, lanePoint, type BeltNode, type Lane, type LaneSegment, type Port } from "@factoriotools/sim";
 import { machineStatus, type InserterSim, type LabFactory, type MachineSim, type MachineStatus } from "./factory.js";
 import type { Issue } from "./issues.js";
-import { PALETTES, type LabSettings, type Palette } from "./settings.js";
+import { formatRate, PALETTES, type LabSettings, type Palette } from "./settings.js";
 
 export type HoverTarget =
   | { kind: "machine"; machine: MachineSim }
@@ -23,6 +23,19 @@ export interface OverlayFrame {
   issues: Issue[];
   hover: HoverTarget | undefined;
   icons: IconAtlas;
+  /** Draw port tabs (the layer, or while the Ports window is open). */
+  showPorts: boolean;
+  /** A port to ring, for the row the cursor is on in the Ports window. */
+  highlightPort?: string;
+}
+
+/** Where a port's tab landed on screen (CSS pixels), for click toggling. */
+export interface PortTabRect {
+  id: string;
+  x: number;
+  y: number;
+  w: number;
+  h: number;
 }
 
 type LaneState = "flow" | "held" | "empty" | "short";
@@ -74,7 +87,7 @@ export function laneState(f: LabFactory, node: BeltNode, lane: Lane, starvedNode
   return { state: "flow", load: Math.max(load, slotRate / max), rate };
 }
 
-export function drawOverlay(fr: OverlayFrame): void {
+export function drawOverlay(fr: OverlayFrame): PortTabRect[] {
   const { ctx, width: w, height: h, dpr, camera, factory: f, settings: st } = fr;
   const L = st.layers;
   const S = st.style;
@@ -172,12 +185,12 @@ export function drawOverlay(fr: OverlayFrame): void {
 
   /* ---------- items ---------- */
   if (L.items && ppt >= 7) {
-    const size = 0.3;
+    const size = 0.42;
     f.belts.forEachItem((x, y, item, hidden, count) => {
       if (hidden || !visible(x, y, 1)) return;
       // A stacked slot draws as a small pile, each copy nudged up.
       for (let k = 0; k < count; k++) {
-        const yk = y - k * 0.05;
+        const yk = y - k * 0.07;
         if (S.itemStyle === "icons") {
           const icon = fr.icons.get(item);
           if (icon) {
@@ -187,7 +200,7 @@ export function drawOverlay(fr: OverlayFrame): void {
         }
         ctx.fillStyle = itemColor(item);
         ctx.beginPath();
-        ctx.arc(x, yk, 0.08, 0, Math.PI * 2);
+        ctx.arc(x, yk, 0.11, 0, Math.PI * 2);
         ctx.fill();
       }
     });
@@ -216,11 +229,11 @@ export function drawOverlay(fr: OverlayFrame): void {
         const x = ins.pickupAt.x + (ins.dropAt.x - ins.pickupAt.x) * t;
         const y = ins.pickupAt.y + (ins.dropAt.y - ins.pickupAt.y) * t;
         const icon = fr.icons.get(ins.hand);
-        if (icon && S.itemStyle === "icons") ctx.drawImage(icon.sheet, icon.cell.x, icon.cell.y, icon.cell.w, icon.cell.h, x - 0.17, y - 0.17, 0.34, 0.34);
+        if (icon && S.itemStyle === "icons") ctx.drawImage(icon.sheet, icon.cell.x, icon.cell.y, icon.cell.w, icon.cell.h, x - 0.24, y - 0.24, 0.48, 0.48);
         else {
           ctx.fillStyle = itemColor(ins.hand);
           ctx.beginPath();
-          ctx.arc(x, y, 0.1, 0, Math.PI * 2);
+          ctx.arc(x, y, 0.13, 0, Math.PI * 2);
           ctx.fill();
         }
       }
@@ -284,14 +297,23 @@ export function drawOverlay(fr: OverlayFrame): void {
       if (showLabel && detail > 0) {
         labels.push(() => {
           const p = toScreen(cx, cy);
-          const big = Math.max(10, Math.min(28, ppt * 0.42)) * S.labelScale;
+          const big = Math.max(10, Math.min(24, ppt * 0.34)) * S.labelScale;
           ctx.globalAlpha = detail;
-          ctx.textAlign = "center";
           ctx.textBaseline = "middle";
           ctx.font = `600 ${big}px "IBM Plex Mono", monospace`;
           ctx.fillStyle = "#e6e0d8";
           const y = S.ringStyle === "ring" ? p.y - big * 0.12 : p.y;
-          ctx.fillText(`${Math.round(m.uptime * 100)}%`, p.x, y);
+          // The main product's icon, then its averaged output rate.
+          const text = formatRate(f.machineRate(m), S.rateUnit);
+          const icon = m.products[0] ? fr.icons.get(m.products[0].name) : undefined;
+          const iw = icon ? big * 1.15 : 0;
+          const gap = icon ? big * 0.25 : 0;
+          const tw = ctx.measureText(text).width;
+          const x0 = p.x - (iw + gap + tw) / 2;
+          if (icon) ctx.drawImage(icon.sheet, icon.cell.x, icon.cell.y, icon.cell.w, icon.cell.h, x0, y - iw / 2, iw, iw);
+          ctx.textAlign = "left";
+          ctx.fillText(text, x0 + iw + gap, y);
+          ctx.textAlign = "center";
           if ((S.ringStyle === "ring" || S.ringStyle === "fill") && big * 0.38 >= 7.5) {
             ctx.font = `600 ${big * 0.38}px "IBM Plex Mono", monospace`;
             ctx.fillStyle = col;
@@ -305,32 +327,50 @@ export function drawOverlay(fr: OverlayFrame): void {
   }
 
   /* ---------- ports ---------- */
-  if (L.ports) {
-    for (const port of f.net.ports) {
-      const node = port.line.nodes[port.kind === "input" ? 0 : port.line.nodes.length - 1];
-      if (!node || !visible(port.x, port.y, 3)) continue;
-      const feed = f.inputs.get(port.id);
-      if (port.kind === "input" && !feed?.some(Boolean)) continue;
-      const rate = f.tileRate(node, 0) + f.tileRate(node, 1);
-      // A port with nothing moving through it is worth a glance only when
-      // it's what the cursor is on.
-      if (rate < 0.05 && !(fr.hover?.kind === "belt" && fr.hover.node === node)) continue;
-      const sign = port.kind === "input" ? -1 : 1;
-      const wx = port.x + 0.5 + DX[port.dir] * 0.95 * sign;
-      const wy = port.y + 0.5 + DY[port.dir] * 0.95 * sign;
-      const items = port.kind === "input" ? [...new Set(feed!.filter(Boolean).map((l) => l!.item))] : [];
+  const tabs: PortTabRect[] = [];
+  if (fr.showPorts) {
+    for (const port of f.ports()) {
+      if (!visible(port.x, port.y, 3)) continue;
+      // A belt port's tab sits just past the belt's open end; an arm port's
+      // on the open tile the arm reaches into.
+      let wx = port.x;
+      let wy = port.y;
+      if (port.dir !== undefined) {
+        const sign = port.kind === "input" ? -1 : 1;
+        wx += DX[port.dir] * 0.95 * sign;
+        wy += DY[port.dir] * 0.95 * sign;
+      }
+      const lit = fr.highlightPort === port.id;
+      if (lit) {
+        ctx.strokeStyle = pal.accent;
+        ctx.lineWidth = Math.max(0.06, 3 / ppt);
+        ctx.strokeRect(Math.floor(port.x) - 0.1, Math.floor(port.y) - 0.1, 1.2, 1.2);
+      }
       labels.push(() => {
         const p = toScreen(wx, wy);
-        if (detail <= 0.05) {
-          ctx.fillStyle = pal.accent;
+        if (detail <= 0.05 && !lit) {
+          ctx.fillStyle = port.enabled ? pal.accent : pal.idle;
           ctx.beginPath();
           ctx.arc(p.x, p.y, 3, 0, Math.PI * 2);
           ctx.fill();
+          tabs.push({ id: port.id, x: p.x - 6, y: p.y - 6, w: 12, h: 12 });
           return;
         }
-        ctx.globalAlpha = detail;
-        portTab(ctx, fr.icons, p.x, p.y, port.kind === "input" ? "IN" : "OUT", items, `${rate.toFixed(1)}/s`, pal.accent, S.labelScale);
+        ctx.globalAlpha = lit ? 1 : Math.max(detail, 0.35);
+        const rect = portTab(
+          ctx,
+          fr.icons,
+          p.x,
+          p.y,
+          port.kind === "input" ? "IN" : "OUT",
+          port.items.slice(0, 3),
+          port.enabled ? formatRate(port.rate, S.rateUnit) : "OFF",
+          port.enabled ? pal.accent : pal.idle,
+          S.labelScale,
+          !port.enabled,
+        );
         ctx.globalAlpha = 1;
+        tabs.push({ id: port.id, ...rect });
       });
     }
   }
@@ -347,6 +387,7 @@ export function drawOverlay(fr: OverlayFrame): void {
 
   screen();
   for (const draw of labels) draw();
+  return tabs;
 }
 
 /* ---------- screen-space primitives ---------- */
@@ -367,7 +408,7 @@ function pillBox(ctx: CanvasRenderingContext2D, x: number, y: number, wdt: numbe
 
 
 
-function portTab(ctx: CanvasRenderingContext2D, icons: IconAtlas, x: number, y: number, tag: string, items: string[], rate: string, col: string, scale: number) {
+function portTab(ctx: CanvasRenderingContext2D, icons: IconAtlas, x: number, y: number, tag: string, items: string[], rate: string, col: string, scale: number, off = false) {
   const fs = 11 * scale;
   const h = fs * 1.9;
   const iconSize = fs * 1.35;
@@ -377,7 +418,9 @@ function portTab(ctx: CanvasRenderingContext2D, icons: IconAtlas, x: number, y: 
   const rateW = ctx.measureText(rate).width;
   const wdt = fs * 0.6 + tagW + fs * 0.5 + items.length * (iconSize + 2) + (items.length ? fs * 0.3 : 0) + rateW + fs * 0.6;
   const x0 = x - wdt / 2;
+  if (off) ctx.setLineDash([3, 2]);
   pillBox(ctx, x0, y - h / 2, wdt, h, col);
+  ctx.setLineDash([]);
   let cx = x0 + fs * 0.6;
   ctx.textBaseline = "middle";
   ctx.font = font(fs, 600);
@@ -395,8 +438,9 @@ function portTab(ctx: CanvasRenderingContext2D, icons: IconAtlas, x: number, y: 
   }
   if (items.length) cx += fs * 0.3;
   ctx.font = font(fs);
-  ctx.fillStyle = "#e6e0d8";
+  ctx.fillStyle = off ? col : "#e6e0d8";
   ctx.fillText(rate, cx, y + 0.5);
+  return { x: x0, y: y - h / 2, w: wdt, h };
 }
 
 const itemColors = new Map<string, string>();

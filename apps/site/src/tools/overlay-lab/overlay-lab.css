@@ -116,3 +116,10 @@
 }
 
 .lab-layer-heading { margin: 10px 8px 2px; font: 600 11px/1.2 var(--mono); letter-spacing: 0.1em; text-transform: uppercase; color: var(--gold); }
+
+.lab-port-group { margin-bottom: 10px; }
+.lab-port-count { margin-left: 6px; font-weight: 500; color: var(--text-dim); letter-spacing: 0; text-transform: none; }
+.lab-port-head { flex: 0 0 100%; display: flex; flex-wrap: wrap; gap: 4px 8px; align-items: center; cursor: pointer; }
+.lab-port-head input { accent-color: var(--gold); width: 15px; height: 15px; margin: 0; }
+.lab-port-head .lab-port-where { flex: 0 0 auto; }
+.lab-port.is-off { opacity: 0.55; }
