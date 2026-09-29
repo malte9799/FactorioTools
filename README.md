@@ -64,6 +64,10 @@ regenerate, regenerate all three.
 
 Non-standard install paths are read from `FACTORIO_DATA` and `FACTORIO_DUMP`.
 
+The belt simulation reads belt speeds, underground lengths and splitter
+prototypes from `game-data.json`. A dataset generated before those were
+extracted still works: `packages/sim` falls back to built-in vanilla values.
+
 `extract-sprites` is incremental: it stamps each source file's size and
 mtime, and skips anything unchanged whose output is still present. Re-running
 it after a crop therefore leaves the cropped sheets alone instead of
@@ -85,10 +89,11 @@ npm run check    # typecheck every workspace
 |---|---|
 | `packages/engine` | Blueprint decode/encode, the rate calculator, prototype types. No DOM. |
 | `packages/renderer` | Canvas renderer: sprite atlas, neighbour classification, camera, draw passes. |
+| `packages/sim` | Tick-by-tick belt simulation: per-lane transport lines, curves, side-loading, undergrounds, splitters. No DOM. |
 | `packages/data-pipeline` | One-time scripts that turn a Factorio install into the dataset above. |
 | `apps/site` | The page itself — panels, menus, editing, library. |
 
-`engine` and most of `renderer` are DOM-free and tested directly with `tsx`;
+`engine`, `sim` and most of `renderer` are DOM-free and tested directly with `tsx`;
 `apps/site` is the browser layer.
 
 ## Audit

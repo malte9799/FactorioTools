@@ -338,7 +338,28 @@ export interface BeltProto {
   name: string;
   /** Items per second on a full belt, one item per slot. */
   throughput: number;
+  /** Tiles per tick an item moves (the prototype's own `speed`). Optional
+   *  only because datasets generated before it was extracted lack it —
+   *  throughput / 480 is the same number. */
+  speed?: number;
   graphics?: EntityGraphics;
+  localised: string;
+}
+
+export interface UndergroundBeltProto {
+  name: string;
+  /** Tiles per tick. */
+  speed: number;
+  /** Largest entrance-to-exit distance in tiles (the prototype's
+   *  `max_distance`): 5 means up to 4 tiles of gap. */
+  maxDistance: number;
+  localised: string;
+}
+
+export interface SplitterProto {
+  name: string;
+  /** Tiles per tick. */
+  speed: number;
   localised: string;
 }
 
@@ -368,6 +389,10 @@ export interface GameData {
   modules: Record<string, ModuleProto>;
   beacons: Record<string, BeaconProto>;
   belts: Record<string, BeltProto>;
+  /** Optional: absent from datasets generated before the belt simulation
+   *  needed them; packages/sim falls back to vanilla values. */
+  undergroundBelts?: Record<string, UndergroundBeltProto>;
+  splitters?: Record<string, SplitterProto>;
   inserters: Record<string, InserterProto>;
   /** Multiplier applied to a machine's base speed, by quality tier. */
   qualityMachineSpeed: Record<QualityName, number>;
@@ -624,7 +649,20 @@ export interface BpEntity {
   spoil_priority?: BpSpoilPriority;
   /** Storage/requester/buffer chests. */
   request_filters?: BpRequestFilters;
+  /** Splitters only: which input belt is drained first. Omitted = no
+   *  priority (alternate). */
+  input_priority?: BpSplitterSide;
+  /** Splitters only: which output belt is filled first; also the side a
+   *  `filter`ed item is sent to. Omitted = no priority (alternate). */
+  output_priority?: BpSplitterSide;
+  /** Splitters only: the item filter. 2.0 writes an item-filter object,
+   *  1.1 wrote the bare item name. */
+  filter?: string | { name: string; quality?: QualityName; comparator?: string };
 }
+
+/** A splitter's side, relative to its own facing (left = counter-clockwise
+ *  of the direction items travel). */
+export type BpSplitterSide = "left" | "right";
 
 /** One wire from a 2.0 blueprint's top-level `wires` array:
  *  `[entityA, connectorA, entityB, connectorB]`.
@@ -753,6 +791,14 @@ export interface PlacedEntity {
    *  direction while one is an entrance and the other an exit). Undefined
    *  for every other entity kind. */
   undergroundType?: "input" | "output";
+  /** Splitters only, from the blueprint's `input_priority`. Undefined = no
+   *  priority. */
+  splitterInputPriority?: BpSplitterSide;
+  /** Splitters only, from the blueprint's `output_priority`. Undefined = no
+   *  priority. */
+  splitterOutputPriority?: BpSplitterSide;
+  /** Splitters only: the item name its filter is set to, if any. */
+  splitterFilter?: string;
 }
 
 /** One wire, normalised out of the blueprint's `wires` array into the pair

@@ -215,4 +215,36 @@ test("a chest's request_filters stay read-only: filterItems round-trips to displ
   assert.equal(reWritten!.request_filters, undefined, "chest requests are still not writable — dropped, not guessed wrong");
 });
 
+test("splitter priorities and filter round-trip, reading both the 2.0 object and 1.1 string filter", () => {
+  const modern: BpEntity = {
+    entity_number: 1,
+    name: "splitter",
+    position: { x: 0.5, y: 0 },
+    input_priority: "left",
+    output_priority: "right",
+    filter: { name: "iron-plate", quality: "normal", comparator: "=" },
+  };
+  const legacy: BpEntity = { entity_number: 2, name: "splitter", position: { x: 2.5, y: 0 }, output_priority: "left", filter: "copper-plate" };
+  const [a, b] = normaliseEntities({ item: "blueprint", entities: [modern, legacy] });
+  assert.equal(a!.splitterInputPriority, "left");
+  assert.equal(a!.splitterOutputPriority, "right");
+  assert.equal(a!.splitterFilter, "iron-plate");
+  assert.equal(b!.splitterInputPriority, undefined);
+  assert.equal(b!.splitterFilter, "copper-plate");
+
+  const [written] = denormaliseEntities([a!]);
+  assert.equal(written!.input_priority, "left");
+  assert.equal(written!.output_priority, "right");
+  assert.deepEqual(written!.filter, { name: "iron-plate" });
+  assert.deepEqual(normaliseEntities({ item: "blueprint", entities: [written!] })[0], { ...a!, entityNumber: 1 });
+});
+
+test("a plain splitter writes no priority or filter keys", () => {
+  const [plain] = normaliseEntities({ item: "blueprint", entities: [{ entity_number: 1, name: "splitter", position: { x: 0.5, y: 0 } }] });
+  const [written] = denormaliseEntities([plain!]);
+  assert.equal("input_priority" in written!, false);
+  assert.equal("output_priority" in written!, false);
+  assert.equal("filter" in written!, false);
+});
+
 console.log(`\n${passed} passing`);
