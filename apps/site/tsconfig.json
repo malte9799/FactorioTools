@@ -6,7 +6,9 @@
       "@factoriotools/engine": ["../../packages/engine/src/index.ts"],
       "@factoriotools/engine/*": ["../../packages/engine/src/*"],
       "@factoriotools/renderer": ["../../packages/renderer/src/index.ts"],
-      "@factoriotools/renderer/*": ["../../packages/renderer/src/*"]
+      "@factoriotools/renderer/*": ["../../packages/renderer/src/*"],
+      "@factoriotools/sim": ["../../packages/sim/src/index.ts"],
+      "@factoriotools/sim/*": ["../../packages/sim/src/*"]
     }
   },
   "include": ["src"]

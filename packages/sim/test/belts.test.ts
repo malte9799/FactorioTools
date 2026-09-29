@@ -416,6 +416,31 @@ test("a closed loop keeps every item and keeps moving", () => {
   assertInvariants(s, net);
 });
 
+/* ---------- inserter hooks ---------- */
+
+test("taking from a belt tile removes the front-most accepted item on that tile only", () => {
+  const { net, sim: s } = sim(row(0, 5, 0, E));
+  s.setInput(inputAt(net, 0, 0), FULL(), FULL("copper-plate"));
+  s.setOutput(outputAt(net, 5, 0), "blocked");
+  s.step(600);
+  const tile = net.nodeAt(3, 0)!;
+  const before = s.tileLoad(tile, 1).count;
+  assert.equal(s.takeFromTile(tile, (i) => i === "copper-plate"), "copper-plate");
+  assert.equal(s.tileLoad(tile, 1).count, before - 1);
+  assert.equal(s.tileLoad(tile, 0).count, 4, "the iron lane is untouched");
+  assert.equal(s.takeFromTile(tile, (i) => i === "stone"), undefined);
+});
+
+test("dropping on a belt tile needs a gap, and the item then travels on", () => {
+  const { net, sim: s } = sim(row(0, 5, 0, E));
+  const tile = net.nodeAt(2, 0)!;
+  assert.equal(s.dropOnTile(tile, 1, "iron-gear-wheel"), true);
+  assert.equal(s.dropOnTile(tile, 1, "iron-gear-wheel"), false, "no room right on top of the first");
+  s.resetCounters();
+  s.step(300);
+  assert.equal(s.portRate(outputAt(net, 5, 0)) * 300 / 60, 1);
+});
+
 /* ---------- real blueprints ---------- */
 
 test("every example blueprint builds a network and simulates without breaking an invariant", () => {

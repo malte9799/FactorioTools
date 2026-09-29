@@ -11,7 +11,8 @@
   },
   "dependencies": {
     "@factoriotools/engine": "*",
-    "@factoriotools/renderer": "*"
+    "@factoriotools/renderer": "*",
+    "@factoriotools/sim": "*"
   },
   "devDependencies": {
     "@types/node": "^22.10.0",

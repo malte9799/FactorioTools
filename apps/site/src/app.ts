@@ -26,6 +26,14 @@ async function route() {
     case "#/blueprint-viewer":
       unmountCurrent = mountBlueprintViewer(toolRoot);
       break;
+    // Design playground for the on-map rate calculator; loaded on demand so
+    // the main bundle doesn't carry the simulation.
+    case "#/overlay-lab": {
+      const { mountOverlayLab } = await import("./tools/overlay-lab/index.js");
+      if (token !== routeToken) return;
+      unmountCurrent = mountOverlayLab(toolRoot);
+      break;
+    }
     // Dev aid, not a product route — reachable by URL but deliberately not
     // in ROUTES/the nav bar (see mountLayerDebug's own doc comment). Loaded
     // on demand so it stays out of the main bundle, which every visitor pays

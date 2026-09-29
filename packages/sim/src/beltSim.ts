@@ -1,4 +1,4 @@
-import { lanePoint, type BeltLine, type BeltNetwork, type Lane, type LaneGeometry, type Port, type Splitter } from "./network.js";
+import { lanePoint, type BeltLine, type BeltNetwork, type BeltNode, type Lane, type LaneGeometry, type Port, type Splitter } from "./network.js";
 import { ITEM_SPACING as SP, TICKS_PER_SECOND } from "./units.js";
 
 /** What an input port pushes onto one lane: an item, either as fast as the
@@ -402,6 +402,61 @@ export class BeltSim {
     memo.tick = this.tick;
     memo.assign = assign;
     return assign;
+  }
+
+  /* ---------- belt tiles, for inserters and overlays ---------- */
+
+  /** Index of the segment that lies on `node`'s own tile (never the tunnel
+   *  in front of an underground exit). */
+  segmentOf(node: BeltNode, lane: Lane): number {
+    return node.line!.lanes[lane].segments.findIndex((s) => s.node === node && s.kind !== "tunnel");
+  }
+
+  /** Removes and returns the front-most item on either lane of one belt
+   *  tile that `accept` agrees to — an inserter's pickup. */
+  takeFromTile(node: BeltNode, accept: (item: string) => boolean): string | undefined {
+    for (const laneIdx of [0, 1] as const) {
+      const lane = this.lane(node.line!, laneIdx);
+      const seg = node.line!.lanes[laneIdx].segments[this.segmentOf(node, laneIdx)]!;
+      for (let i = 0; i < lane.pos.length; i++) {
+        const p = lane.pos[i]!;
+        if (p >= seg.start + seg.length) continue;
+        if (p < seg.start) break;
+        const name = this.items[lane.item[i]!]!;
+        if (!accept(name)) continue;
+        lane.pos.splice(i, 1);
+        lane.item.splice(i, 1);
+        return name;
+      }
+    }
+    return undefined;
+  }
+
+  /** Puts an item down in the middle of one lane of a belt tile, if there is
+   *  room — an inserter's drop. */
+  dropOnTile(node: BeltNode, laneIdx: Lane, item: string): boolean {
+    const lane = this.lane(node.line!, laneIdx);
+    const seg = node.line!.lanes[laneIdx].segments[this.segmentOf(node, laneIdx)]!;
+    const p = seg.start + seg.length / 2;
+    if (!lane.hasRoomAt(p)) return false;
+    lane.insert(p, this.itemId(item));
+    return true;
+  }
+
+  /** Items on one lane of a belt tile right now, and how many fit. */
+  tileLoad(node: BeltNode, laneIdx: Lane): { count: number; capacity: number } {
+    const lane = this.lane(node.line!, laneIdx);
+    const seg = node.line!.lanes[laneIdx].segments[this.segmentOf(node, laneIdx)]!;
+    let count = 0;
+    for (const p of lane.pos) if (p >= seg.start && p < seg.start + seg.length) count++;
+    return { count, capacity: seg.length / SP };
+  }
+
+  /** Cumulative midpoint crossings per segment of a lane since the last
+   *  reset. A caller sampling this over time gets a rolling rate without
+   *  resetting anyone else's window. */
+  laneCrossings(line: BeltLine, laneIdx: Lane): Readonly<Uint32Array> {
+    return this.lane(line, laneIdx).crossings;
   }
 
   /* ---------- reading results ---------- */
