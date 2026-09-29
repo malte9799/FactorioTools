@@ -67,14 +67,16 @@ export function laneMax(node: BeltNode): number {
 }
 
 export function laneState(f: LabFactory, node: BeltNode, lane: Lane, starvedNodes: Set<BeltNode>): { state: LaneState; load: number; rate: number } {
-  const { count, capacity } = f.belts.tileLoad(node, lane);
+  const { count, capacity, items } = f.belts.tileLoad(node, lane);
   const load = count / capacity;
   const rate = f.tileRate(node, lane);
+  // Compare slots moved against slots that fit, so stacked belts read the same.
+  const slotRate = rate / Math.max(1, count ? items / count : 1);
   const max = laneMax(node);
   if (starvedNodes.has(node) && load < 0.35) return { state: "short", load, rate };
   if (load < 0.02 && rate < 0.05) return { state: "empty", load, rate };
-  if (load >= 0.75 && rate < 0.3 * max) return { state: "held", load, rate };
-  return { state: "flow", load: Math.max(load, rate / max), rate };
+  if (load >= 0.75 && slotRate < 0.3 * max) return { state: "held", load, rate };
+  return { state: "flow", load: Math.max(load, slotRate / max), rate };
 }
 
 export function drawOverlay(fr: OverlayFrame): void {
@@ -177,24 +179,28 @@ export function drawOverlay(fr: OverlayFrame): void {
   /* ---------- items ---------- */
   if (L.items && ppt >= 7) {
     const size = 0.3;
-    f.belts.forEachItem((x, y, item, hidden) => {
+    f.belts.forEachItem((x, y, item, hidden, count) => {
       if (hidden || !visible(x, y, 1)) return;
-      if (S.itemStyle === "icons") {
-        const icon = fr.icons.get(item);
-        if (icon) {
-          ctx.drawImage(icon.sheet, icon.cell.x, icon.cell.y, icon.cell.w, icon.cell.h, x - size / 2, y - size / 2, size, size);
-          return;
+      // A stacked slot draws as a small pile, each copy nudged up.
+      for (let k = 0; k < count; k++) {
+        const yk = y - k * 0.05;
+        if (S.itemStyle === "icons") {
+          const icon = fr.icons.get(item);
+          if (icon) {
+            ctx.drawImage(icon.sheet, icon.cell.x, icon.cell.y, icon.cell.w, icon.cell.h, x - size / 2, yk - size / 2, size, size);
+            continue;
+          }
         }
+        ctx.fillStyle = itemColor(item);
+        ctx.beginPath();
+        ctx.arc(x, yk, 0.08, 0, Math.PI * 2);
+        ctx.fill();
       }
-      ctx.fillStyle = itemColor(item);
-      ctx.beginPath();
-      ctx.arc(x, y, 0.08, 0, Math.PI * 2);
-      ctx.fill();
     });
   }
 
   /* ---------- inserter activity ---------- */
-  if (L.arms && ppt >= 7) {
+  if (L.items && ppt >= 7) {
     for (const ins of f.inserters) {
       if (!visible(ins.entity.x, ins.entity.y)) continue;
       const busyCol = ins.busy > 0.9 ? pal.warn : pal.ok;
@@ -305,7 +311,7 @@ export function drawOverlay(fr: OverlayFrame): void {
   }
 
   /* ---------- issue trace ---------- */
-  if (L.issues && fr.selected) {
+  if (fr.selected) {
     const issue = fr.selected;
     const col = toneColor(pal, issue.tone);
     for (const m of issue.machines) {

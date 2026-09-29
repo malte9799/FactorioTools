@@ -118,11 +118,12 @@
 .lab-port select { font-size: 12px; max-width: 150px; }
 
 /* hover card */
-.lab-card { width: 280px; }
+.lab-card { width: 320px; }
 .lab-card .gui-body { padding: 9px 11px 10px; }
 .lab-card-title { font: 600 15px/1.2 var(--display); color: var(--gold-strong); margin-bottom: 6px; }
 .lab-card-row { display: flex; justify-content: space-between; gap: 12px; font: 12.5px/1.6 var(--mono); font-variant-numeric: tabular-nums; }
-.lab-card-row span:first-child { color: var(--text-dim); }
+.lab-card-row span:first-child { color: var(--text-dim); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.lab-card-row span:last-child { white-space: nowrap; text-align: right; }
 .lab-card-bar { height: 5px; background: var(--slot); margin: 2px 0 6px; }
 .lab-card-bar i { display: block; height: 100%; }
 .lab-card-why { margin-top: 6px; font-size: 12.5px; line-height: 1.4; color: var(--text-dim); }
@@ -140,3 +141,5 @@
 @media (max-width: 640px) {
   .lab-window { max-width: calc(100vw - 24px); }
 }
+
+.lab-layer-heading { margin: 10px 8px 2px; font: 600 11px/1.2 var(--mono); letter-spacing: 0.1em; text-transform: uppercase; color: var(--gold); }

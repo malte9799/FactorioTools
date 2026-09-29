@@ -7,7 +7,18 @@ import { ITEM_SPACING as SP, TICKS_PER_SECOND } from "./units.js";
 export interface LaneFeed {
   item: string;
   rate: "full" | number;
+  /** Items per belt slot (Space Age belt stacking, 1–4). Default 1. A rate
+   *  counts items, not slots. */
+  stack?: number;
 }
+
+/** A belt slot holds one item kind and a stack of 1–4 of it (Space Age belt
+ *  stacking). Packed into one number so every hand-over carries the stack
+ *  without knowing about it. */
+const pack = (id: number, count: number) => id * 8 + count;
+const idOf = (v: number) => v >> 3;
+const countOf = (v: number) => v & 7;
+export const MAX_BELT_STACK = 4;
 
 /** What an output port does with items reaching it: take everything (the
  *  default — a blueprint fragment's belts usually continue off the edge),
@@ -17,6 +28,8 @@ export type OutputMode = "sink" | "blocked" | { rate: number };
 /** Rate-limit token buckets accumulate 1/60ths; compare with a tolerance
  *  so 15 additions of 1/15 count as a whole item. */
 const EPS = 1e-9;
+
+const stackOf = (feed: LaneFeed) => Math.max(1, Math.min(MAX_BELT_STACK, Math.round(feed.stack ?? 1)));
 
 interface SplitDecision {
   tick: number;
@@ -30,7 +43,8 @@ interface SideloadPoint {
   reserved: boolean;
 }
 
-/** Items on one lane, front (largest position) first. */
+/** Items on one lane, front (largest position) first. `item` holds packed
+ *  (item id, stack count) slots. */
 class LaneState {
   pos: number[] = [];
   item: number[] = [];
@@ -67,20 +81,20 @@ class LaneState {
     const old = this.pos[i]!;
     for (let k = this.segAt(old); k < this.mids.length && this.starts[k]! <= p; k++) {
       const m = this.mids[k]!;
-      if (old < m && p >= m) this.crossings[k]!++;
+      if (old < m && p >= m) this.crossings[k]! += countOf(this.item[i]!);
     }
     this.pos[i] = p;
   }
 
   /** Inserts keeping front-first order; counts the item for its segment if it
    *  lands exactly on that segment's midpoint (a side-load join). */
-  insert(p: number, item: number) {
+  insert(p: number, slot: number) {
     let i = 0;
     while (i < this.pos.length && this.pos[i]! > p) i++;
     this.pos.splice(i, 0, p);
-    this.item.splice(i, 0, item);
+    this.item.splice(i, 0, slot);
     const k = this.segAt(p);
-    if (this.mids[k] === p) this.crossings[k]!++;
+    if (this.mids[k] === p) this.crossings[k]! += countOf(slot);
   }
 
   hasRoomAt(p: number): boolean {
@@ -262,12 +276,13 @@ export class BeltSim {
         if (feed.rate === "full") {
           // An endless compressed belt upstream: the next item sits exactly
           // one spacing behind the rearmost as soon as that fits on the lane.
-          if (rear >= SP) this.pushRear(dst, n ? rear - SP : 0, feed.item, line.start.port.id);
+          if (rear >= SP) this.pushRear(dst, n ? rear - SP : 0, feed, line.start.port.id);
         } else {
-          cfg.tokens[lane] = Math.min(1, cfg.tokens[lane] + feed.rate / TICKS_PER_SECOND);
-          if (cfg.tokens[lane] >= 1 - EPS && rear >= SP) {
-            cfg.tokens[lane] -= 1;
-            this.pushRear(dst, 0, feed.item, line.start.port.id);
+          const stack = stackOf(feed);
+          cfg.tokens[lane] = Math.min(stack, cfg.tokens[lane] + feed.rate / TICKS_PER_SECOND);
+          if (cfg.tokens[lane] >= stack - EPS && rear >= SP) {
+            cfg.tokens[lane] -= stack;
+            this.pushRear(dst, 0, feed, line.start.port.id);
           }
         }
       }
@@ -277,10 +292,11 @@ export class BeltSim {
     this.window++;
   }
 
-  private pushRear(dst: LaneState, p: number, item: string, portId: string) {
+  private pushRear(dst: LaneState, p: number, feed: LaneFeed, portId: string) {
+    const stack = stackOf(feed);
     dst.pos.push(p);
-    dst.item.push(this.itemId(item));
-    this.portCounts.set(portId, this.portCounts.get(portId)! + 1);
+    dst.item.push(pack(this.itemId(feed.item), stack));
+    this.portCounts.set(portId, this.portCounts.get(portId)! + stack);
   }
 
   /** Moves every item on one lane, front first. An item reaching the end is
@@ -326,7 +342,7 @@ export class BeltSim {
           out.tokens -= 1;
           take = true;
         }
-        if (take) this.portCounts.set(end.port.id, this.portCounts.get(end.port.id)! + 1);
+        if (take) this.portCounts.set(end.port.id, this.portCounts.get(end.port.id)! + countOf(item));
         return take;
       }
       case "line": {
@@ -383,7 +399,7 @@ export class BeltSim {
       let outOrder: Lane[];
       if (filterId !== undefined) {
         const prio = side(s.outputPriority);
-        outOrder = [item === filterId ? prio : ((1 - prio) as Lane)];
+        outOrder = [idOf(item) === filterId ? prio : ((1 - prio) as Lane)];
       } else if (s.outputPriority) {
         const prio = side(s.outputPriority);
         outOrder = [prio, (1 - prio) as Lane];
@@ -412,44 +428,61 @@ export class BeltSim {
     return node.line!.lanes[lane].segments.findIndex((s) => s.node === node && s.kind !== "tunnel");
   }
 
-  /** Removes and returns the front-most item on either lane of one belt
-   *  tile that `accept` agrees to — an inserter's pickup. */
-  takeFromTile(node: BeltNode, accept: (item: string) => boolean): string | undefined {
+  /** Takes up to `max` items of one kind from one belt tile (either lane,
+   *  front-most slot first, splitting a stack if needed) that `accept`
+   *  agrees to — an inserter's pickup. */
+  takeFromTile(node: BeltNode, accept: (item: string) => boolean, max = 1): { item: string; count: number } | undefined {
+    let taken: string | undefined;
+    let count = 0;
     for (const laneIdx of [0, 1] as const) {
       const lane = this.lane(node.line!, laneIdx);
       const seg = node.line!.lanes[laneIdx].segments[this.segmentOf(node, laneIdx)]!;
-      for (let i = 0; i < lane.pos.length; i++) {
+      for (let i = 0; i < lane.pos.length && count < max; i++) {
         const p = lane.pos[i]!;
         if (p >= seg.start + seg.length) continue;
         if (p < seg.start) break;
-        const name = this.items[lane.item[i]!]!;
-        if (!accept(name)) continue;
-        lane.pos.splice(i, 1);
-        lane.item.splice(i, 1);
-        return name;
+        const slot = lane.item[i]!;
+        const name = this.items[idOf(slot)]!;
+        if (taken ? name !== taken : !accept(name)) continue;
+        taken = name;
+        const n = Math.min(countOf(slot), max - count);
+        count += n;
+        if (n < countOf(slot)) lane.item[i] = slot - n;
+        else {
+          lane.pos.splice(i, 1);
+          lane.item.splice(i, 1);
+          i--;
+        }
       }
     }
-    return undefined;
+    return taken ? { item: taken, count } : undefined;
   }
 
-  /** Puts an item down in the middle of one lane of a belt tile, if there is
-   *  room — an inserter's drop. */
-  dropOnTile(node: BeltNode, laneIdx: Lane, item: string): boolean {
+  /** Puts a stack of up to four items down in the middle of one lane of a
+   *  belt tile, if there is room — an inserter's drop. */
+  dropOnTile(node: BeltNode, laneIdx: Lane, item: string, count = 1): boolean {
     const lane = this.lane(node.line!, laneIdx);
     const seg = node.line!.lanes[laneIdx].segments[this.segmentOf(node, laneIdx)]!;
     const p = seg.start + seg.length / 2;
     if (!lane.hasRoomAt(p)) return false;
-    lane.insert(p, this.itemId(item));
+    lane.insert(p, pack(this.itemId(item), Math.max(1, Math.min(MAX_BELT_STACK, count))));
     return true;
   }
 
-  /** Items on one lane of a belt tile right now, and how many fit. */
-  tileLoad(node: BeltNode, laneIdx: Lane): { count: number; capacity: number } {
+  /** Slots used on one lane of a belt tile, how many fit, and how many items
+   *  those slots hold. */
+  tileLoad(node: BeltNode, laneIdx: Lane): { count: number; capacity: number; items: number } {
     const lane = this.lane(node.line!, laneIdx);
     const seg = node.line!.lanes[laneIdx].segments[this.segmentOf(node, laneIdx)]!;
     let count = 0;
-    for (const p of lane.pos) if (p >= seg.start && p < seg.start + seg.length) count++;
-    return { count, capacity: seg.length / SP };
+    let items = 0;
+    lane.pos.forEach((p, i) => {
+      if (p >= seg.start && p < seg.start + seg.length) {
+        count++;
+        items += countOf(lane.item[i]!);
+      }
+    });
+    return { count, capacity: seg.length / SP, items };
   }
 
   /** Cumulative midpoint crossings per segment of a lane since the last
@@ -482,18 +515,18 @@ export class BeltSim {
     return (this.portCounts.get(portId)! * TICKS_PER_SECOND) / Math.max(1, this.window);
   }
 
-  /** Current items on a lane, front first. */
-  laneItems(line: BeltLine, lane: Lane): { pos: number; item: string }[] {
+  /** Current slots on a lane, front first. */
+  laneItems(line: BeltLine, lane: Lane): { pos: number; item: string; count: number }[] {
     const l = this.lane(line, lane);
-    return l.pos.map((p, i) => ({ pos: p, item: this.items[l.item[i]!]! }));
+    return l.pos.map((p, i) => ({ pos: p, item: this.items[idOf(l.item[i]!)]!, count: countOf(l.item[i]!) }));
   }
 
-  forEachItem(cb: (x: number, y: number, item: string, hidden: boolean) => void) {
+  forEachItem(cb: (x: number, y: number, item: string, hidden: boolean, count: number) => void) {
     for (const [line, [a, b]] of this.lanes) {
       for (const [l, geo] of [[a, line.lanes[0]], [b, line.lanes[1]]] as const) {
         for (let i = 0; i < l.pos.length; i++) {
           const pt = lanePoint(geo, l.pos[i]!);
-          cb(pt.x, pt.y, this.items[l.item[i]!]!, pt.hidden);
+          cb(pt.x, pt.y, this.items[idOf(l.item[i]!)]!, pt.hidden, countOf(l.item[i]!));
         }
       }
     }

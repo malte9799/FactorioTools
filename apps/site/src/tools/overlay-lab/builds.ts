@@ -2,8 +2,8 @@
  *  build made of real entities: a fast belt carrying iron (left lane) and
  *  copper (right lane) is split between a bus and a feed belt for four gear
  *  assemblers, each fed by one fast inserter, with the gears leaving under
- *  two pipes. It has one starved machine and three arm-bound ones on
- *  purpose. */
+ *  two pipes. The splitter sends half the iron to the bus, so the machines
+ *  at the end of the feed belt go short on purpose. */
 import { decodeBlueprintString, normaliseEntities, type PlacedEntity } from "@factoriotools/engine";
 import type { LaneFeed } from "@factoriotools/sim";
 
@@ -15,7 +15,7 @@ export interface LabBuild {
   feeds?: { x: number; y: number; left: LaneFeed | null; right: LaneFeed | null }[];
 }
 
-const N = 0, E = 4, W = 12;
+const N = 0, E = 4;
 
 function gearBuild(): PlacedEntity[] {
   const out: PlacedEntity[] = [];
@@ -29,7 +29,7 @@ function gearBuild(): PlacedEntity[] {
   for (let x = 7; x <= 25; x++) belt(x, 3);
   for (let x = 9; x <= 25; x++) belt(x, 9);
   add("fast-underground-belt", 26.5, 9.5, E, { undergroundType: "input" });
-  add("fast-underground-belt", 29.5, 9.5, W, { undergroundType: "output" });
+  add("fast-underground-belt", 29.5, 9.5, E, { undergroundType: "output" });
   belt(30, 9);
   belt(31, 9);
   for (let i = 0; i < 4; i++) {
@@ -56,15 +56,24 @@ async function fromExamples(label: string): Promise<PlacedEntity[]> {
 export const BUILDS: LabBuild[] = [
   {
     label: "Gear test build",
-    note: "One starved machine, three limited by their arm. Try splitter priority.",
+    note: "The last machine starves, the one before it runs half fed. Try the research switch.",
     entities: async () => gearBuild(),
     feeds: [{ x: 0, y: 3, left: { item: "iron-plate", rate: "full" }, right: { item: "copper-plate", rate: "full" } }],
+  },
+  {
+    label: "Red science 240/s",
+    note: "Stacked turbo belts, stack inserters, legendary machines and beacons.",
+    entities: async () => entitiesFromString(RED_SCIENCE),
   },
   { label: "Green Circuit", note: "Direct insertion from cable to circuit machines.", entities: () => fromExamples("Green Circuit") },
   { label: "Red Circuits", note: "Small and mostly healthy.", entities: () => fromExamples("Red Circuits") },
   { label: "Blue Circuits", note: "A mix of starved, arm-bound and full outputs.", entities: () => fromExamples("Blue Circuits") },
   { label: "Legendary Batteries", note: "Bulk inserters off a single belt.", entities: () => fromExamples("Legendary Batteries") },
 ];
+
+/** A Space Age red science build that fills a stacked turbo belt in game. */
+const RED_SCIENCE =
+  "0eNrtW9lu4zgQ/Bc+SwPxJv0rgRHINpER1jpWR3aDwP++tJ1JvI5sd5PzwoGAID4kd5PNruoiRb6TzX5yXV81I1m9k2rbNgNZPb2ToXppyv3xu6asHVmRjSv9RZKRv6dyX41v/qu9e3HNruzfyCEjVbNz/5IVPWQzPy6HwdWbfdW85HW5/Vk1LucPTbHDOiOuGauxcudGnT68PTdTvXG995X9sj9O/abNx75shq7tx3zj9qO337WD/7FvtW/JsW3yh8yId5cza39I72lX9W57voOyY8uvPDCsB431wLEeFNaD+PQwjOX2r7xqBteP/sp32/bLtrm2LWZMyyDTFmJaYeNi/t/2GZM6wiQs1CZ7kPBXHhi9DvgcIjLivVbdyew0tnV5tJAP28o1W5d3PvCftzx//b5p+9pj0KNpdPUZPtXuApJd3+4m35lXf3te+/f7+5g8W/FGmueqefUdb/2Fk9WvTz7VTolAVsUxOrNX6M0r7OYVflgf/N/3gNvsGz3dwYu6E+IbURo653a/Kzz0ZnjoRXhudJUW2PS9gJwGpS+lQXhW18bNnG0Gt22wtq9JdPIFpH/pW/8KwPY5OOPbCWHtNHbTSOa8wImUMWwP5MNEZuJPSWSFZMnLXBMLS+JZkmp45tLrWD+o0/Sr5tVuV0117vb+/r7a5l27d/c9yJujOefJIgnwEoVyXhKwIsKmuGGToooSTxnLjEUxL7tk3qq5QbwMT++Xw8Rh9M4EioLTHjaJStEi6b6qIFFDIeTHdJCoKSCSgJkoaFFg1tuIKQtdijG+GPMCxTNJY4/TcKlnlglxSHaxEKlnQKs9nIdMgIyFsB0XMTX+o/2PhARHlT2jk4aeiikfRsECqqNGDTjx5gbDmIkPG2pFy4iU+yqKEGVmJISrBA1RZkZAuEpETXo+2v8w6wUPV2ZGLrUTXzsFagaYOPZkhDJjS3YFZJcKUmYMxHY6SJlxENuZqBoPW+IRuLJHU4aeLKLKRwEKqKThy7J3wjvniUXlB3CdQnIUN6edIAIDBm2S7mvQFgIN2kIgVYgG1AbCilLHgPij/Y+zPmJDwYePpUqjqrS0GJ5JG3uqCNeAWi3Zhc8uRUM0oFagDVMsRANqDWE7FfUETsMWkxSu7MmkoSejyoeABVRFjRpwnUJpFGOmPWwGlaIs6b7aIGXGIVyliyBlxiBcpWkUtIC7BTSLUGZ8qZ342qlRM8C0sadFhDIrluwKyC4ZpMwKENupIGVGQWwX9QROwxaTNKrsKZs09GxM+VCwB9GmiBk1BVw9MBTDmGkPm2GoFE16A7XhIcpMaQhXGRGizBRok7uJmvQo4G4Bo8KVmdJL7cTXToOaASaOPROuzNRyeCEku2yIMlOgwwu2CH9KplCHFywN0YBKQnjVRj2BU7DFJMtRBTbp7fFWhJ8KOfV8zibqhFdK8Vtn5B+foMcWPVGTyUzSTK6zp+NL5hEm1+uz02PXPw+bZ+TV9cOp81IxK6yVRijt/x0O/wEVUs8+";
 
 export function entitiesFromString(text: string): PlacedEntity[] {
   const env = decodeBlueprintString(text.trim());

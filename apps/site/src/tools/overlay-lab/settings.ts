@@ -5,13 +5,15 @@
 export interface LabSettings {
   layers: {
     dim: boolean;
-    items: boolean;
     lanes: boolean;
     rings: boolean;
-    arms: boolean;
-    ports: boolean;
-    issues: boolean;
     hover: boolean;
+    /** Items on belts and in inserter hands, plus how busy each arm is. */
+    items: boolean;
+    ports: boolean;
+    /** Numbered markers on every problem; a picked issue's trace always
+     *  draws. */
+    issues: boolean;
   };
   style: {
     dimAmount: number;
@@ -53,14 +55,14 @@ export const PALETTES: Record<PaletteName, Palette> = {
 };
 
 export const DEFAULTS: LabSettings = {
-  layers: { dim: true, items: true, lanes: true, rings: true, arms: true, ports: true, issues: true, hover: true },
+  layers: { dim: true, lanes: true, rings: true, hover: true, items: false, ports: false, issues: false },
   style: {
     dimAmount: 0.45,
     palette: "factorio",
-    laneStyle: "strips",
+    laneStyle: "edges",
     laneWidth: 0.14,
     laneHideIdle: false,
-    ringStyle: "ring",
+    ringStyle: "fill",
     ringLabel: "always",
     ringThickness: 0.14,
     armStyle: "carry",
@@ -73,7 +75,8 @@ export const DEFAULTS: LabSettings = {
   },
 };
 
-const KEY = "overlay-lab:settings";
+// v2: new defaults (the chosen look); older saved settings are ignored.
+const KEY = "overlay-lab:settings:v2";
 
 export function loadSettings(): LabSettings {
   try {

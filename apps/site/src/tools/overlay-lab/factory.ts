@@ -9,6 +9,36 @@ import { BeltSim, beltSpecResolver, buildBeltNetwork, cardOf, DX, DY, laneSide, 
 
 const EMA = 1 / 300; // ~5 s at 60 ticks/s
 
+/** What research the lab assumes. Hand sizes and belt stacking both come
+ *  from research the blueprint can't record. */
+export interface Research {
+  hands: "none" | "full";
+  /** Items per belt slot a stack inserter builds (Space Age belt stacking). */
+  beltStack: number;
+}
+
+export const FULL_RESEARCH: Research = { hands: "full", beltStack: 4 };
+
+/** Ticks for one pickup-to-drop-and-back swing at normal quality, from the
+ *  dataset's chest-to-chest rates for a one-item hand. Fast, bulk and stack
+ *  inserters share one arm speed. */
+const SWING_TICKS: Record<string, number> = {
+  "burner-inserter": 76,
+  inserter: 70,
+  "long-handed-inserter": 48,
+  "fast-inserter": 24,
+  "bulk-inserter": 24,
+  "stack-inserter": 24,
+};
+
+/** Approximate hand sizes without and with full inserter capacity research. */
+function handSizeFor(name: string, research: Research): number {
+  const full = research.hands === "full";
+  if (name.includes("stack")) return full ? 16 : 4;
+  if (name.includes("bulk")) return full ? 12 : 2;
+  return full ? 3 : 1;
+}
+
 export interface MachineSim {
   entity: PlacedEntity;
   recipe: string;
@@ -45,6 +75,8 @@ export interface InserterSim {
   maxRate: number;
   /** Items carried per swing. */
   handSize: number;
+  /** Stack inserters put stacks on belts; everything else one item a slot. */
+  stacksOnBelt: boolean;
   phase: "home" | "out" | "drop" | "back";
   t: number;
   /** What's in the hand (one item name) and how many. */
@@ -105,7 +137,7 @@ export class LabFactory {
   readonly knownItems: string[];
   tick = 0;
 
-  constructor(readonly data: GameData, readonly entities: PlacedEntity[]) {
+  constructor(readonly data: GameData, readonly entities: PlacedEntity[], readonly research: Research = FULL_RESEARCH) {
     this.net = buildBeltNetwork(entities, beltSpecResolver(data));
     this.belts = new BeltSim(this.net);
     this.meter = new LaneMeter(this.belts, this.net.lines);
@@ -161,25 +193,28 @@ export class LabFactory {
         if (m) return { kind: "machine", machine: m };
         const node = this.net.nodeAt(Math.floor(p.x), Math.floor(p.y));
         if (node?.line) {
-          // An inserter drops on the lane farther from itself.
-          const away = (isDrop ? facing : ((facing + 2) % 4)) as Card;
+          // An inserter drops on the lane farther from itself. It drops
+          // away from its facing, and picks up toward it.
+          const away = (isDrop ? (facing + 2) % 4 : facing) as Card;
           const lane: Lane = laneSide(node.dir, 0) === away ? 0 : 1;
           return { kind: "belt", node, lane };
         }
         return { kind: "other" };
       };
-      // Rough hand sizes: the dataset's throughput already includes them,
-      // so the swing time is hand / throughput.
-      const handSize = e.overrideStackSize ?? (e.name.includes("stack") ? 8 : e.name.includes("bulk") ? 4 : 1);
+      const handSize = e.overrideStackSize ?? handSizeFor(e.name, research);
+      // Quality speeds the arm up the same way it speeds up machines.
+      const swing = (SWING_TICKS[e.name] ?? Math.round(60 / proto.throughput)) / (data.qualityMachineSpeed[e.quality] ?? 1);
+      const tripTicks = Math.max(4, Math.round(swing));
       const ins: InserterSim = {
         entity: e,
         pickup: target(pickupAt, false),
         drop: target(dropAt, true),
         pickupAt,
         dropAt,
-        tripTicks: Math.max(4, Math.round((60 * handSize) / proto.throughput)),
-        maxRate: proto.throughput,
+        tripTicks,
+        maxRate: (60 * handSize) / tripTicks,
         handSize,
+        stacksOnBelt: e.name.includes("stack"),
         phase: "home",
         t: 0,
         handCount: 0,
@@ -207,6 +242,9 @@ export class LabFactory {
    *  right — skipping anything the blueprint makes itself. */
   guessInputs() {
     const madeHere = new Set(this.machines.flatMap((m) => m.products.map((p) => p.name)));
+    // Builds with stack inserters are Space Age builds; assume their input
+    // belts arrive stacked too.
+    const stack = this.inserters.some((i) => i.stacksOnBelt) ? this.research.beltStack : 1;
     for (const port of this.net.ports) {
       // The synthetic input behind an unfed splitter half starts empty:
       // nothing is placed there in the blueprint.
@@ -229,7 +267,7 @@ export class LabFactory {
       };
       walk(port.line);
       const ranked = [...wanted.entries()].sort((a, b) => b[1] - a[1]).map(([n]) => n);
-      const feed = (name: string | undefined): LaneFeed | null => (name ? { item: name, rate: "full" } : null);
+      const feed = (name: string | undefined): LaneFeed | null => (name ? { item: name, rate: "full", stack } : null);
       this.setInput(port.id, feed(ranked[0]), feed(ranked[1] ?? ranked[0]));
     }
   }
@@ -341,10 +379,10 @@ export class LabFactory {
           }
         }
       } else if (p.kind === "belt") {
-        got = this.belts.takeFromTile(p.node, (item) => this.wants(ins, item));
-        if (got) {
-          count = 1;
-          while (count < ins.handSize && this.belts.takeFromTile(p.node, (item) => item === got && this.wants(ins, item))) count++;
+        const took = this.belts.takeFromTile(p.node, (item) => this.wants(ins, item), ins.handSize);
+        if (took) {
+          got = took.item;
+          count = took.count;
         }
       }
       if (got) {
@@ -362,10 +400,12 @@ export class LabFactory {
         delivered = ins.handCount;
         ins.handCount = 0;
       } else if (d.kind === "belt") {
-        // One item per tick, as space opens up under the hand.
-        if (this.belts.dropOnTile(d.node, d.lane, ins.hand!)) {
-          ins.handCount--;
-          delivered = 1;
+        // One slot per tick as space opens up under the hand: a whole stack
+        // for a stack inserter, a single item for anything else.
+        const n = ins.stacksOnBelt ? Math.min(ins.handCount, this.research.beltStack) : 1;
+        if (this.belts.dropOnTile(d.node, d.lane, ins.hand!, n)) {
+          ins.handCount -= n;
+          delivered = n;
         }
       } else {
         delivered = ins.handCount;

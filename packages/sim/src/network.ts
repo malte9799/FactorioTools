@@ -12,8 +12,9 @@ export interface BeltNode {
   name: string;
   x: number;
   y: number;
-  /** Direction items travel, already corrected for an underground exit
-   *  (whose blueprint direction points back at its entrance). */
+  /** Direction items travel. Both ends of an underground pair store the
+   *  travel direction in a 2.0 blueprint (checked against every example
+   *  blueprint: 6,400 of 6,735 undergrounds pair that way, 30 the other). */
   dir: Card;
   kind: "belt" | "undergroundIn" | "undergroundOut" | "splitter";
   speed: number;
@@ -148,7 +149,7 @@ export function buildBeltNetwork(entities: PlacedEntity[], resolve: BeltSpecReso
         name: e.name,
         x: Math.floor(e.x),
         y: Math.floor(e.y),
-        dir: isOut ? opposite(facing) : facing,
+        dir: facing,
         kind: isOut ? "undergroundOut" : "undergroundIn",
         speed: spec.speed,
       });

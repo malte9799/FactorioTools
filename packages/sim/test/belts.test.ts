@@ -36,10 +36,9 @@ function col(x: number, y0: number, y1: number, direction: number, name = YELLOW
   for (let y = Math.min(y0, y1); y <= Math.max(y0, y1); y++) out.push(belt(x, y, direction, name));
   return out;
 }
-/** `travel` is the way items move. A 2.0 blueprint stores an exit's
- *  direction pointing back at its entrance, so the helper flips it. */
+/** `travel` is the way items move; a 2.0 blueprint stores it on both ends. */
 function underground(x: number, y: number, travel: number, type: "input" | "output", name = "underground-belt"): PlacedEntity {
-  return { ...belt(x, y, type === "output" ? (travel + 8) % 16 : travel, name), undergroundType: type };
+  return { ...belt(x, y, travel, name), undergroundType: type };
 }
 /** An east-facing splitter whose left (north) half is at tile (x, y). */
 function splitterEast(x: number, y: number, opts: { input?: BpSplitterSide; output?: BpSplitterSide; filter?: string } = {}): PlacedEntity {
@@ -425,7 +424,7 @@ test("taking from a belt tile removes the front-most accepted item on that tile 
   s.step(600);
   const tile = net.nodeAt(3, 0)!;
   const before = s.tileLoad(tile, 1).count;
-  assert.equal(s.takeFromTile(tile, (i) => i === "copper-plate"), "copper-plate");
+  assert.deepEqual(s.takeFromTile(tile, (i) => i === "copper-plate"), { item: "copper-plate", count: 1 });
   assert.equal(s.tileLoad(tile, 1).count, before - 1);
   assert.equal(s.tileLoad(tile, 0).count, 4, "the iron lane is untouched");
   assert.equal(s.takeFromTile(tile, (i) => i === "stone"), undefined);
@@ -439,6 +438,55 @@ test("dropping on a belt tile needs a gap, and the item then travels on", () => 
   s.resetCounters();
   s.step(300);
   assert.equal(s.portRate(outputAt(net, 5, 0)) * 300 / 60, 1);
+});
+
+/* ---------- belt stacking ---------- */
+
+test("stacked turbo belts carry four times as many items (240/s)", () => {
+  const { net, sim: s } = sim(row(0, 9, 0, E, "turbo-transport-belt"));
+  s.setInput(inputAt(net, 0, 0), { item: "iron-plate", rate: "full", stack: 4 }, { item: "copper-plate", rate: "full", stack: 4 });
+  measure(s);
+  near(s.portRate(outputAt(net, 9, 0)), 240);
+  near(tileRate(s, net, 5, 0, 0), 120);
+  assert.ok(s.laneItems(net.lines[0]!, 0).every((i) => i.count === 4));
+  assertInvariants(s, net);
+});
+
+test("stacks stay whole through splitters, side-loads and undergrounds", () => {
+  const { net, sim: s } = sim([
+    ...row(0, 2, 0, E),
+    splitterEast(3, 0),
+    ...row(4, 6, 0, E),
+    underground(7, 0, E, "input"),
+    underground(10, 0, E, "output"),
+    ...row(11, 13, 0, E),
+    ...row(4, 7, 1, E),
+    ...col(8, 1, 2, S),
+    ...row(7, 12, 3, E),
+  ]);
+  s.setInput(inputAt(net, 0, 0), { item: "iron-plate", rate: "full", stack: 3 }, { item: "copper-plate", rate: "full", stack: 3 });
+  measure(s);
+  near(s.portRate(inputAt(net, 0, 0)), 45);
+  for (const line of net.lines) for (const lane of [0, 1] as const) assert.ok(s.laneItems(line, lane).every((i) => i.count === 3));
+  assertInvariants(s, net);
+});
+
+test("a rate-limited stacked input counts items, not slots", () => {
+  const { net, sim: s } = sim(row(0, 5, 0, E));
+  s.setInput(inputAt(net, 0, 0), { item: "iron-plate", rate: 8, stack: 4 }, null);
+  measure(s);
+  near(s.portRate(outputAt(net, 5, 0)), 8);
+});
+
+test("an inserter-style pickup splits a stack and a drop places one", () => {
+  const { net, sim: s } = sim(row(0, 3, 0, E, "turbo-transport-belt"));
+  const tile = net.nodeAt(1, 0)!;
+  assert.equal(s.dropOnTile(tile, 0, "iron-plate", 4), true);
+  assert.deepEqual(s.tileLoad(tile, 0), { count: 1, capacity: 4, items: 4 });
+  assert.deepEqual(s.takeFromTile(tile, () => true, 3), { item: "iron-plate", count: 3 });
+  assert.deepEqual(s.tileLoad(tile, 0), { count: 1, capacity: 4, items: 1 });
+  assert.equal(s.dropOnTile(tile, 1, "copper-plate", 9), true);
+  assert.equal(s.laneItems(net.lines[0]!, 1)[0]!.count, 4, "a slot never holds more than four");
 });
 
 /* ---------- real blueprints ---------- */

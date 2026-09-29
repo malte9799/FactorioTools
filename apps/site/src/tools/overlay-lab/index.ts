@@ -11,7 +11,7 @@ import type { LaneFeed, Port } from "@factoriotools/sim";
 import { makeFloatingWindow, type FloatingWindow } from "../../window-manager.js";
 import { escapeHtml } from "../blueprint-viewer/html.js";
 import { BUILDS, entitiesFromString } from "./builds.js";
-import { LabFactory, machineStatus, type MachineSim } from "./factory.js";
+import { FULL_RESEARCH, LabFactory, machineStatus, type MachineSim, type Research } from "./factory.js";
 import { detectIssues, itemLabel, recipeLabel, type Issue } from "./issues.js";
 import { drawOverlay, laneState, statusColor, type HoverTarget } from "./overlay.js";
 import { DEFAULTS, loadSettings, PALETTES, saveSettings, type LabSettings } from "./settings.js";
@@ -80,8 +80,20 @@ const TEMPLATE = `
         <button type="button" id="lab-warm">Skip ahead 60 s</button>
         <button type="button" id="lab-restart">Restart</button>
       </div>
+      <span class="lab-field-label">Inserter capacity research</span>
+      <div class="segmented lab-seg" id="lab-hands">
+        <button type="button" data-hands="none">None</button>
+        <button type="button" data-hands="full">Full</button>
+      </div>
+      <span class="lab-field-label">Belt stacking (items per slot)</span>
+      <div class="segmented lab-seg" id="lab-stack">
+        <button type="button" data-stack="1">1</button>
+        <button type="button" data-stack="2">2</button>
+        <button type="button" data-stack="3">3</button>
+        <button type="button" data-stack="4">4</button>
+      </div>
       <div id="lab-sim-summary" class="lab-summary"></div>
-      <p class="lab-note">Belts, splitters and undergrounds are simulated per lane, 1:1. Machines and inserters use a rough stand-in until the simulation's second phase, and belt stacking isn't modelled yet.</p>
+      <p class="lab-note">Belts, splitters, undergrounds and belt stacking are simulated per lane, 1:1. Machines and inserters use a rough stand-in until the simulation's second phase, so their numbers are close, not exact.</p>
     </div>
   </div>
 
@@ -97,18 +109,34 @@ const TEMPLATE = `
   <div id="lab-loading" class="lab-loading">Loading game data…</div>
 `;
 
-const LAYER_INFO: { key: keyof LabSettings["layers"]; label: string; hint: string; concept: string }[] = [
-  { key: "dim", label: "Dim the build", hint: "Pushes the sprites back so the signals read.", concept: "A" },
-  { key: "lanes", label: "Lane signals", hint: "One mark per lane per tile: flowing, backed up, empty, running dry.", concept: "A" },
-  { key: "rings", label: "Machine status", hint: "Uptime and why a machine isn't working.", concept: "A" },
-  { key: "items", label: "Items on belts", hint: "The simulated items, per lane.", concept: "sim" },
-  { key: "arms", label: "Inserter activity", hint: "What each arm carries, or how busy it is.", concept: "A" },
-  { key: "ports", label: "Port tabs", hint: "Where belts enter and leave, with rates.", concept: "A" },
-  { key: "issues", label: "Issue markers and trace", hint: "Numbered problems; the selected one is traced.", concept: "D" },
-  { key: "hover", label: "Hover card", hint: "Details for whatever is under the cursor.", concept: "A" },
+const LAYER_INFO: { key: keyof LabSettings["layers"]; label: string; hint: string; group: "main" | "extra" }[] = [
+  { key: "dim", label: "Dim the build", hint: "Pushes the sprites back so the signals read.", group: "main" },
+  { key: "lanes", label: "Lane signals", hint: "One mark per lane per tile: flowing, backed up, empty, running dry.", group: "main" },
+  { key: "rings", label: "Machine status", hint: "Uptime and why a machine isn't working.", group: "main" },
+  { key: "hover", label: "Hover card", hint: "Details for whatever is under the cursor.", group: "main" },
+  { key: "items", label: "Render items", hint: "Items on belts and in inserter hands, and how busy each arm is.", group: "extra" },
+  { key: "ports", label: "Port tabs", hint: "Where belts enter and leave, with rates.", group: "extra" },
+  { key: "issues", label: "Issue markers", hint: "A numbered marker on every problem. A picked issue is traced either way.", group: "extra" },
 ];
 
 type Choice<T extends string> = { value: T; label: string }[];
+
+const RESEARCH_KEY = "overlay-lab:research";
+function loadResearch(): Research {
+  try {
+    const saved = JSON.parse(localStorage.getItem(RESEARCH_KEY) ?? "null") as Partial<Research> | null;
+    return { ...FULL_RESEARCH, ...saved };
+  } catch {
+    return { ...FULL_RESEARCH };
+  }
+}
+function saveResearch(r: Research) {
+  try {
+    localStorage.setItem(RESEARCH_KEY, JSON.stringify(r));
+  } catch {
+    // Storage blocked: the choice just won't be remembered.
+  }
+}
 
 export interface LabOptions {
   /** Hide links back into the main app (the standalone lab.html build). */
@@ -134,6 +162,8 @@ export function mountOverlayLab(root: HTMLElement, _options: LabOptions = {}): (
   let pointer: { x: number; y: number } | undefined;
   let playing = !matchMedia("(prefers-reduced-motion: reduce)").matches;
   let speed = 1;
+  let research: Research = loadResearch();
+  let currentFeeds: (typeof BUILDS)[number]["feeds"];
   let currentBuild = 0;
   let currentEntities: PlacedEntity[] = [];
   const icons = getSharedIconAtlas();
@@ -178,13 +208,15 @@ export function mountOverlayLab(root: HTMLElement, _options: LabOptions = {}): (
   const persist = () => saveSettings(settings);
 
   function renderLayers() {
-    $("#lab-layer-list").innerHTML = LAYER_INFO.map(
-      (l) => `
+    const row = (l: (typeof LAYER_INFO)[number]) => `
       <label class="lab-layer">
         <input type="checkbox" data-layer="${l.key}" ${settings.layers[l.key] ? "checked" : ""}>
-        <span class="lab-layer-text"><span class="lab-layer-name">${l.label}<span class="lab-tag">${l.concept}</span></span><span class="lab-layer-hint">${l.hint}</span></span>
-      </label>`,
-    ).join("");
+        <span class="lab-layer-text"><span class="lab-layer-name">${l.label}</span><span class="lab-layer-hint">${l.hint}</span></span>
+      </label>`;
+    $("#lab-layer-list").innerHTML =
+      LAYER_INFO.filter((l) => l.group === "main").map(row).join("") +
+      `<h3 class="lab-layer-heading">Extra options</h3>` +
+      LAYER_INFO.filter((l) => l.group === "extra").map(row).join("");
   }
   $("#lab-layer-list").addEventListener("change", (e) => {
     const input = e.target as HTMLInputElement;
@@ -238,7 +270,7 @@ export function mountOverlayLab(root: HTMLElement, _options: LabOptions = {}): (
         { value: "hover", label: "On hover" },
         { value: "never", label: "Never" },
       ]) + slider("ringThickness", 0.06, 0.4, 0.02, FORMATS.ringThickness!)),
-      group("Inserters and items", segmented("armStyle", [
+      group("Rendered items", segmented("armStyle", [
         { value: "carry", label: "Carried item" },
         { value: "arc", label: "Swing arc" },
         { value: "dot", label: "Busy dot" },
@@ -341,10 +373,11 @@ export function mountOverlayLab(root: HTMLElement, _options: LabOptions = {}): (
     }
   }
 
-  function start(entities: PlacedEntity[], feeds?: (typeof BUILDS)[number]["feeds"]) {
+  function start(entities: PlacedEntity[], feeds?: (typeof BUILDS)[number]["feeds"], reframe = true) {
     if (destroyed || !renderer) return;
     currentEntities = entities;
-    factory = new LabFactory(getData(), entities);
+    currentFeeds = feeds;
+    factory = new LabFactory(getData(), entities, research);
     for (const f of feeds ?? []) {
       const port = factory.net.ports.find((p) => p.kind === "input" && p.x === f.x && p.y === f.y);
       if (port) factory.setInput(port.id, f.left, f.right);
@@ -354,7 +387,7 @@ export function mountOverlayLab(root: HTMLElement, _options: LabOptions = {}): (
     selected = undefined;
     hover = undefined;
     issues = detectIssues(factory);
-    renderer.loadBlueprint(entities);
+    if (reframe) renderer.loadBlueprint(entities);
     renderIssues();
     renderPorts();
     renderSim();
@@ -437,7 +470,7 @@ export function mountOverlayLab(root: HTMLElement, _options: LabOptions = {}): (
     const outputs = [...factory.outputs];
     const entities = currentEntities;
     currentEntities = entities;
-    factory = new LabFactory(getData(), entities);
+    factory = new LabFactory(getData(), entities, research);
     for (const [id, [l, r]] of inputs) factory.setInput(id, l, r);
     for (const [id, m] of outputs) factory.setOutput(id, m);
     selected = undefined;
@@ -445,6 +478,27 @@ export function mountOverlayLab(root: HTMLElement, _options: LabOptions = {}): (
     renderIssues();
     renderSim();
   }, { signal });
+
+  const syncResearch = () => {
+    for (const b of root.querySelectorAll<HTMLButtonElement>("#lab-hands [data-hands]")) b.classList.toggle("is-active", b.dataset.hands === research.hands);
+    for (const b of root.querySelectorAll<HTMLButtonElement>("#lab-stack [data-stack]")) b.classList.toggle("is-active", Number(b.dataset.stack) === research.beltStack);
+  };
+  const changeResearch = (next: Research) => {
+    research = next;
+    saveResearch(research);
+    syncResearch();
+    // Hand sizes and stacking change the whole model: rebuild it in place.
+    start(currentEntities, currentFeeds, false);
+  };
+  $("#lab-hands").addEventListener("click", (e) => {
+    const b = (e.target as HTMLElement).closest<HTMLButtonElement>("[data-hands]");
+    if (b) changeResearch({ ...research, hands: b.dataset.hands as Research["hands"] });
+  }, { signal });
+  $("#lab-stack").addEventListener("click", (e) => {
+    const b = (e.target as HTMLElement).closest<HTMLButtonElement>("[data-stack]");
+    if (b) changeResearch({ ...research, beltStack: Number(b.dataset.stack) });
+  }, { signal });
+  syncResearch();
 
   /* ---------- ports ---------- */
   function portPlace(p: Port) {
@@ -463,10 +517,12 @@ export function mountOverlayLab(root: HTMLElement, _options: LabOptions = {}): (
     const unfed = inputs.filter((p) => !f.inputs.get(p.id)?.some(Boolean));
     const row = (p: Port) => {
       const [l, r] = f.inputs.get(p.id) ?? [null, null];
+      const stack = (l ?? r)?.stack ?? 1;
       return `<div class="lab-port" data-port="${escapeHtml(p.id)}">
         <span class="lab-port-where">In · ${portPlace(p)}</span>
         <label>Left <select data-lane="0">${options(l)}</select></label>
         <label>Right <select data-lane="1">${options(r)}</select></label>
+        <label>Stacked <select data-stack>${[1, 2, 3, 4].map((n) => `<option value="${n}" ${n === stack ? "selected" : ""}>×${n}</option>`).join("")}</select></label>
       </div>`;
     };
     const outputs = f.net.ports.filter((p) => p.kind === "output");
@@ -485,8 +541,10 @@ export function mountOverlayLab(root: HTMLElement, _options: LabOptions = {}): (
     if (el.dataset.mode !== undefined) factory.setOutput(id, el.value as "sink" | "blocked");
     else {
       const cur = [...(factory.inputs.get(id) ?? [null, null])] as [LaneFeed | null, LaneFeed | null];
-      cur[Number(el.dataset.lane)] = el.value ? { item: el.value, rate: "full" } : null;
-      factory.setInput(id, cur[0], cur[1]);
+      const row = el.closest<HTMLElement>("[data-port]")!;
+      const stack = Number(row.querySelector<HTMLSelectElement>("[data-stack]")!.value);
+      if (el.dataset.lane !== undefined) cur[Number(el.dataset.lane)] = el.value ? { item: el.value, rate: "full", stack } : null;
+      factory.setInput(id, cur[0] && { ...cur[0], stack }, cur[1] && { ...cur[1], stack });
     }
   }, { signal });
 
@@ -546,8 +604,8 @@ export function mountOverlayLab(root: HTMLElement, _options: LabOptions = {}): (
       html = `<div class="lab-card-title">${escapeHtml(recipeLabel(f.data, m.recipe))}</div>
         <div class="lab-card-bar"><i style="width:${Math.round(m.uptime * 100)}%;background:${col}"></i></div>
         ${row("Uptime", `${Math.round(m.uptime * 100)}%`)}
-        ${row("Output", `${f.machineRate(m).toFixed(2)} of ${f.machineMaxRate(m).toFixed(2)} ${escapeHtml(itemLabel(f.data, product))}/s`)}
-        ${m.ingredients.map((i) => row(escapeHtml(itemLabel(f.data, i.name)), `${m.buffer.get(i.name) ?? 0} in · needs ${f.machineNeed(m, i.name).toFixed(2)}/s`)).join("")}
+        ${row(escapeHtml(itemLabel(f.data, product)), `${f.machineRate(m).toFixed(2)} of ${f.machineMaxRate(m).toFixed(2)}/s`)}
+        ${m.ingredients.map((i) => row(escapeHtml(itemLabel(f.data, i.name)), `${m.buffer.get(i.name) ?? 0} held · uses ${f.machineNeed(m, i.name).toFixed(2)}/s`)).join("")}
         <div class="lab-card-why" style="color:${col}">${why}</div>`;
     } else if (hover.kind === "inserter") {
       const ins = hover.inserter;
