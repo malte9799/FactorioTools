@@ -127,6 +127,8 @@ export interface PortInfo {
   rate: number;
 }
 
+const isSilo = (m: MachineSim) => m.entity.name.includes("rocket-silo");
+
 /** Things that store items, so an arm next to one is reaching into it. */
 const CONTAINER = /chest|container|wagon/;
 
@@ -207,7 +209,14 @@ export class LabFactory {
   readonly knownItems: string[];
   tick = 0;
 
-  constructor(readonly data: GameData, readonly entities: PlacedEntity[], readonly research: Research = FULL_RESEARCH) {
+  constructor(
+    readonly data: GameData,
+    readonly entities: PlacedEntity[],
+    readonly research: Research = FULL_RESEARCH,
+    /** Tiles an entity covers (width, height at direction 0), for anything
+     *  the dataset doesn't size itself; 1×1 when unknown. */
+    footprintOf: (name: string) => [number, number] | undefined = () => undefined,
+  ) {
     this.net = buildBeltNetwork(entities, beltSpecResolver(data));
     this.belts = new BeltSim(this.net);
     this.meter = new LaneMeter(this.belts, this.net.lines);
@@ -368,12 +377,31 @@ export class LabFactory {
     for (const m of this.machines) for (const i of [...m.ingredients, ...m.products]) items.add(i.name);
     this.knownItems = [...items].sort();
     this.guessInputs();
-    // Every open belt end takes everything by default: a pasted blueprint is
-    // usually a piece of a bigger factory whose belts carry on off the edge.
-    // The Ports window can turn one into a dead end.
+    // A belt end that points into empty space carries on somewhere off the
+    // blueprint, so it starts taking everything. One that points into a
+    // building, or that an inserter takes from, is a dead end by design and
+    // starts off. Either can be switched in the Ports window.
+    const occupied = new Map<string, PlacedEntity>();
+    for (const e of entities) {
+      const [w0, h0] = data.machines[e.name]?.tileFootprint ?? data.machines[e.name]?.size ?? data.beacons[e.name]?.size ?? footprintOf(e.name) ?? [1, 1];
+      const c = cardOf(e.direction);
+      const [w, h] = c === 1 || c === 3 ? [h0, w0] : [w0, h0];
+      const left = Math.round(e.x - w / 2);
+      const top = Math.round(e.y - h / 2);
+      for (let dx = 0; dx < w; dx++) for (let dy = 0; dy < h; dy++) occupied.set(`${left + dx},${top + dy}`, e);
+    }
     for (const port of this.net.ports) {
       if (port.kind !== "output") continue;
-      this.portEnabled.set(port.id, true);
+      const ahead = occupied.get(`${port.x + DX[port.dir]},${port.y + DY[port.dir]}`);
+      const tail = port.line.nodes[port.line.nodes.length - 1];
+      const taken = this.inserters.some((i) => i.pickup.kind === "belt" && i.pickup.node === tail);
+      this.portEnabled.set(port.id, !ahead && !taken);
+      this.portReason.set(
+        port.id,
+        ahead ? `Points into the ${(data.items[ahead.name]?.localised ?? ahead.name.replace(/-/g, " ")).toLowerCase()}`
+        : taken ? "An inserter takes from its end"
+        : "Points into empty space",
+      );
       this.applyBeltPort(port.id);
     }
   }
@@ -622,7 +650,7 @@ export class LabFactory {
       for (const p of m.products) {
         // A rocket silo builds its parts into the rocket and launches it;
         // nothing is ever taken out.
-        if (m.entity.name.includes("rocket-silo")) continue;
+        if (isSilo(m)) continue;
         const total = (m.outFraction.get(p.name) ?? 0) + p.amount;
         const whole = Math.floor(total + 1e-9);
         m.outFraction.set(p.name, total - whole);
@@ -670,7 +698,12 @@ export class LabFactory {
       if (e.filterMode === "blacklist" ? listed : !listed) return false;
     }
     const d = ins.drop;
-    if (d.kind === "machine") return d.machine.ingredients.some((i) => i.name === item) && (d.machine.buffer.get(item) ?? 0) < this.limitFor(d.machine, item);
+    if (d.kind === "machine") {
+      const ingredient = d.machine.ingredients.some((i) => i.name === item);
+      // A rocket silo also takes anything else as rocket cargo.
+      if (!ingredient) return isSilo(d.machine);
+      return (d.machine.buffer.get(item) ?? 0) < this.limitFor(d.machine, item);
+    }
     if (d.kind === "none") return false;
     return true;
   }
@@ -738,7 +771,10 @@ export class LabFactory {
     } else if (ins.phase === "drop") {
       const d = ins.drop;
       if (d.kind === "machine") {
-        d.machine.buffer.set(ins.hand!, (d.machine.buffer.get(ins.hand!) ?? 0) + ins.handCount);
+        // Rocket cargo leaves with the rocket; ingredients go in the buffer.
+        if (d.machine.ingredients.some((i) => i.name === ins.hand)) {
+          d.machine.buffer.set(ins.hand!, (d.machine.buffer.get(ins.hand!) ?? 0) + ins.handCount);
+        }
         delivered = ins.handCount;
         ins.handCount = 0;
       } else if (d.kind === "belt") {

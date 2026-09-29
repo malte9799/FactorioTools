@@ -158,6 +158,7 @@ export function mountOverlayLab(root: HTMLElement, _options: LabOptions = {}): (
   let currentBuild = 0;
   let currentEntities: PlacedEntity[] = [];
   const icons = getSharedIconAtlas();
+  const footprint = (name: string) => getRenderCatalog().entities[name]?.tileFootprint;
 
   const overlay = document.createElement("canvas");
   overlay.className = "lab-overlay";
@@ -366,7 +367,7 @@ export function mountOverlayLab(root: HTMLElement, _options: LabOptions = {}): (
     if (destroyed || !renderer) return;
     currentEntities = entities;
     currentFeeds = feeds;
-    factory = new LabFactory(getData(), entities, research);
+    factory = new LabFactory(getData(), entities, research, footprint);
     for (const f of feeds ?? []) {
       const port = factory.net.ports.find((p) => p.kind === "input" && p.x === f.x && p.y === f.y);
       if (port) factory.setInput(port.id, f.left, f.right);
@@ -414,7 +415,7 @@ export function mountOverlayLab(root: HTMLElement, _options: LabOptions = {}): (
   }, { signal });
   $("#lab-restart").addEventListener("click", () => {
     if (!factory) return;
-    const next = new LabFactory(getData(), currentEntities, research);
+    const next = new LabFactory(getData(), currentEntities, research, footprint);
     factory.copyPortsTo(next);
     factory = next;
     issues = [];
