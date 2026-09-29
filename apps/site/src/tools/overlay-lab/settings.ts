@@ -11,9 +11,6 @@ export interface LabSettings {
     /** Items on belts and in inserter hands, plus how busy each arm is. */
     items: boolean;
     ports: boolean;
-    /** Numbered markers on every problem; a picked issue's trace always
-     *  draws. */
-    issues: boolean;
   };
   style: {
     dimAmount: number;
@@ -26,13 +23,10 @@ export interface LabSettings {
     ringThickness: number;
     armStyle: "carry" | "arc" | "dot";
     itemStyle: "icons" | "dots";
-    traceStyle: "glow" | "solid" | "quiet";
-    badges: boolean;
     labelScale: number;
     /** Below this zoom (screen pixels per tile) labels and small marks fade
      *  out, so a zoomed-out view stays calm. */
     detailZoom: number;
-    pulse: boolean;
   };
 }
 
@@ -55,7 +49,7 @@ export const PALETTES: Record<PaletteName, Palette> = {
 };
 
 export const DEFAULTS: LabSettings = {
-  layers: { dim: true, lanes: true, rings: true, hover: true, items: false, ports: false, issues: false },
+  layers: { dim: true, lanes: true, rings: true, hover: true, items: false, ports: false },
   style: {
     dimAmount: 0.45,
     palette: "factorio",
@@ -67,11 +61,8 @@ export const DEFAULTS: LabSettings = {
     ringThickness: 0.14,
     armStyle: "carry",
     itemStyle: "icons",
-    traceStyle: "glow",
-    badges: true,
     labelScale: 1,
     detailZoom: 18,
-    pulse: true,
   },
 };
 

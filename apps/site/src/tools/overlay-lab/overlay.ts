@@ -3,7 +3,7 @@
 import type { Camera, IconAtlas } from "@factoriotools/renderer";
 import { DX, DY, lanePoint, type BeltNode, type Lane, type LaneSegment, type Port } from "@factoriotools/sim";
 import { machineStatus, type InserterSim, type LabFactory, type MachineSim, type MachineStatus } from "./factory.js";
-import type { Issue, Tone } from "./issues.js";
+import type { Issue } from "./issues.js";
 import { PALETTES, type LabSettings, type Palette } from "./settings.js";
 
 export type HoverTarget =
@@ -21,10 +21,8 @@ export interface OverlayFrame {
   factory: LabFactory;
   settings: LabSettings;
   issues: Issue[];
-  selected: Issue | undefined;
   hover: HoverTarget | undefined;
   icons: IconAtlas;
-  time: number;
 }
 
 type LaneState = "flow" | "held" | "empty" | "short";
@@ -39,9 +37,6 @@ const STATUS_WORD: Record<MachineStatus, string> = {
 
 export function statusColor(p: Palette, s: MachineStatus): string {
   return s === "working" ? p.ok : s === "arm" ? p.warn : s === "starved" ? p.bad : s === "output" ? p.held : p.idle;
-}
-export function toneColor(p: Palette, t: Tone): string {
-  return t === "ok" ? p.ok : t === "warn" ? p.warn : t === "held" ? p.held : p.bad;
 }
 
 function rgba(hex: string, a: number): string {
@@ -86,7 +81,6 @@ export function drawOverlay(fr: OverlayFrame): void {
   const pal = PALETTES[S.palette];
   const ppt = camera.state.pixelsPerTile;
   const detail = clamp01((ppt - S.detailZoom * 0.55) / (S.detailZoom * 0.45));
-  const pulse = S.pulse ? 0.55 + 0.45 * Math.sin(fr.time / 260) ** 2 : 1;
 
   ctx.setTransform(1, 0, 0, 1, 0, 0);
   ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
@@ -110,7 +104,7 @@ export function drawOverlay(fr: OverlayFrame): void {
   for (const issue of fr.issues) if (issue.title.includes("starved")) for (const n of issue.nodes) starvedNodes.add(n);
 
   const laneColor = (state: LaneState, load: number) => {
-    if (state === "short") return rgba(pal.bad, 0.9 * pulse);
+    if (state === "short") return rgba(pal.bad, 0.9);
     if (state === "held") return rgba(pal.held, 0.85);
     if (state === "empty") return "rgba(255,255,255,0.08)";
     return rgba(pal.ok, 0.3 + 0.7 * clamp01(load));
@@ -310,54 +304,6 @@ export function drawOverlay(fr: OverlayFrame): void {
     }
   }
 
-  /* ---------- issue trace ---------- */
-  if (fr.selected) {
-    const issue = fr.selected;
-    const col = toneColor(pal, issue.tone);
-    for (const m of issue.machines) {
-      ctx.strokeStyle = col;
-      ctx.lineWidth = 0.08;
-      ctx.strokeRect(m.box.left + 0.04, m.box.top + 0.04, m.box.right - m.box.left - 0.08, m.box.bottom - m.box.top - 0.08);
-    }
-    if (issue.path.length > 1) {
-      ctx.save();
-      if (S.traceStyle === "glow") {
-        ctx.shadowColor = col;
-        ctx.shadowBlur = 12 * dpr;
-      }
-      ctx.strokeStyle = S.traceStyle === "quiet" ? rgba(col, 0.55) : col;
-      ctx.lineWidth = S.traceStyle === "quiet" ? 0.06 : 0.11;
-      ctx.lineJoin = "round";
-      if (S.traceStyle !== "solid") {
-        ctx.setLineDash([0.34, 0.2]);
-        ctx.lineDashOffset = S.pulse ? -fr.time / 180 : 0;
-      }
-      ctx.beginPath();
-      issue.path.forEach((p, i) => (i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y)));
-      ctx.stroke();
-      ctx.restore();
-    }
-    if (S.badges) {
-      issue.steps.forEach((step, i) => {
-        labels.push(() => {
-          const p = toScreen(step.at.x, step.at.y);
-          badge(ctx, p.x, p.y, i + 1, step.label, toneColor(pal, step.tone), S.labelScale);
-        });
-      });
-    }
-  }
-  if (L.issues && !fr.selected && detail > 0) {
-    fr.issues.forEach((issue, i) => {
-      const m = issue.machines[0]!;
-      labels.push(() => {
-        const p = toScreen(m.box.right, m.box.top);
-        ctx.globalAlpha = detail;
-        marker(ctx, p.x, p.y, i + 1, toneColor(pal, issue.tone), S.labelScale);
-        ctx.globalAlpha = 1;
-      });
-    });
-  }
-
   /* ---------- ports ---------- */
   if (L.ports) {
     for (const port of f.net.ports) {
@@ -419,47 +365,7 @@ function pillBox(ctx: CanvasRenderingContext2D, x: number, y: number, wdt: numbe
   ctx.stroke();
 }
 
-function badge(ctx: CanvasRenderingContext2D, x: number, y: number, n: number, text: string, col: string, scale: number) {
-  const r = 9 * scale;
-  ctx.beginPath();
-  ctx.arc(x, y, r, 0, Math.PI * 2);
-  ctx.fillStyle = col;
-  ctx.fill();
-  ctx.fillStyle = "#1a1917";
-  ctx.font = font(r * 1.2, 700);
-  ctx.textAlign = "center";
-  ctx.textBaseline = "middle";
-  ctx.fillText(String(n), x, y + 0.5);
-  ctx.textAlign = "left";
-  const fs = 11.5 * scale;
-  ctx.font = font(fs);
-  const tw = ctx.measureText(text).width;
-  const h = fs * 1.8;
-  pillBox(ctx, x + r + 4, y - h / 2, tw + fs * 1.2, h, col);
-  ctx.fillStyle = "#e6e0d8";
-  ctx.fillText(text, x + r + 4 + fs * 0.6, y + 0.5);
-}
 
-function marker(ctx: CanvasRenderingContext2D, x: number, y: number, n: number, col: string, scale: number) {
-  const r = 8 * scale;
-  ctx.beginPath();
-  ctx.moveTo(x, y - r);
-  ctx.lineTo(x + r, y);
-  ctx.lineTo(x, y + r);
-  ctx.lineTo(x - r, y);
-  ctx.closePath();
-  ctx.fillStyle = col;
-  ctx.fill();
-  ctx.strokeStyle = "#1a1917";
-  ctx.lineWidth = 1.5;
-  ctx.stroke();
-  ctx.fillStyle = "#1a1917";
-  ctx.font = font(r * 1.1, 700);
-  ctx.textAlign = "center";
-  ctx.textBaseline = "middle";
-  ctx.fillText(String(n), x, y + 0.5);
-  ctx.textAlign = "left";
-}
 
 function portTab(ctx: CanvasRenderingContext2D, icons: IconAtlas, x: number, y: number, tag: string, items: string[], rate: string, col: string, scale: number) {
   const fs = 11 * scale;

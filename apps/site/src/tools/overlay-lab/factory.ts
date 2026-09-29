@@ -63,7 +63,18 @@ export interface MachineSim {
   takers: InserterSim[];
 }
 
-export type Target = { kind: "machine"; machine: MachineSim } | { kind: "belt"; node: BeltNode; lane: Lane } | { kind: "other" };
+export type Target =
+  | { kind: "machine"; machine: MachineSim }
+  | { kind: "belt"; node: BeltNode; lane: Lane }
+  /** A chest whose contents the blueprint states — a requester's or buffer's
+   *  requests, an infinity or creative chest's filters. An endless source. */
+  | { kind: "chest"; items: string[]; next: number }
+  | { kind: "other" };
+
+/** Chests whose blueprint settings say what they hold. */
+const KNOWN_CHEST = /requester|buffer|infinity|creative/;
+/** Entities players put next to a belt to label what's on it. */
+const LABELS = /constant-combinator|display-panel/;
 
 export interface InserterSim {
   entity: PlacedEntity;
@@ -176,6 +187,13 @@ export class LabFactory {
       }
     }
 
+    const byTile = new Map<string, PlacedEntity>();
+    for (const e of entities) byTile.set(`${Math.floor(e.x)},${Math.floor(e.y)}`, e);
+    this.entityAt = (x, y) => byTile.get(`${x},${y}`);
+    const chestAt = (x: number, y: number): string[] | undefined => {
+      const e = byTile.get(`${Math.floor(x)},${Math.floor(y)}`);
+      return e && KNOWN_CHEST.test(e.name) ? this.realItems(e.signalItems) : undefined;
+    };
     const machineAt = (x: number, y: number) =>
       this.machines.find((m) => x > m.box.left && x < m.box.right && y > m.box.top && y < m.box.bottom);
     for (const e of entities) {
@@ -199,6 +217,8 @@ export class LabFactory {
           const lane: Lane = laneSide(node.dir, 0) === away ? 0 : 1;
           return { kind: "belt", node, lane };
         }
+        const chest = chestAt(p.x, p.y);
+        if (chest) return { kind: "chest", items: chest, next: 0 };
         return { kind: "other" };
       };
       const handSize = e.overrideStackSize ?? handSizeFor(e.name, research);
@@ -236,27 +256,62 @@ export class LabFactory {
     for (const port of this.net.ports) if (port.kind === "output") this.setOutput(port.id, "sink");
   }
 
-  /** Blueprints don't record what's on a belt. Guess each input port's
-   *  lanes from what the inserters downstream of it pick up for their
-   *  machines — the most wanted item on the left lane, the next on the
-   *  right — skipping anything the blueprint makes itself. */
+  private readonly entityAt: (x: number, y: number) => PlacedEntity | undefined;
+
+  /** Only names the dataset knows as items (a combinator can also carry
+   *  fluids and other signals). */
+  private realItems(names: string[] | undefined): string[] | undefined {
+    const items = (names ?? []).filter((n) => this.data.items[n]?.kind === "item");
+    return items.length ? items : undefined;
+  }
+
+  /** Why each input port starts with what it has, for the Ports window. */
+  readonly inputReason = new Map<string, string>();
+
+  /** Blueprints don't record what's on a belt, so each input port starts
+   *  from the best evidence there is, in this order:
+   *  1. a constant combinator or display panel next to the belt, or a known
+   *     chest right behind where it starts, says what's on it;
+   *  2. if the first thing that happens to the belt downstream is an arm in
+   *     the blueprint putting items onto it, the belt is filled inside the
+   *     blueprint and gets nothing from outside;
+   *  3. otherwise, the ingredients the machines it feeds take from it,
+   *     skipping anything the blueprint makes itself — the most wanted on
+   *     the left lane, the next on the right. */
   guessInputs() {
     const madeHere = new Set(this.machines.flatMap((m) => m.products.map((p) => p.name)));
     // Builds with stack inserters are Space Age builds; assume their input
     // belts arrive stacked too.
     const stack = this.inserters.some((i) => i.stacksOnBelt) ? this.research.beltStack : 1;
+    const feed = (name: string | undefined): LaneFeed | null => (name ? { item: name, rate: "full", stack } : null);
     for (const port of this.net.ports) {
       // The synthetic input behind an unfed splitter half starts empty:
       // nothing is placed there in the blueprint.
       if (port.kind !== "input" || port.line.nodes.length === 0) continue;
+
+      const labelled = this.labelFor(port.line);
+      if (labelled) {
+        this.setInput(port.id, feed(labelled.items[0]), feed(labelled.items[1] ?? labelled.items[0]));
+        this.inputReason.set(port.id, `From the ${labelled.source}`);
+        continue;
+      }
+
       const wanted = new Map<string, number>();
       const seen = new Set<BeltLine>();
+      let first: "pickup" | "drop" | undefined;
       const walk = (line: BeltLine) => {
         if (seen.has(line)) return;
         seen.add(line);
-        for (const ins of this.inserters) {
-          if (ins.pickup.kind !== "belt" || ins.pickup.node.line !== line || ins.drop.kind !== "machine") continue;
-          for (const ing of ins.drop.machine.ingredients) {
+        const on = (t: Target) => t.kind === "belt" && t.node.line === line;
+        const seg = (t: Target) => (t.kind === "belt" ? line.lanes[0].segments.findIndex((s) => s.node === t.node) : -1);
+        const events = [
+          ...this.inserters.filter((i) => on(i.pickup)).map((i) => ({ kind: "pickup" as const, at: seg(i.pickup), ins: i })),
+          ...this.inserters.filter((i) => on(i.drop) && (i.pickup.kind === "machine" || i.pickup.kind === "chest")).map((i) => ({ kind: "drop" as const, at: seg(i.drop), ins: i })),
+        ].sort((a, b) => a.at - b.at);
+        if (!first && events.length) first = events[0]!.kind;
+        for (const ev of events) {
+          if (ev.kind !== "pickup" || ev.ins.drop.kind !== "machine") continue;
+          for (const ing of ev.ins.drop.machine.ingredients) {
             if (!madeHere.has(ing.name)) wanted.set(ing.name, (wanted.get(ing.name) ?? 0) + 1);
           }
         }
@@ -266,10 +321,38 @@ export class LabFactory {
         else if (end.kind === "splitter") end.splitter.outputs.forEach(walk);
       };
       walk(port.line);
+      if (first === "drop") {
+        this.setInput(port.id, null, null);
+        this.inputReason.set(port.id, "Filled inside the blueprint");
+        continue;
+      }
       const ranked = [...wanted.entries()].sort((a, b) => b[1] - a[1]).map(([n]) => n);
-      const feed = (name: string | undefined): LaneFeed | null => (name ? { item: name, rate: "full", stack } : null);
       this.setInput(port.id, feed(ranked[0]), feed(ranked[1] ?? ranked[0]));
+      this.inputReason.set(port.id, ranked.length ? "Guessed from the machines it feeds" : "Nothing downstream takes from it");
     }
+  }
+
+  /** A label for what's on a belt line: a constant combinator or display
+   *  panel within a tile of any of its belts, or a known chest (or a loader
+   *  in front of one) right behind where it starts. */
+  private labelFor(line: BeltLine): { items: string[]; source: string } | undefined {
+    for (const node of line.nodes) {
+      for (let dx = -1; dx <= 1; dx++) {
+        for (let dy = -1; dy <= 1; dy++) {
+          const e = this.entityAt(node.x + dx, node.y + dy);
+          const items = e && LABELS.test(e.name) ? this.realItems(e.signalItems) : undefined;
+          if (items) return { items, source: e!.name.includes("display") ? "display panel" : "constant combinator" };
+        }
+      }
+    }
+    const head = line.nodes[0]!;
+    for (let k = 1; k <= 2; k++) {
+      const e = this.entityAt(head.x - DX[head.dir] * k, head.y - DY[head.dir] * k);
+      const items = e && KNOWN_CHEST.test(e.name) ? this.realItems(e.signalItems) : undefined;
+      if (items) return { items, source: e!.name.replace(/-/g, " ") };
+      if (!e || !e.name.includes("loader")) break;
+    }
+    return undefined;
   }
 
   readonly inputs = new Map<string, [LaneFeed | null, LaneFeed | null]>();
@@ -375,6 +458,17 @@ export class LabFactory {
             count = Math.min(have, ins.handSize);
             p.machine.out.set(prod.name, have - count);
             got = prod.name;
+            break;
+          }
+        }
+      } else if (p.kind === "chest") {
+        // An endless supply: hand over the next listed item the arm wants.
+        for (let k = 0; k < p.items.length; k++) {
+          const item = p.items[(p.next + k) % p.items.length]!;
+          if (this.wants(ins, item)) {
+            got = item;
+            count = ins.handSize;
+            p.next = (p.next + k + 1) % p.items.length;
             break;
           }
         }

@@ -603,6 +603,13 @@ export interface BpItemFilter {
  *  nested under `sections[].filters[]` (2.0's logistics-groups shape). Only
  *  `sections[0].filters` is read — a chest's alt-mode badge shows its
  *  request, not every group section. */
+/** A signal or item named in a blueprint setting. `type` is omitted for an
+ *  item. */
+export interface BpSignalFilter {
+  name?: string;
+  type?: string;
+}
+
 export interface BpRequestFilters {
   sections?: { index: number; filters?: BpItemFilter[] }[];
 }
@@ -649,6 +656,16 @@ export interface BpEntity {
   spoil_priority?: BpSpoilPriority;
   /** Storage/requester/buffer chests. */
   request_filters?: BpRequestFilters;
+  /** Combinators, display panels and more: circuit settings. Only read for
+   *  the items they name (see PlacedEntity.signalItems). */
+  control_behavior?: {
+    sections?: { sections?: { filters?: BpSignalFilter[] }[] };
+    parameters?: { icon?: BpSignalFilter }[];
+  };
+  /** Display panels: the icon shown. */
+  icon?: BpSignalFilter;
+  /** Infinity (creative) chests: what they hold. */
+  infinity_settings?: { filters?: BpSignalFilter[] };
   /** Splitters only: which input belt is drained first. Omitted = no
    *  priority (alternate). */
   input_priority?: BpSplitterSide;
@@ -799,6 +816,11 @@ export interface PlacedEntity {
   splitterOutputPriority?: BpSplitterSide;
   /** Splitters only: the item name its filter is set to, if any. */
   splitterFilter?: string;
+  /** READ-ONLY hints: the items a constant combinator's signals, a display
+   *  panel's icons, an infinity chest's filters or a requester/buffer chest's
+   *  requests (every section) name. Players put these next to belts to say
+   *  what's on them. Not written back on export. */
+  signalItems?: string[];
 }
 
 /** One wire, normalised out of the blueprint's `wires` array into the pair

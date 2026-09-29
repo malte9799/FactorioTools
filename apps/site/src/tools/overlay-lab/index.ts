@@ -11,7 +11,7 @@ import type { LaneFeed, Port } from "@factoriotools/sim";
 import { makeFloatingWindow, type FloatingWindow } from "../../window-manager.js";
 import { escapeHtml } from "../blueprint-viewer/html.js";
 import { BUILDS, entitiesFromString } from "./builds.js";
-import { FULL_RESEARCH, LabFactory, machineStatus, type MachineSim, type Research } from "./factory.js";
+import { FULL_RESEARCH, LabFactory, machineStatus, type Research } from "./factory.js";
 import { detectIssues, itemLabel, recipeLabel, type Issue } from "./issues.js";
 import { drawOverlay, laneState, statusColor, type HoverTarget } from "./overlay.js";
 import { DEFAULTS, loadSettings, PALETTES, saveSettings, type LabSettings } from "./settings.js";
@@ -23,7 +23,6 @@ const TEMPLATE = `
     <button type="button" data-toggle="lab-builds">Blueprints</button>
     <button type="button" data-toggle="lab-layers">Layers</button>
     <button type="button" data-toggle="lab-style">Style</button>
-    <button type="button" data-toggle="lab-issues">Issues <span class="lab-count" id="lab-issue-count"></span></button>
     <button type="button" data-toggle="lab-sim">Simulation</button>
     <button type="button" data-toggle="lab-ports">Ports</button>
   </div>
@@ -53,14 +52,6 @@ const TEMPLATE = `
         <span class="lab-note" id="lab-copy-status"></span>
       </div>
       <textarea id="lab-settings-json" class="lab-paste" rows="6" readonly hidden></textarea>
-    </div>
-  </div>
-
-  <div id="lab-issues" class="gui-window floating-window lab-window" hidden>
-    <div class="gui-titlebar"><span>Issues</span><span class="grip" aria-hidden="true"></span></div>
-    <div class="gui-body">
-      <p class="lab-note">Ranked by lost output. Pick one to trace it on the map.</p>
-      <div id="lab-issue-list" class="lab-issue-list"></div>
     </div>
   </div>
 
@@ -100,7 +91,7 @@ const TEMPLATE = `
   <div id="lab-ports" class="gui-window floating-window lab-window lab-ports-window" hidden>
     <div class="gui-titlebar"><span>Ports</span><span class="grip" aria-hidden="true"></span></div>
     <div class="gui-body">
-      <p class="lab-note">Blueprints don't record what's on a belt, so every open belt end is a port. Inputs start with a guess from what the machines downstream need.</p>
+      <p class="lab-note">Blueprints don't record what's on a belt, so every open belt end is a port. An input takes its items from a constant combinator or display panel next to the belt, or a requester or infinity chest behind it. A belt that machines in the blueprint put items onto gets nothing from outside. Anything else is guessed from what the machines downstream need.</p>
       <div id="lab-port-list" class="lab-port-list"></div>
     </div>
   </div>
@@ -116,7 +107,6 @@ const LAYER_INFO: { key: keyof LabSettings["layers"]; label: string; hint: strin
   { key: "hover", label: "Hover card", hint: "Details for whatever is under the cursor.", group: "main" },
   { key: "items", label: "Render items", hint: "Items on belts and in inserter hands, and how busy each arm is.", group: "extra" },
   { key: "ports", label: "Port tabs", hint: "Where belts enter and leave, with rates.", group: "extra" },
-  { key: "issues", label: "Issue markers", hint: "A numbered marker on every problem. A picked issue is traced either way.", group: "extra" },
 ];
 
 type Choice<T extends string> = { value: T; label: string }[];
@@ -156,8 +146,9 @@ export function mountOverlayLab(root: HTMLElement, _options: LabOptions = {}): (
   const stage = $("#lab-stage");
   let renderer: BlueprintRenderer | undefined;
   let factory: LabFactory | undefined;
+  // Problems are still found (lane signals use them to mark belts running
+  // dry for a starved machine), but the issue list and trace are parked.
   let issues: Issue[] = [];
-  let selected: Issue | undefined;
   let hover: HoverTarget | undefined;
   let pointer: { x: number; y: number } | undefined;
   let playing = !matchMedia("(prefers-reduced-motion: reduce)").matches;
@@ -178,13 +169,11 @@ export function mountOverlayLab(root: HTMLElement, _options: LabOptions = {}): (
     "lab-builds": makeFloatingWindow($("#lab-builds"), { x: 16, y: 96, width: 300 }),
     "lab-layers": makeFloatingWindow($("#lab-layers"), { x: 16, y: 96, width: 320 }),
     "lab-style": makeFloatingWindow($("#lab-style"), { x: right, y: 96, width: 340 }),
-    "lab-issues": makeFloatingWindow($("#lab-issues"), { x: right, y: 96, width: 340 }),
     "lab-sim": makeFloatingWindow($("#lab-sim"), { x: 16, y: Math.max(96, window.innerHeight - 330), width: 320 }),
     "lab-ports": makeFloatingWindow($("#lab-ports"), { x: 340, y: 96, width: 380 }),
   };
   for (const w of Object.values(windows)) w.hide();
   windows["lab-layers"]!.show();
-  windows["lab-issues"]!.show();
   const syncToolbar = () => {
     for (const b of root.querySelectorAll<HTMLButtonElement>("#window-toolbar [data-toggle]")) {
       b.classList.toggle("is-active", !windows[b.dataset.toggle!]!.el.hidden);
@@ -278,12 +267,7 @@ export function mountOverlayLab(root: HTMLElement, _options: LabOptions = {}): (
         { value: "icons", label: "Item icons" },
         { value: "dots", label: "Dots" },
       ])),
-      group("Issue trace", segmented("traceStyle", [
-        { value: "glow", label: "Glow" },
-        { value: "solid", label: "Solid" },
-        { value: "quiet", label: "Quiet" },
-      ]) + toggle("badges", "Numbered step labels")),
-      group("Labels and zoom", slider("labelScale", 0.7, 1.6, 0.05, FORMATS.labelScale!) + `<span class="lab-field-label">Detail appears from</span>` + slider("detailZoom", 6, 48, 1, FORMATS.detailZoom!) + toggle("pulse", "Animate problems")),
+      group("Labels and zoom", slider("labelScale", 0.7, 1.6, 0.05, FORMATS.labelScale!) + `<span class="lab-field-label">Detail appears from</span>` + slider("detailZoom", 6, 48, 1, FORMATS.detailZoom!)),
     ].join("");
   }
   function swatches() {
@@ -384,52 +368,12 @@ export function mountOverlayLab(root: HTMLElement, _options: LabOptions = {}): (
     }
     // Start from a running factory rather than an empty one.
     factory.step(1800);
-    selected = undefined;
     hover = undefined;
     issues = detectIssues(factory);
     if (reframe) renderer.loadBlueprint(entities);
-    renderIssues();
     renderPorts();
     renderSim();
   }
-
-  /* ---------- issues ---------- */
-  function renderIssues() {
-    const list = $("#lab-issue-list");
-    $("#lab-issue-count").textContent = issues.length ? String(issues.length) : "";
-    if (!factory) return;
-    if (!issues.length) {
-      list.innerHTML = `<p class="lab-empty">Nothing is holding this build back.</p>`;
-      return;
-    }
-    const pal = PALETTES[settings.style.palette];
-    const unit = (i: Issue) => itemLabel(factory!.data, i.machines[0]!.products[0]?.name ?? "");
-    const html = issues
-      .map((issue, i) => {
-        const col = issue.tone === "warn" ? pal.warn : issue.tone === "held" ? pal.held : pal.bad;
-        return `<button type="button" class="lab-issue ${selected?.id === issue.id ? "is-active" : ""}" data-issue="${escapeHtml(issue.id)}" style="--tone:${col}">
-          <span class="lab-issue-rank">${i + 1}</span>
-          <span class="lab-issue-text"><span class="lab-issue-title">${escapeHtml(issue.title)}</span><span class="lab-issue-lost">−${issue.lost.toFixed(2)} ${escapeHtml(unit(issue))}/s</span></span>
-        </button>`;
-      })
-      .join("");
-    if (list.dataset.last !== html) {
-      list.innerHTML = html;
-      list.dataset.last = html;
-    }
-  }
-  $("#lab-issue-list").addEventListener("click", (e) => {
-    const b = (e.target as HTMLElement).closest<HTMLButtonElement>("[data-issue]");
-    if (!b || !renderer) return;
-    const issue = issues.find((i) => i.id === b.dataset.issue);
-    if (!issue) return;
-    if (selected?.id === issue.id) selected = undefined;
-    else {
-      selected = issue;
-      renderer.camera.frame(issue.focus, stage.clientWidth, stage.clientHeight, 3);
-    }
-    renderIssues();
-  }, { signal });
 
   /* ---------- simulation window ---------- */
   function renderSim() {
@@ -461,7 +405,6 @@ export function mountOverlayLab(root: HTMLElement, _options: LabOptions = {}): (
   $("#lab-warm").addEventListener("click", () => {
     factory?.step(3600);
     issues = factory ? detectIssues(factory) : [];
-    renderIssues();
     renderSim();
   }, { signal });
   $("#lab-restart").addEventListener("click", () => {
@@ -473,9 +416,7 @@ export function mountOverlayLab(root: HTMLElement, _options: LabOptions = {}): (
     factory = new LabFactory(getData(), entities, research);
     for (const [id, [l, r]] of inputs) factory.setInput(id, l, r);
     for (const [id, m] of outputs) factory.setOutput(id, m);
-    selected = undefined;
     issues = [];
-    renderIssues();
     renderSim();
   }, { signal });
 
@@ -519,7 +460,7 @@ export function mountOverlayLab(root: HTMLElement, _options: LabOptions = {}): (
       const [l, r] = f.inputs.get(p.id) ?? [null, null];
       const stack = (l ?? r)?.stack ?? 1;
       return `<div class="lab-port" data-port="${escapeHtml(p.id)}">
-        <span class="lab-port-where">In · ${portPlace(p)}</span>
+        <span class="lab-port-where">In · ${portPlace(p)}${f.inputReason.get(p.id) ? ` · <span class="lab-port-why">${escapeHtml(f.inputReason.get(p.id)!)}</span>` : ""}</span>
         <label>Left <select data-lane="0">${options(l)}</select></label>
         <label>Right <select data-lane="1">${options(r)}</select></label>
         <label>Stacked <select data-stack>${[1, 2, 3, 4].map((n) => `<option value="${n}" ${n === stack ? "selected" : ""}>×${n}</option>`).join("")}</select></label>
@@ -571,15 +512,6 @@ export function mountOverlayLab(root: HTMLElement, _options: LabOptions = {}): (
     hover = undefined;
     renderCard();
   }, { signal });
-  stage.addEventListener("click", () => {
-    if (hover?.kind !== "machine") return;
-    const issue = issues.find((i) => i.machines.includes((hover as { machine: MachineSim }).machine));
-    if (issue) {
-      selected = issue;
-      renderIssues();
-    }
-  }, { signal });
-
   function renderCard() {
     const card = $("#lab-card");
     if (!hover || !settings.layers.hover || !factory || !pointer) {
@@ -664,12 +596,10 @@ export function mountOverlayLab(root: HTMLElement, _options: LabOptions = {}): (
         overlay.width = Math.round(w * dpr);
         overlay.height = Math.round(h * dpr);
       }
-      if (selected) selected = issues.find((i) => i.id === selected!.id) ?? selected;
-      drawOverlay({ ctx: octx, width: w, height: h, dpr, camera: renderer.camera, factory, settings, issues, selected, hover: settings.layers.hover ? hover : undefined, icons, time: now });
+      drawOverlay({ ctx: octx, width: w, height: h, dpr, camera: renderer.camera, factory, settings, issues, hover: settings.layers.hover ? hover : undefined, icons });
       if (now - lastUi > 400) {
         lastUi = now;
         issues = detectIssues(factory);
-        renderIssues();
         renderSim();
         renderCard();
       }

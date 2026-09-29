@@ -8,6 +8,7 @@ import type {
   BpFilterMode,
   BpItemFilter,
   BpItemRequest,
+  BpSignalFilter,
   BpSpoilPriority,
   BpSplitterSide,
   BpWire,
@@ -242,7 +243,24 @@ export function normaliseEntities(blueprint: Blueprint): PlacedEntity[] {
     splitterInputPriority: asSplitterSide(entity.input_priority),
     splitterOutputPriority: asSplitterSide(entity.output_priority),
     splitterFilter: readSplitterFilter(entity.filter),
+    signalItems: readSignalItems(entity),
   }));
+}
+
+/** Every item (not virtual signal or fluid) a combinator, display panel,
+ *  infinity chest or requester names; undefined when there are none. */
+function readSignalItems(entity: BpEntity): string[] | undefined {
+  const found: (BpSignalFilter | undefined)[] = [
+    ...(entity.control_behavior?.sections?.sections ?? []).flatMap((s) => s.filters ?? []),
+    ...(entity.control_behavior?.parameters ?? []).map((p) => p.icon),
+    entity.icon,
+    ...(entity.infinity_settings?.filters ?? []),
+    ...(entity.request_filters?.sections ?? []).flatMap((s) => s.filters ?? []),
+  ];
+  const names = found
+    .filter((f): f is BpSignalFilter & { name: string } => !!f && typeof f.name === "string" && (f.type === undefined || f.type === "item"))
+    .map((f) => safeName(f.name));
+  return names.length ? [...new Set(names)] : undefined;
 }
 
 function asSplitterSide(side: unknown): BpSplitterSide | undefined {
