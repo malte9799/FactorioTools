@@ -1,0 +1,144 @@
+/* Rate overlay and its panels — built from the site's own GUI tokens and
+   primitives (.gui-window, .segmented, #window-toolbar) so it feels like the app. */
+
+.lab-overlay {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+}
+
+.lab-window .gui-body { max-height: min(70vh, 640px); overflow-y: auto; }
+.lab-note { margin: 0 0 10px; color: var(--text-dim); font-size: 12.5px; line-height: 1.45; }
+.lab-empty { margin: 4px 0; color: var(--text-dim); font-size: 13px; }
+.lab-row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 10px; }
+.lab-field-label { display: block; margin: 10px 0 4px; font: 500 11px/1.2 var(--mono); letter-spacing: 0.08em; text-transform: uppercase; color: var(--text-dim); }
+
+/* layers */
+.lab-layer-list { display: grid; gap: 2px; }
+.lab-layer {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 10px;
+  align-items: start;
+  padding: 7px 8px;
+  border-radius: 2px;
+  cursor: pointer;
+}
+.lab-layer:hover { background: var(--row-alt); }
+.lab-layer input { margin-top: 3px; accent-color: var(--gold); width: 15px; height: 15px; }
+.lab-layer-text { display: grid; gap: 1px; min-width: 0; }
+.lab-layer-name { color: var(--text); font-weight: 500; }
+.lab-layer-hint { color: var(--text-dim); font-size: 12px; line-height: 1.35; }
+.lab-tag {
+  margin-left: 6px;
+  padding: 0 5px;
+  border-radius: 2px;
+  background: var(--panel-3);
+  color: var(--gold);
+  font: 600 10px/16px var(--mono);
+  vertical-align: 1px;
+}
+
+/* style */
+.lab-group { padding: 10px 0 12px; border-bottom: 1px solid var(--border); display: grid; gap: 8px; }
+.lab-group:first-child { padding-top: 0; }
+.lab-group h3 { margin: 0; font: 600 11px/1.2 var(--mono); letter-spacing: 0.1em; text-transform: uppercase; color: var(--gold); }
+.lab-seg { flex-wrap: wrap; }
+.lab-seg button { flex: 1 1 auto; font-size: 12px; padding: 5px 8px; }
+.lab-slider { display: flex; gap: 10px; align-items: center; }
+.lab-slider input { flex: 1; min-width: 0; accent-color: var(--gold); }
+.lab-slider-value { min-width: 72px; text-align: right; font: 12px var(--mono); color: var(--text-dim); font-variant-numeric: tabular-nums; }
+.lab-check { display: flex; gap: 8px; align-items: center; font-size: 13px; color: var(--text); cursor: pointer; }
+.lab-check input { accent-color: var(--gold); }
+.lab-swatches { display: flex; flex-wrap: wrap; gap: 6px 12px; margin-top: 2px; }
+.lab-swatch { display: inline-flex; gap: 6px; align-items: center; font-size: 12px; color: var(--text-dim); }
+.lab-swatch i { width: 14px; height: 6px; border-radius: 1px; display: inline-block; }
+.lab-style-actions { margin: 12px 0 0; }
+.lab-paste {
+  width: 100%;
+  resize: vertical;
+  background: var(--slot);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 2px;
+  box-shadow: inset 0 2px 4px var(--bevel-dark);
+  font: 12px/1.4 var(--mono);
+  padding: 6px 8px;
+  margin-bottom: 8px;
+}
+
+/* blueprints */
+
+/* simulation */
+.lab-clock { font: 600 14px var(--mono); color: var(--gold-strong); font-variant-numeric: tabular-nums; }
+.lab-summary { margin: 4px 0 10px; font-size: 13px; color: var(--text); display: grid; gap: 6px; }
+
+/* ports */
+.lab-port-list h3 { margin: 8px 0 6px; font: 600 11px/1.2 var(--mono); letter-spacing: 0.1em; text-transform: uppercase; color: var(--gold); }
+.lab-port-list details { margin: 6px 0; }
+.lab-port-list summary { cursor: pointer; color: var(--text-dim); font-size: 12.5px; padding: 4px 0; }
+.lab-port { display: flex; flex-wrap: wrap; gap: 6px 10px; align-items: center; padding: 6px 0; border-bottom: 1px solid var(--border); font-size: 12.5px; }
+.lab-port-where { flex: 0 0 100%; font: 11px var(--mono); color: var(--text-dim); }
+.lab-port-why { color: var(--gold); }
+.lab-port label { display: flex; gap: 6px; align-items: center; color: var(--text-dim); }
+.lab-port select { font-size: 12px; max-width: 150px; }
+
+/* hover card */
+.machine-tooltip.lab-card { width: 320px; z-index: 100000; } /* above every floating window */
+.lab-card .gui-body { padding: 9px 11px 10px; }
+.lab-card-title { font: 600 15px/1.2 var(--display); color: var(--gold-strong); margin-bottom: 6px; }
+.lab-card-row { display: flex; justify-content: space-between; gap: 12px; font: 12.5px/1.6 var(--mono); font-variant-numeric: tabular-nums; }
+.lab-card-row span:first-child { color: var(--text-dim); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.lab-card-row span:last-child { white-space: nowrap; text-align: right; }
+.lab-card-bar { height: 5px; background: var(--slot); margin: 2px 0 6px; }
+.lab-card-bar i { display: block; height: 100%; }
+.lab-card-why { margin-top: 6px; font-size: 12.5px; line-height: 1.4; color: var(--text-dim); }
+
+.lab-loading {
+  position: fixed;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  font: 600 14px var(--mono);
+  color: var(--text-dim);
+  z-index: 10;
+}
+
+.lab-empty-state {
+  position: fixed;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  max-width: min(420px, calc(100vw - 32px));
+  text-align: center;
+  color: var(--text-dim);
+  font-size: 14px;
+  line-height: 1.5;
+  z-index: 10;
+}
+.lab-empty-state a { color: var(--gold); }
+
+@media (max-width: 640px) {
+  .lab-window { max-width: calc(100vw - 24px); }
+}
+
+.lab-layer-heading { margin: 10px 8px 2px; font: 600 11px/1.2 var(--mono); letter-spacing: 0.1em; text-transform: uppercase; color: var(--gold); }
+
+.lab-port-group { margin-bottom: 10px; }
+.lab-port-count { margin-left: 6px; font-weight: 500; color: var(--text-dim); letter-spacing: 0; text-transform: none; }
+.lab-port-head { flex: 0 0 100%; display: flex; flex-wrap: wrap; gap: 4px 8px; align-items: center; cursor: pointer; }
+.lab-port-head input { accent-color: var(--gold); width: 15px; height: 15px; margin: 0; }
+.lab-port-head .lab-port-where { flex: 0 0 auto; }
+.lab-port.is-off { opacity: 0.55; }
+
+/* The blueprint viewer's Rate Calculator window: a summary that folds out
+   into one pane at a time. */
+.rate-window #rate-unit { margin-bottom: 10px; }
+.rate-tabs { display: flex; margin-bottom: 2px; }
+.rate-pane { padding: 10px 0 4px; border-bottom: 1px solid var(--border); margin-bottom: 10px; }
+.rate-sim-actions { margin-top: 12px; }
+.rate-footer { margin: 0; justify-content: space-between; }
+.rate-lab-link { font-size: 12.5px; color: var(--text-dim); }
+.rate-lab-link:hover { color: var(--gold); }

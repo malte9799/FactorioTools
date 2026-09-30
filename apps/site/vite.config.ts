@@ -14,6 +14,7 @@ export default defineConfig({
     alias: {
       "@factoriotools/engine": path.resolve(__dirname, "../../packages/engine/src/index.ts"),
       "@factoriotools/renderer": path.resolve(__dirname, "../../packages/renderer/src/index.ts"),
+      "@factoriotools/sim": path.resolve(__dirname, "../../packages/sim/src/index.ts"),
     },
   },
 });
