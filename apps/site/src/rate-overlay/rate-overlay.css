@@ -1,7 +1,7 @@
-/* Overlay Lab — built from the site's own GUI tokens and primitives
-   (.gui-window, .segmented, #window-toolbar) so it feels like the app. */
+/* Rate overlay and its panels — built from the site's own GUI tokens and
+   primitives (.gui-window, .segmented, #window-toolbar) so it feels like the app. */
 
-.overlay-lab-root .lab-overlay {
+.lab-overlay {
   position: absolute;
   inset: 0;
   width: 100%;
@@ -91,7 +91,7 @@
 .lab-port select { font-size: 12px; max-width: 150px; }
 
 /* hover card */
-.lab-card { width: 320px; }
+.machine-tooltip.lab-card { width: 320px; z-index: 100000; } /* above every floating window */
 .lab-card .gui-body { padding: 9px 11px 10px; }
 .lab-card-title { font: 600 15px/1.2 var(--display); color: var(--gold-strong); margin-bottom: 6px; }
 .lab-card-row { display: flex; justify-content: space-between; gap: 12px; font: 12.5px/1.6 var(--mono); font-variant-numeric: tabular-nums; }
@@ -123,3 +123,13 @@
 .lab-port-head input { accent-color: var(--gold); width: 15px; height: 15px; margin: 0; }
 .lab-port-head .lab-port-where { flex: 0 0 auto; }
 .lab-port.is-off { opacity: 0.55; }
+
+/* The blueprint viewer's Rate Calculator window: a summary that folds out
+   into one pane at a time. */
+.rate-window #rate-unit { margin-bottom: 10px; }
+.rate-tabs { display: flex; margin-bottom: 2px; }
+.rate-pane { padding: 10px 0 4px; border-bottom: 1px solid var(--border); margin-bottom: 10px; }
+.rate-sim-actions { margin-top: 12px; }
+.rate-footer { margin: 0; justify-content: space-between; }
+.rate-lab-link { font-size: 12.5px; color: var(--text-dim); }
+.rate-lab-link:hover { color: var(--gold); }

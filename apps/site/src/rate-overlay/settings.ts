@@ -66,7 +66,7 @@ export const DEFAULTS: LabSettings = {
   style: {
     dimAmount: 0.45,
     palette: "factorio",
-    laneStyle: "edges",
+    laneStyle: "strips",
     laneWidth: 0.14,
     laneHideIdle: false,
     ringStyle: "fill",
