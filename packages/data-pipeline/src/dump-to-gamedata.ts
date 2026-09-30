@@ -630,6 +630,7 @@ function mapMachines(raw: Raw, locale: LocaleTables): Record<string, MachineProt
         categories,
         moduleSlots: proto.module_slots ?? 0,
         allowedEffects: proto.allowed_effects,
+        baseEffect: proto.effect_receiver?.base_effect,
         energyUsage: parseEnergyValue(proto.energy_usage),
         drain: proto.energy_source?.drain !== undefined ? parseEnergyValue(proto.energy_source.drain) : undefined,
         energySource: energySourceOf(proto.energy_source),

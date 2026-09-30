@@ -176,6 +176,9 @@ export function resolveMachine(
       if (!machine.allowedEffects.includes(key)) totalEffects[key] = 0;
     }
   }
+  // The machine's own bonus isn't a module, so allowed_effects doesn't
+  // filter it: a foundry is +50% productivity before anything is inserted.
+  if (machine.baseEffect) addInto(totalEffects, machine.baseEffect);
 
   return {
     machine,

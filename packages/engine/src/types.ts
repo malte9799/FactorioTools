@@ -278,6 +278,10 @@ export interface MachineProto {
   moduleSlots: number;
   /** Effects the machine will accept. Undefined means all. */
   allowedEffects?: (keyof Effects)[];
+  /** Effects the machine has on its own, with no modules: Space Age's
+   *  foundry, electromagnetic plant and biochamber each carry +50%
+   *  productivity (effect_receiver.base_effect). */
+  baseEffect?: Partial<Effects>;
   /** Watts, active draw. */
   energyUsage: number;
   /** Watts, constant. */

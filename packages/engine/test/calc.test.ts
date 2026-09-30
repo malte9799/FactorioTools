@@ -97,6 +97,17 @@ test("productivity modules slow the machine and boost output", () => {
   close(group.powerPerMachine, 150_000 * 1.8, "power with prod modules");
 });
 
+test("a machine's own base productivity adds to its modules", () => {
+  // Space Age's foundry is +50% productivity on its own; allowed_effects
+  // only filters modules and beacons, never the machine's own bonus.
+  const machine = { ...vanilla.machines["assembling-machine-2"]!, baseEffect: { productivity: 0.5 }, allowedEffects: ["speed" as const] };
+  const data = { ...vanilla, machines: { ...vanilla.machines, "assembling-machine-2": machine } };
+  const placed = normaliseEntities({ item: "blueprint", entities: [{ entity_number: 1, name: "assembling-machine-2", position: { x: 0, y: 0 }, recipe: "iron-gear-wheel" }] });
+  const result = calculate(data, placed);
+  close(result.groups[0]!.effects.productivity, 0.5, "base productivity");
+  close(result.products.find((f) => f.name === "iron-gear-wheel")!.produced, 1.5 * 1.5, "gears produced");
+});
+
 test("beacons in range apply, out of range do not", () => {
   const beaconModules = [
     {
