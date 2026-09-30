@@ -1,4 +1,4 @@
-import { ROTATION_TEST_BLUEPRINT, DEBUG_BLUEPRINT } from "@factoriotools/engine";
+import { ROTATION_TEST_BLUEPRINT, DEBUG_BLUEPRINT, RED_SCIENCE_240_BLUEPRINT, GREEN_SCIENCE_240_BLUEPRINT } from "@factoriotools/engine";
 import type { BlueprintTreeNode } from "@factoriotools/engine";
 import {
   listSaved,
@@ -42,13 +42,20 @@ const BUILTINS: BuiltinEntry[] = [
   { id: "builtin-debug-lab", label: "Debug lab", bpString: DEBUG_BLUEPRINT },
 ];
 
+/** Builds known to hit full throughput in game: what the rate calculator
+ *  should reproduce. */
+const THROUGHPUT_TESTS: BuiltinEntry[] = [
+  { id: "builtin-red-science-240", label: "Red science 240/s", bpString: RED_SCIENCE_240_BLUEPRINT },
+  { id: "builtin-green-science-240", label: "Green science 240/s", bpString: GREEN_SCIENCE_240_BLUEPRINT },
+];
+
 /** Which categories are currently expanded — module-level so the sidebar
  *  remembers disclosure state across re-renders within a session (every
  *  mutation re-renders the whole list from scratch, see refresh() below).
- *  Debug/Saved start open since they're the two most commonly used;
+ *  Debug, Throughput tests and Saved start open since they are the most used;
  *  per-book folders start closed to keep a library of many saved books
  *  scannable at a glance. */
-const expanded = new Set<string>(["debug", "saved"]);
+const expanded = new Set<string>(["debug", "throughput", "saved"]);
 
 function toggleExpanded(key: string): void {
   if (expanded.has(key)) expanded.delete(key);
@@ -387,12 +394,14 @@ export function buildLibrarySidebar(container: HTMLElement, callbacks: LibraryCa
   const { section: currentBookSection, body: currentBookBody } = makeCategory("current-book", "Current book");
   currentBookSection.hidden = true;
   const { section: debugSection, body: debugBody } = makeCategory("debug", "Debug");
+  const { section: throughputSection, body: throughputBody } = makeCategory("throughput", "Throughput tests");
   const { section: savedSection, body: savedBody } = makeCategory("saved", "Saved");
-  list.append(currentBookSection, debugSection, savedSection);
+  list.append(currentBookSection, debugSection, throughputSection, savedSection);
 
   function refresh(): void {
     const saved = listSaved();
     renderEntries(debugBody, BUILTINS, saved.filter((e) => e.category === "debug"), callbacks, refresh);
+    renderEntries(throughputBody, THROUGHPUT_TESTS, [], callbacks, refresh);
     renderEntries(savedBody, [], saved.filter((e) => e.category !== "debug"), callbacks, refresh);
 
     const bookTree = callbacks.getCurrentBookTree();
