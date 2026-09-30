@@ -70,11 +70,6 @@
 }
 
 /* blueprints */
-.lab-build-list { display: grid; gap: 4px; }
-.lab-build { display: grid; gap: 2px; text-align: left; padding: 8px 10px; }
-.lab-build.is-active { background: var(--panel-3); outline: 1px solid var(--gold); }
-.lab-build-name { font-weight: 600; color: var(--text); }
-.lab-build-note { font-size: 12px; color: var(--text-dim); font-weight: 400; }
 
 /* simulation */
 .lab-clock { font: 600 14px var(--mono); color: var(--gold-strong); font-variant-numeric: tabular-nums; }
@@ -110,6 +105,20 @@
   color: var(--text-dim);
   z-index: 10;
 }
+
+.lab-empty-state {
+  position: fixed;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  max-width: min(420px, calc(100vw - 32px));
+  text-align: center;
+  color: var(--text-dim);
+  font-size: 14px;
+  line-height: 1.5;
+  z-index: 10;
+}
+.lab-empty-state a { color: var(--gold); }
 
 @media (max-width: 640px) {
   .lab-window { max-width: calc(100vw - 24px); }

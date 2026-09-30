@@ -33,6 +33,7 @@ import type { GridMenuHandle } from "./grid-menu.js";
 import { buildLibrarySidebar } from "./library-sidebar.js";
 import { saveToLibrary } from "./blueprint-library.js";
 import { RateOverlay } from "../../rate-overlay/controller.js";
+import { setCurrentBlueprint, VIEWER_AUTOSAVE_KEY } from "../../current-blueprint.js";
 import { clockText, rateUnitHtml, renderLayerList, renderPortList, RESEARCH_HTML, simSummaryHtml, wireLayerList, wirePortList, wireRateUnit, wireResearch } from "../../rate-overlay/panels.js";
 
 const TEMPLATE = `
@@ -1120,7 +1121,7 @@ export function mountBlueprintViewer(root: HTMLElement): () => void {
   // not a real save-slot feature; silently no-ops if storage is
   // unavailable (private browsing, quota) rather than surfacing an error
   // for what's just a convenience.
-  const AUTOSAVE_KEY = "factoriotools.blueprint-viewer.autosave";
+  const AUTOSAVE_KEY = VIEWER_AUTOSAVE_KEY;
   function persistEntities(): void {
     if (!entities.length) return;
     try {
@@ -2250,8 +2251,10 @@ export function mountBlueprintViewer(root: HTMLElement): () => void {
   }
 
   function recalculate() {
-    // Every edit lands here; the overlay rebuilds its model shortly after.
+    // Every edit lands here; the overlay rebuilds its model shortly after,
+    // and the Overlay Lab picks up the same blueprint when it's opened.
     rateOverlay.update(entities);
+    setCurrentBlueprint(entities);
     const data = getData();
     result = calculate(data, entities, options.researchLevels);
     const throughputCtx: ThroughputContext = {

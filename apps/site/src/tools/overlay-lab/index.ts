@@ -2,36 +2,24 @@
  *  renderer draws the blueprint with the real camera (drag to pan, scroll
  *  to zoom); a transparent canvas above it draws the overlay layers from a
  *  live simulation. Every layer can be toggled and restyled, and the whole
- *  look can be copied out as JSON. Reachable at #/overlay-lab, and built on
- *  its own as lab.html. */
+ *  look can be copied out as JSON. Reachable at #/overlay-lab; it works on
+ *  whatever blueprint is open in the Blueprint Viewer. */
 import { getData, getRenderCatalog, loadData } from "@factoriotools/engine";
 import { mountRenderer, type BlueprintRenderer } from "@factoriotools/renderer";
 import { makeFloatingWindow, type FloatingWindow } from "../../window-manager.js";
-import { escapeHtml } from "../blueprint-viewer/html.js";
 import { RateOverlay } from "../../rate-overlay/controller.js";
 import { clockText, renderLayerList, renderPortList, RESEARCH_HTML, simSummaryHtml, wireLayerList, wirePortList, wireResearch } from "../../rate-overlay/panels.js";
 import { DEFAULTS, PALETTES, type LabSettings } from "../../rate-overlay/settings.js";
-import { BUILDS, entitiesFromString } from "./builds.js";
+import { getCurrentBlueprint } from "../../current-blueprint.js";
 
 const TEMPLATE = `
   <div id="lab-stage" class="schematic-frame"></div>
 
   <div id="window-toolbar">
-    <button type="button" data-toggle="lab-builds">Blueprints</button>
     <button type="button" data-toggle="lab-layers">Layers</button>
     <button type="button" data-toggle="lab-style">Style</button>
     <button type="button" data-toggle="lab-sim">Simulation</button>
     <button type="button" data-toggle="lab-ports">Ports</button>
-  </div>
-
-  <div id="lab-builds" class="gui-window floating-window lab-window" hidden>
-    <div class="gui-titlebar"><span>Blueprints</span><span class="grip" aria-hidden="true"></span></div>
-    <div class="gui-body">
-      <div class="lab-build-list" id="lab-build-list"></div>
-      <label class="lab-field-label" for="lab-paste">Or paste a blueprint string</label>
-      <textarea id="lab-paste" class="lab-paste" rows="3" placeholder="0eNq…" spellcheck="false"></textarea>
-      <div class="lab-row"><button type="button" id="lab-paste-load" class="primary">Load</button><span class="lab-note" id="lab-paste-status"></span></div>
-    </div>
   </div>
 
   <div id="lab-layers" class="gui-window floating-window lab-window" hidden>
@@ -83,16 +71,15 @@ const TEMPLATE = `
   </div>
 
   <div id="lab-loading" class="lab-loading">Loading game data…</div>
+  <div id="lab-empty" class="lab-empty-state" hidden>
+    <p>Nothing to look at yet. The lab works on the blueprint open in the Blueprint Viewer.</p>
+    <a href="#/blueprint-viewer">Open the Blueprint Viewer</a>
+  </div>
 `;
 
 type Choice<T extends string> = { value: T; label: string }[];
 
-export interface LabOptions {
-  /** Hide links back into the main app (the standalone lab.html build). */
-  standalone?: boolean;
-}
-
-export function mountOverlayLab(root: HTMLElement, _options: LabOptions = {}): () => void {
+export function mountOverlayLab(root: HTMLElement): () => void {
   root.innerHTML = TEMPLATE;
   root.classList.add("overlay-lab-root");
   const $ = <T extends HTMLElement = HTMLElement>(sel: string) => root.querySelector<T>(sel)!;
@@ -101,7 +88,6 @@ export function mountOverlayLab(root: HTMLElement, _options: LabOptions = {}): (
   const { signal } = controller;
   let destroyed = false;
   let renderer: BlueprintRenderer | undefined;
-  let currentBuild = 0;
 
   const stage = $("#lab-stage");
   const overlay = new RateOverlay(stage, {
@@ -116,7 +102,6 @@ export function mountOverlayLab(root: HTMLElement, _options: LabOptions = {}): (
   /* ---------- windows ---------- */
   const right = Math.max(16, window.innerWidth - 356);
   const windows: Record<string, FloatingWindow> = {
-    "lab-builds": makeFloatingWindow($("#lab-builds"), { x: 16, y: 96, width: 300 }),
     "lab-layers": makeFloatingWindow($("#lab-layers"), { x: 16, y: 96, width: 320 }),
     "lab-style": makeFloatingWindow($("#lab-style"), { x: right, y: 96, width: 340 }),
     "lab-sim": makeFloatingWindow($("#lab-sim"), { x: 16, y: Math.max(96, window.innerHeight - 330), width: 320 }),
@@ -260,43 +245,6 @@ export function mountOverlayLab(root: HTMLElement, _options: LabOptions = {}): (
   renderLayerList($("#lab-layer-list"), overlay.settings);
   renderStyle();
 
-  /* ---------- blueprints ---------- */
-  function renderBuilds() {
-    $("#lab-build-list").innerHTML = BUILDS.map(
-      (b, i) => `<button type="button" class="lab-build ${i === currentBuild ? "is-active" : ""}" data-build="${i}"><span class="lab-build-name">${escapeHtml(b.label)}</span><span class="lab-build-note">${escapeHtml(b.note)}</span></button>`,
-    ).join("");
-  }
-  async function openBuild(i: number) {
-    currentBuild = i;
-    renderBuilds();
-    const build = BUILDS[i]!;
-    try {
-      const entities = await build.entities();
-      if (destroyed || !renderer) return;
-      renderer.loadBlueprint(entities);
-      overlay.load(entities, build.feeds);
-    } catch (err) {
-      $("#lab-paste-status").textContent = err instanceof Error ? err.message : String(err);
-    }
-  }
-  $("#lab-build-list").addEventListener("click", (e) => {
-    const b = (e.target as HTMLElement).closest<HTMLButtonElement>("[data-build]");
-    if (b) void openBuild(Number(b.dataset.build));
-  }, { signal });
-  $("#lab-paste-load").addEventListener("click", () => {
-    const status = $("#lab-paste-status");
-    try {
-      const entities = entitiesFromString($<HTMLTextAreaElement>("#lab-paste").value);
-      currentBuild = -1;
-      renderBuilds();
-      renderer?.loadBlueprint(entities);
-      overlay.load(entities);
-      status.textContent = `${entities.length} entities`;
-    } catch (err) {
-      status.textContent = err instanceof Error ? err.message : "That isn't a blueprint string.";
-    }
-  }, { signal });
-
   /* ---------- simulation ---------- */
   function renderSim() {
     $("#lab-clock").textContent = clockText(overlay);
@@ -327,8 +275,10 @@ export function mountOverlayLab(root: HTMLElement, _options: LabOptions = {}): (
     overlay.attach(renderer);
     overlay.setEnabled(true);
     $("#lab-loading").hidden = true;
-    renderBuilds();
-    await openBuild(0);
+    const entities = getCurrentBlueprint();
+    $("#lab-empty").hidden = entities.length > 0;
+    renderer.loadBlueprint(entities);
+    overlay.load(entities);
   })();
 
   return () => {

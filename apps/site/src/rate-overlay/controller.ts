@@ -12,15 +12,6 @@ import { detectIssues, type Issue } from "./issues.js";
 import { drawOverlay, type HoverTarget, type PortTabRect } from "./overlay.js";
 import { loadSettings, saveSettings, type LabSettings } from "./settings.js";
 
-/** A belt input's items, fixed by whoever loads the blueprint (the lab's
- *  presets), on top of whatever the factory guesses. */
-export interface PresetFeed {
-  x: number;
-  y: number;
-  left: LaneFeed | null;
-  right: LaneFeed | null;
-}
-
 type Lanes = [LaneFeed | null, LaneFeed | null];
 
 /** Ticks simulated before the overlay counts as settled: a factory that
@@ -77,7 +68,6 @@ export class RateOverlay {
   private readonly cardBody: HTMLDivElement;
   private readonly abort = new AbortController();
   private entities: PlacedEntity[] = [];
-  private feeds: PresetFeed[] = [];
   private justLoaded: PlacedEntity[] | undefined;
   /** What the user set on ports by hand, by port id. Port ids come from
    *  tile positions, so these survive an edit to the blueprint and are laid
@@ -147,9 +137,8 @@ export class RateOverlay {
   }
 
   /** A new blueprint: forget hand-made port settings and start over. */
-  load(entities: PlacedEntity[], feeds: PresetFeed[] = []) {
+  load(entities: PlacedEntity[]) {
     this.entities = entities;
-    this.feeds = feeds;
     this.userInputs.clear();
     this.userArms.clear();
     this.userEnabled.clear();
@@ -190,10 +179,6 @@ export class RateOverlay {
     const footprint = (name: string) => getRenderCatalog().entities[name]?.tileFootprint;
     const f = new LabFactory(getData(), this.entities, this.research, footprint);
     const ids = new Set(f.ports().map((p) => p.id));
-    for (const feed of this.feeds) {
-      const port = f.net.ports.find((p) => p.kind === "input" && p.x === feed.x && p.y === feed.y);
-      if (port) f.setInput(port.id, feed.left, feed.right);
-    }
     for (const [id, [l, r]] of this.userInputs) if (ids.has(id)) f.setInput(id, l, r);
     for (const [id, items] of this.userArms) if (ids.has(id)) f.setArmPortItems(id, items);
     for (const [id, on] of this.userEnabled) if (ids.has(id)) f.setPortEnabled(id, on);
