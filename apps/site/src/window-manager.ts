@@ -92,8 +92,23 @@ export function makeFloatingWindow(el: HTMLElement, options: FloatingWindowOptio
     el.style.zIndex = String(zCounter);
   }
 
+  /** On opening, moves a window that fits on screen fully into view and
+   *  below the toolbar strip. Starting positions are picked for a desktop;
+   *  on a phone a window placed "near the right edge" would otherwise open
+   *  mostly off-screen, or with its titlebar under the toolbar. */
+  function fitOnScreen(): void {
+    const rect = el.getBoundingClientRect();
+    const margin = 8;
+    const toolbar = document.getElementById("window-toolbar")?.getBoundingClientRect();
+    const minY = toolbar && toolbar.height > 0 ? toolbar.bottom + 6 : 0;
+    x = rect.width + 2 * margin <= window.innerWidth ? Math.min(Math.max(x, margin), window.innerWidth - rect.width - margin) : margin;
+    y = Math.max(minY, Math.min(y, window.innerHeight - rect.height - margin));
+    apply();
+  }
+
   function show(): void {
     el.hidden = false;
+    fitOnScreen();
   }
 
   function hide(): void {

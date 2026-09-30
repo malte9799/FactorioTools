@@ -11,6 +11,8 @@ import { RateOverlay } from "../../rate-overlay/controller.js";
 import { clockText, renderLayerList, renderPortList, RESEARCH_HTML, simSummaryHtml, wireLayerList, wirePortList, wireResearch } from "../../rate-overlay/panels.js";
 import { DEFAULTS, PALETTES, type LabSettings } from "../../rate-overlay/settings.js";
 import { getCurrentBlueprint } from "../../current-blueprint.js";
+import { currentQuality, onQualityChange } from "../../render-presets.js";
+import { GRAPHICS_WINDOW_HTML, wireGraphicsPanel } from "../../graphics-panel.js";
 
 const TEMPLATE = `
   <div id="lab-stage" class="schematic-frame"></div>
@@ -20,7 +22,10 @@ const TEMPLATE = `
     <button type="button" data-toggle="lab-style">Style</button>
     <button type="button" data-toggle="lab-sim">Simulation</button>
     <button type="button" data-toggle="lab-ports">Ports</button>
+    <button type="button" data-toggle="lab-graphics">Graphics</button>
   </div>
+
+  <div id="lab-graphics" class="gui-window floating-window lab-window" hidden>${GRAPHICS_WINDOW_HTML}</div>
 
   <div id="lab-layers" class="gui-window floating-window lab-window" hidden>
     <div class="gui-titlebar"><span>Layers</span><span class="grip" aria-hidden="true"></span></div>
@@ -106,6 +111,7 @@ export function mountOverlayLab(root: HTMLElement): () => void {
     "lab-style": makeFloatingWindow($("#lab-style"), { x: right, y: 96, width: 340 }),
     "lab-sim": makeFloatingWindow($("#lab-sim"), { x: 16, y: Math.max(96, window.innerHeight - 330), width: 320 }),
     "lab-ports": makeFloatingWindow($("#lab-ports"), { x: 340, y: 96, width: 380 }),
+    "lab-graphics": makeFloatingWindow($("#lab-graphics"), { x: right, y: 96, width: 340 }),
   };
   const portsOpen = () => !windows["lab-ports"]!.el.hidden;
   for (const w of Object.values(windows)) w.hide();
@@ -267,11 +273,13 @@ export function mountOverlayLab(root: HTMLElement): () => void {
   $("#lab-restart").addEventListener("click", () => overlay.rebuild(), { signal });
   wireResearch($("#lab-research"), overlay, signal);
   wirePortList($("#lab-port-list"), overlay, signal);
+  wireGraphicsPanel($(".graphics-panel"), signal);
+  const stopQuality = onQualityChange((q) => renderer?.setQuality(q));
 
   void (async () => {
     await loadData();
     if (destroyed) return;
-    renderer = mountRenderer(stage, getData(), getRenderCatalog());
+    renderer = mountRenderer(stage, getData(), getRenderCatalog(), currentQuality());
     overlay.attach(renderer);
     overlay.setEnabled(true);
     $("#lab-loading").hidden = true;
@@ -284,6 +292,7 @@ export function mountOverlayLab(root: HTMLElement): () => void {
   return () => {
     destroyed = true;
     controller.abort();
+    stopQuality();
     overlay.destroy();
     renderer?.destroy();
     for (const w of Object.values(windows)) w.destroy();

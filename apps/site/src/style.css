@@ -2089,3 +2089,31 @@ canvas.select-mode {
   height: 100%;
   pointer-events: none;
 }
+
+/* ---------- phones ---------- */
+/* One row each for the nav and the window toolbar, scrolling sideways when
+   the buttons don't fit, instead of wrapping into a second row that covers
+   the windows below. Windows never get wider than the screen. */
+@media (max-width: 640px) {
+  .site-nav { padding: 8px 10px; gap: 10px; }
+  .site-nav .brand { flex: none; font-size: 15px; }
+  .site-nav nav { min-width: 0; overflow-x: auto; scrollbar-width: none; }
+  .site-nav nav::-webkit-scrollbar { display: none; }
+  .site-nav nav a { flex: none; white-space: nowrap; padding: 5px 8px; font-size: 11px; letter-spacing: 0.04em; }
+
+  #window-toolbar {
+    top: 46px;
+    left: 0;
+    right: 0;
+    padding: 0 8px 4px;
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+  #window-toolbar::-webkit-scrollbar { display: none; }
+  #window-toolbar button { flex: none; padding: 6px 8px; }
+
+  #library-window { top: 86px; left: 8px; bottom: 8px; width: min(260px, calc(100vw - 16px)); }
+
+  .floating-window { max-width: calc(100vw - 16px); }
+}

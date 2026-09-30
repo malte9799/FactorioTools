@@ -142,3 +142,8 @@
 .rate-footer { margin: 0; justify-content: space-between; }
 .rate-lab-link { font-size: 12.5px; color: var(--text-dim); }
 .rate-lab-link:hover { color: var(--gold); }
+
+/* Graphics window */
+.graphics-panel .lab-check { margin: 6px 0; }
+.graphics-custom { margin-left: 6px; color: var(--gold); letter-spacing: 0; text-transform: none; }
+.graphics-reset { margin: 10px 0 0; }
