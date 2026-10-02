@@ -4,10 +4,10 @@
 import type { LaneFeed } from "@factoriotools/sim";
 import { escapeHtml } from "../tools/blueprint-viewer/html.js";
 import type { RateOverlay } from "./controller.js";
-import { machineStatus, type PortInfo, type Research } from "./factory.js";
+import { machineStatus, type MachineStatus, type PortInfo, type Research } from "./factory.js";
 import { itemLabel } from "./issues.js";
 import { statusColor } from "./overlay.js";
-import { PALETTES, type LabSettings, type RateUnit } from "./settings.js";
+import { PALETTES, type LabSettings, type LaneState, type Palette, type RateUnit } from "./settings.js";
 
 type Layer = keyof LabSettings["layers"];
 
@@ -22,25 +22,121 @@ export const LAYER_INFO: { key: Layer; label: string; hint: string; group: "main
 
 /* ---------- layers ---------- */
 
+type Style = LabSettings["style"];
+
+const STATUS_CHIPS: [MachineStatus, string][] = [
+  ["working", "Working"],
+  ["arm", "Inserter-bound"],
+  ["starved", "Starved"],
+  ["output", "Output full"],
+  ["idle", "Idle"],
+];
+
+const LANE_CHIPS: [LaneState, string][] = [
+  ["flow", "Flowing"],
+  ["held", "Backed up"],
+  ["short", "Running dry"],
+  ["empty", "Empty"],
+];
+
+function laneChipColor(p: Palette, s: LaneState): string {
+  return s === "flow" ? p.ok : s === "held" ? p.held : s === "short" ? p.bad : p.idle;
+}
+
+function seg<K extends keyof Style>(key: K, label: string, choices: [Style[K], string][], cur: Style[K]) {
+  return `<div class="lab-option"><span class="lab-option-label">${label}</span><div class="segmented lab-seg" data-style="${key}">${choices
+    .map(([v, l]) => `<button type="button" data-value="${String(v)}" class="${v === cur ? "is-active" : ""}">${l}</button>`)
+    .join("")}</div></div>`;
+}
+
+function chips(attr: "data-status" | "data-lane-state", label: string, items: [string, string, string][], on: (k: string) => boolean) {
+  return `<div class="lab-option"><span class="lab-option-label">${label}</span><div class="lab-chips">${items
+    .map(([k, l, col]) => `<button type="button" class="lab-chip ${on(k) ? "is-on" : ""}" ${attr}="${k}" aria-pressed="${on(k)}"><i style="background:${col}"></i>${l}</button>`)
+    .join("")}</div></div>`;
+}
+
+/** Each layer's own options, shown under it while it's switched on. */
+function layerOptions(key: Layer, s: Style): string {
+  const pal = PALETTES[s.palette];
+  switch (key) {
+    case "dim":
+      return `<div class="lab-option"><span class="lab-option-label">Strength</span><div class="lab-slider"><input type="range" data-style="dimAmount" min="0" max="0.85" step="0.05" value="${s.dimAmount}"><span class="lab-slider-value" data-value-for="dimAmount">${Math.round(s.dimAmount * 100)}%</span></div></div>`;
+    case "lanes":
+      return (
+        seg("laneStyle", "Style", [["strips", "Strips"], ["edges", "Edges"], ["tint", "Tile tint"]], s.laneStyle) +
+        chips("data-lane-state", "Show lanes that are", LANE_CHIPS.map(([k, l]) => [k, l, laneChipColor(pal, k)]), (k) => s.laneStates[k as LaneState])
+      );
+    case "rings":
+      return (
+        seg("ringStyle", "Style", [["fill", "Fill"], ["ring", "Ring"], ["bar", "Bar"], ["light", "Light"]], s.ringStyle) +
+        seg("ringLabel", "Rate label", [["always", "Always"], ["hover", "On hover"], ["never", "Never"]], s.ringLabel) +
+        chips("data-status", "Show machines that are", STATUS_CHIPS.map(([k, l]) => [k, l, statusColor(pal, k)]), (k) => s.statuses[k as MachineStatus])
+      );
+    case "items":
+      return (
+        seg("itemStyle", "Items", [["icons", "Icons"], ["dots", "Dots"]], s.itemStyle) +
+        seg("armStyle", "Inserters", [["carry", "Carried item"], ["arc", "Swing arc"], ["dot", "Busy dot"]], s.armStyle)
+      );
+    default:
+      return "";
+  }
+}
+
 export function renderLayerList(el: HTMLElement, settings: LabSettings) {
-  const row = (l: (typeof LAYER_INFO)[number]) => `
-    <label class="lab-layer">
-      <input type="checkbox" data-layer="${l.key}" ${settings.layers[l.key] ? "checked" : ""}>
-      <span class="lab-layer-text"><span class="lab-layer-name">${l.label}</span><span class="lab-layer-hint">${l.hint}</span></span>
-    </label>`;
+  const row = (l: (typeof LAYER_INFO)[number]) => {
+    const on = settings.layers[l.key];
+    const options = layerOptions(l.key, settings.style);
+    return `<div class="lab-layer-item">
+      <label class="lab-layer">
+        <input type="checkbox" data-layer="${l.key}" ${on ? "checked" : ""}>
+        <span class="lab-layer-text"><span class="lab-layer-name">${l.label}</span><span class="lab-layer-hint">${l.hint}</span></span>
+      </label>
+      ${options ? `<div class="lab-layer-options" ${on ? "" : "hidden"}>${options}</div>` : ""}
+    </div>`;
+  };
   el.innerHTML =
     LAYER_INFO.filter((l) => l.group === "main").map(row).join("") +
     `<h3 class="lab-layer-heading">Extra options</h3>` +
     LAYER_INFO.filter((l) => l.group === "extra").map(row).join("");
 }
 
-export function wireLayerList(el: HTMLElement, overlay: RateOverlay, signal: AbortSignal) {
+/** Wires a layer list: the switches, and every option under them. */
+export function wireLayerList(el: HTMLElement, overlay: RateOverlay, signal: AbortSignal, onChange?: () => void) {
+  const changed = (rerender: boolean) => {
+    overlay.saveSettings();
+    if (rerender) renderLayerList(el, overlay.settings);
+    onChange?.();
+  };
   el.addEventListener("change", (e) => {
     const input = e.target as HTMLInputElement;
     const key = input.dataset.layer as Layer | undefined;
     if (!key) return;
     overlay.settings.layers[key] = input.checked;
-    overlay.saveSettings();
+    changed(true);
+  }, { signal });
+  el.addEventListener("input", (e) => {
+    const input = e.target as HTMLInputElement;
+    if (input.type !== "range" || input.dataset.style !== "dimAmount") return;
+    overlay.settings.style.dimAmount = parseFloat(input.value);
+    const label = el.querySelector('[data-value-for="dimAmount"]');
+    if (label) label.textContent = `${Math.round(overlay.settings.style.dimAmount * 100)}%`;
+    changed(false);
+  }, { signal });
+  el.addEventListener("click", (e) => {
+    const t = e.target as HTMLElement;
+    const style = overlay.settings.style;
+    const segButton = t.closest<HTMLButtonElement>(".lab-seg[data-style] [data-value]");
+    const status = t.closest<HTMLButtonElement>("[data-status]")?.dataset.status as MachineStatus | undefined;
+    const laneSt = t.closest<HTMLButtonElement>("[data-lane-state]")?.dataset.laneState as LaneState | undefined;
+    if (segButton) {
+      const key = segButton.parentElement!.dataset.style as keyof Style;
+      (style as Record<string, unknown>)[key] = segButton.dataset.value;
+    } else if (status) {
+      style.statuses[status] = !style.statuses[status];
+    } else if (laneSt) {
+      style.laneStates[laneSt] = !style.laneStates[laneSt];
+    } else return;
+    changed(true);
   }, { signal });
 }
 

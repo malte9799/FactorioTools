@@ -147,3 +147,25 @@
 .graphics-panel .lab-check { margin: 6px 0; }
 .graphics-custom { margin-left: 6px; color: var(--gold); letter-spacing: 0; text-transform: none; }
 .graphics-reset { margin: 10px 0 0; }
+
+/* A layer's own options, under its switch while it's on. */
+.lab-layer-options[hidden] { display: none; }
+.lab-layer-options { display: grid; gap: 8px; margin: 0 8px 10px 33px; padding-left: 10px; border-left: 1px solid var(--border); }
+.lab-option { display: grid; gap: 4px; }
+.lab-option-label { font: 500 10.5px/1.2 var(--mono); letter-spacing: 0.08em; text-transform: uppercase; color: var(--text-dim); }
+.lab-option .lab-seg button { padding: 4px 6px; }
+
+/* Status filter chips: on shows the colour, off greys it out. */
+.lab-chips { display: flex; flex-wrap: wrap; gap: 4px; }
+.lab-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  font-size: 12px;
+  color: var(--text-dim);
+  opacity: 0.55;
+}
+.lab-chip i { width: 10px; height: 10px; border-radius: 2px; display: inline-block; filter: grayscale(1); }
+.lab-chip.is-on { color: var(--text); opacity: 1; }
+.lab-chip.is-on i { filter: none; }

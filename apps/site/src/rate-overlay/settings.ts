@@ -2,6 +2,11 @@
  *  one plain object so the whole look can be copied out as JSON and pasted
  *  into a conversation or a later implementation. */
 
+import type { MachineStatus } from "./factory.js";
+
+/** What a lane signal says about one lane of one tile. */
+export type LaneState = "flow" | "held" | "empty" | "short";
+
 export interface LabSettings {
   layers: {
     dim: boolean;
@@ -17,8 +22,13 @@ export interface LabSettings {
     palette: PaletteName;
     laneStyle: "strips" | "tint" | "edges";
     laneWidth: number;
-    laneHideIdle: boolean;
+    /** Which lane states get a mark; switch some off to see only, say,
+     *  the lanes that back up. */
+    laneStates: Record<LaneState, boolean>;
     ringStyle: "ring" | "light" | "bar" | "fill";
+    /** Which machine states get a mark and a label; switch the healthy
+     *  ones off to see only what's wrong. */
+    statuses: Record<MachineStatus, boolean>;
     ringLabel: "always" | "hover" | "never";
     ringThickness: number;
     armStyle: "carry" | "arc" | "dot";
@@ -68,8 +78,9 @@ export const DEFAULTS: LabSettings = {
     palette: "factorio",
     laneStyle: "strips",
     laneWidth: 0.14,
-    laneHideIdle: false,
+    laneStates: { flow: true, held: true, empty: true, short: true },
     ringStyle: "fill",
+    statuses: { working: true, arm: true, starved: true, output: true, idle: true },
     ringLabel: "always",
     ringThickness: 0.14,
     armStyle: "carry",
@@ -88,10 +99,15 @@ export function loadSettings(): LabSettings {
     const raw = localStorage.getItem(KEY);
     if (!raw) return structuredClone(DEFAULTS);
     const saved = JSON.parse(raw) as Partial<LabSettings>;
-    return {
-      layers: { ...DEFAULTS.layers, ...saved.layers },
-      style: { ...DEFAULTS.style, ...saved.style },
-    };
+    const style = { ...DEFAULTS.style, ...saved.style } as LabSettings["style"] & { laneHideIdle?: boolean };
+    // The two filters are objects: merge them too, so a state added later
+    // starts out shown.
+    style.statuses = { ...DEFAULTS.style.statuses, ...saved.style?.statuses };
+    style.laneStates = { ...DEFAULTS.style.laneStates, ...saved.style?.laneStates };
+    // Older settings had a single "hide empty lanes" switch.
+    if (style.laneHideIdle) style.laneStates.empty = false;
+    delete style.laneHideIdle;
+    return { layers: { ...DEFAULTS.layers, ...saved.layers }, style };
   } catch {
     return structuredClone(DEFAULTS);
   }

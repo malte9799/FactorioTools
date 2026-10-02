@@ -148,12 +148,9 @@ export function mountOverlayLab(root: HTMLElement): () => void {
     const v = overlay.settings.style[key] as number;
     return `<div class="lab-slider"><input type="range" id="lab-s-${key}" data-style="${key}" min="${min}" max="${max}" step="${step}" value="${v}"><span class="lab-slider-value" data-value-for="${key}">${fmt(v)}</span></div>`;
   }
-  function toggle(key: keyof LabSettings["style"], label: string) {
-    return `<label class="lab-check"><input type="checkbox" data-style="${key}" ${overlay.settings.style[key] ? "checked" : ""}> ${label}</label>`;
-  }
+
   const FORMATS: Partial<Record<keyof LabSettings["style"], (v: number) => string>> = {
-    dimAmount: (v) => `${Math.round(v * 100)}%`,
-    laneWidth: (v) => `${v.toFixed(2)} tile`,
+      laneWidth: (v) => `${v.toFixed(2)} tile`,
     ringThickness: (v) => `${v.toFixed(2)} tile`,
     labelScale: (v) => `${v.toFixed(2)}×`,
     detailZoom: (v) => `${Math.round(v)} px/tile`,
@@ -166,30 +163,7 @@ export function mountOverlayLab(root: HTMLElement): () => void {
         { value: "colorblind", label: "Colour-blind" },
         { value: "muted", label: "Muted" },
       ]) + `<div class="lab-swatches">${swatches()}</div>`),
-      group("Build dimming", slider("dimAmount", 0, 0.85, 0.05, FORMATS.dimAmount!)),
-      group("Lanes", segmented("laneStyle", [
-        { value: "strips", label: "Strips" },
-        { value: "edges", label: "Edges" },
-        { value: "tint", label: "Tile tint" },
-      ]) + slider("laneWidth", 0.04, 0.3, 0.01, FORMATS.laneWidth!) + toggle("laneHideIdle", "Hide empty lanes")),
-      group("Machines", segmented("ringStyle", [
-        { value: "ring", label: "Ring" },
-        { value: "light", label: "Light" },
-        { value: "bar", label: "Bar" },
-        { value: "fill", label: "Fill" },
-      ]) + segmented("ringLabel", [
-        { value: "always", label: "Label always" },
-        { value: "hover", label: "On hover" },
-        { value: "never", label: "Never" },
-      ]) + slider("ringThickness", 0.06, 0.4, 0.02, FORMATS.ringThickness!)),
-      group("Rendered items", segmented("armStyle", [
-        { value: "carry", label: "Carried item" },
-        { value: "arc", label: "Swing arc" },
-        { value: "dot", label: "Busy dot" },
-      ]) + segmented("itemStyle", [
-        { value: "icons", label: "Item icons" },
-        { value: "dots", label: "Dots" },
-      ])),
+      group("Sizes", `<span class="lab-field-label">Lane width</span>` + slider("laneWidth", 0.04, 0.3, 0.01, FORMATS.laneWidth!) + `<span class="lab-field-label">Machine ring and bar</span>` + slider("ringThickness", 0.06, 0.4, 0.02, FORMATS.ringThickness!)),
       group("Rates", segmented("rateUnit", [
         { value: "s", label: "Per second" },
         { value: "min", label: "Per minute" },
@@ -212,6 +186,7 @@ export function mountOverlayLab(root: HTMLElement): () => void {
     (overlay.settings.style as Record<string, unknown>)[key] = btn.dataset.value;
     persist();
     renderStyle();
+    renderLayerList($("#lab-layer-list"), overlay.settings); // chip colours follow the palette
   }, { signal });
   styleBody.addEventListener("input", (e) => {
     const input = e.target as HTMLInputElement;
