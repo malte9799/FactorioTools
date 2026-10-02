@@ -32,6 +32,9 @@ import { buildPropertiesPanel, buildRecipeMenu, buildModuleMenu, buildFilterItem
 import type { GridMenuHandle } from "./grid-menu.js";
 import { buildLibrarySidebar } from "./library-sidebar.js";
 import { saveToLibrary } from "./blueprint-library.js";
+import { RateOverlay } from "../../rate-overlay/controller.js";
+import { setCurrentBlueprint, VIEWER_AUTOSAVE_KEY } from "../../current-blueprint.js";
+import { clockText, rateUnitHtml, renderLayerList, renderPortList, RESEARCH_HTML, simSummaryHtml, wireLayerList, wirePortList, wireRateUnit, wireResearch } from "../../rate-overlay/panels.js";
 
 const TEMPLATE = `
   <div id="schematic" class="schematic-frame"></div>
@@ -150,6 +153,48 @@ const TEMPLATE = `
     </div>
   </div>
 
+  <div id="rate-window" class="gui-window floating-window lab-window rate-window" hidden>
+    <div class="gui-titlebar">
+      <span>Rate Calculator</span>
+      <span class="grip" aria-hidden="true"></span>
+    </div>
+    <div class="gui-body">
+      <div class="lab-row">
+        <button type="button" id="rate-play">Pause</button>
+        <div class="segmented" role="group" aria-label="Speed" id="rate-speed">
+          <button type="button" data-speed="1" class="is-active">1×</button>
+          <button type="button" data-speed="4">4×</button>
+          <button type="button" data-speed="16">16×</button>
+        </div>
+        <span class="lab-clock" id="rate-clock">0:00</span>
+      </div>
+      <div id="rate-summary" class="lab-summary"></div>
+      <div id="rate-unit"></div>
+      <div class="segmented lab-seg rate-tabs" role="tablist" id="rate-tabs">
+        <button type="button" data-pane="layers">Layers</button>
+        <button type="button" data-pane="ports">Ports</button>
+        <button type="button" data-pane="sim">Simulation</button>
+      </div>
+      <div class="rate-pane" data-pane="layers" hidden><div id="rate-layer-list" class="lab-layer-list"></div></div>
+      <div class="rate-pane" data-pane="ports" hidden>
+        <p class="lab-note">Every open belt end is a port, and so is an inserter connected on one side only. Switch them here or by clicking a tab on the map.</p>
+        <div id="rate-port-list" class="lab-port-list"></div>
+      </div>
+      <div class="rate-pane" data-pane="sim" hidden>
+        <div id="rate-research"></div>
+        <div class="lab-row rate-sim-actions">
+          <button type="button" id="rate-skip">Skip ahead 60 s</button>
+          <button type="button" id="rate-restart">Restart</button>
+        </div>
+        <p class="lab-note">Belts, splitters, undergrounds and belt stacking are simulated per lane, 1:1. Machines and inserters use a stand-in model, so their numbers are close, not exact.</p>
+      </div>
+      <div class="lab-row rate-footer">
+        <button type="button" id="rate-open-table">Rate table</button>
+        <a href="#/overlay-lab" class="rate-lab-link">Style it in the Overlay Lab</a>
+      </div>
+    </div>
+  </div>
+
   <div id="about-window" class="gui-window floating-window" hidden>
     <div class="gui-titlebar">
       <span>About</span>
@@ -215,7 +260,7 @@ const TEMPLATE = `
   <div id="window-toolbar">
     <button type="button" data-toggle="library-window">Library</button>
     <button type="button" data-toggle="intake-window">Blueprint Viewer</button>
-    <button type="button" data-toggle="results-window">Rate Calculator</button>
+    <button type="button" data-toggle="rate-window">Rate Calculator</button>
     <button type="button" data-toggle="palette-window">Build</button>
     <button type="button" data-toggle="about-window">About</button>
     <button type="button" id="alt-mode-toggle" title="Show recipes and modules (Alt)">Alt mode</button>
@@ -369,6 +414,50 @@ export function mountBlueprintViewer(root: HTMLElement): () => void {
   const intakeWindow = makeFloatingWindow($("#intake-window"), { x: 16, y: 66 });
   const resultsWindow = makeFloatingWindow(resultsWindowEl, { x: Math.max(16, window.innerWidth - 460), y: 66 });
   const aboutWindow = makeFloatingWindow($("#about-window"), { x: 16, y: window.innerHeight - 120 });
+
+  // The Rate Calculator: a live simulation drawn over the build itself.
+  // Its window being open is what switches the overlay on; the classic
+  // rate table (resultsWindow) is one button away inside it.
+  const rateOverlay = new RateOverlay(canvas, {
+    cardHost: root,
+    onUpdate: () => renderRateWindow(),
+    onPortsChange: () => {
+      if (ratePane === "ports") renderPortList($("#rate-port-list"), rateOverlay);
+    },
+  });
+  const rateWindowRaw = makeFloatingWindow($("#rate-window"), {
+    x: Math.max(16, window.innerWidth - 396),
+    y: 66,
+    width: 380,
+    onClose: () => rateOverlay.setEnabled(false),
+  });
+  const rateWindow = {
+    ...rateWindowRaw,
+    show() {
+      rateWindowRaw.show();
+      rateOverlay.setEnabled(true);
+      renderRateWindow();
+    },
+    hide() {
+      rateWindowRaw.hide();
+      rateOverlay.setEnabled(false);
+    },
+  };
+  let ratePane: string | undefined;
+  function renderRateWindow() {
+    if (rateWindowRaw.el.hidden) return;
+    $("#rate-clock").textContent = clockText(rateOverlay);
+    $("#rate-play").textContent = rateOverlay.playing ? "Pause" : "Play";
+    $("#rate-summary").innerHTML = simSummaryHtml(rateOverlay);
+  }
+  function showRatePane(pane: string | undefined) {
+    ratePane = pane;
+    for (const b of root.querySelectorAll<HTMLButtonElement>("#rate-tabs [data-pane]")) b.classList.toggle("is-active", b.dataset.pane === pane);
+    for (const el of root.querySelectorAll<HTMLElement>(".rate-pane")) el.hidden = el.dataset.pane !== pane;
+    rateOverlay.forcePorts = pane === "ports";
+    if (pane === "layers") renderLayerList($("#rate-layer-list"), rateOverlay.settings);
+    if (pane === "ports") renderPortList($("#rate-port-list"), rateOverlay);
+  }
   const paletteWindow = makeFloatingWindow($("#palette-window"), { x: 16, y: Math.max(280, window.innerHeight - 340) });
   const debugWindow = makeFloatingWindow($("#debug-window"), { x: Math.max(16, window.innerWidth - 280), y: window.innerHeight - 260 });
   const propertiesWindow = makeFloatingWindow($("#properties-window"), {
@@ -403,6 +492,7 @@ export function mountBlueprintViewer(root: HTMLElement): () => void {
     "library-window": libraryWindow,
     "intake-window": intakeWindow,
     "results-window": resultsWindow,
+    "rate-window": rateWindow,
     "about-window": aboutWindow,
     "palette-window": paletteWindow,
     "debug-window": debugWindow,
@@ -419,6 +509,36 @@ export function mountBlueprintViewer(root: HTMLElement): () => void {
 
   const controller = new AbortController();
   const { signal } = controller;
+
+  $("#rate-unit").innerHTML = rateUnitHtml(rateOverlay.settings);
+  $("#rate-research").innerHTML = RESEARCH_HTML;
+  wireRateUnit($("#rate-unit"), rateOverlay, signal);
+  wireLayerList($("#rate-layer-list"), rateOverlay, signal);
+  wirePortList($("#rate-port-list"), rateOverlay, signal);
+  wireResearch($("#rate-research"), rateOverlay, signal);
+  $("#rate-tabs").addEventListener("click", (e) => {
+    const b = (e.target as HTMLElement).closest<HTMLButtonElement>("[data-pane]");
+    // Clicking the open tab folds the window back down to its summary.
+    if (b) showRatePane(ratePane === b.dataset.pane ? undefined : b.dataset.pane);
+  }, { signal });
+  $("#rate-play").addEventListener("click", () => {
+    rateOverlay.playing = !rateOverlay.playing;
+    renderRateWindow();
+  }, { signal });
+  $("#rate-speed").addEventListener("click", (e) => {
+    const b = (e.target as HTMLElement).closest<HTMLButtonElement>("[data-speed]");
+    if (!b) return;
+    rateOverlay.speed = Number(b.dataset.speed);
+    for (const x of $("#rate-speed").querySelectorAll("button")) x.classList.toggle("is-active", x === b);
+    rateOverlay.playing = true;
+    renderRateWindow();
+  }, { signal });
+  $("#rate-skip").addEventListener("click", () => rateOverlay.skip(3600), { signal });
+  $("#rate-restart").addEventListener("click", () => rateOverlay.rebuild(), { signal });
+  $("#rate-open-table").addEventListener("click", () => {
+    resultsWindow.show();
+    resultsWindow.bringToFront();
+  }, { signal });
 
   function toggleWindow(target: { el: HTMLElement; show(): void; hide(): void; bringToFront(): void }): void {
     if (target.el.hidden) {
@@ -852,6 +972,7 @@ export function mountBlueprintViewer(root: HTMLElement): () => void {
 
   let renderer: BlueprintRenderer = mountRenderer(canvas, getData(), getRenderCatalog());
   renderer.onHover(onSchematicHover);
+  rateOverlay.attach(renderer);
   // Rebuilt alongside every renderer remount (loadData() resolving with the
   // real dataset, or a later dataset swap) — placeEntity's collision check
   // reads this rather than calling buildVisualLookup per click.
@@ -946,6 +1067,13 @@ export function mountBlueprintViewer(root: HTMLElement): () => void {
     // none) since the 'q' pipette shortcut needs to know what's under the
     // cursor regardless of whether it's rate-bearing.
     hoveredEntityNumber = entityNumber;
+    // With the rate overlay on, its own hover card speaks for the build.
+    if (rateOverlay.isEnabled) {
+      tooltip.hidden = true;
+      tooltipContentKey = null;
+      renderer.setHighlight(null);
+      return;
+    }
     const group = entityNumber === undefined ? null : groupForEntity(entityNumber);
     if (!group || entityNumber === undefined) {
       tooltip.hidden = true;
@@ -995,7 +1123,7 @@ export function mountBlueprintViewer(root: HTMLElement): () => void {
   // not a real save-slot feature; silently no-ops if storage is
   // unavailable (private browsing, quota) rather than surfacing an error
   // for what's just a convenience.
-  const AUTOSAVE_KEY = "factoriotools.blueprint-viewer.autosave";
+  const AUTOSAVE_KEY = VIEWER_AUTOSAVE_KEY;
   function persistEntities(): void {
     if (!entities.length) return;
     try {
@@ -1097,6 +1225,7 @@ export function mountBlueprintViewer(root: HTMLElement): () => void {
     const savedCamera = restoreCameraFromSave ? readSavedCamera() : null;
     renderer.loadBlueprint(entities, wires);
     restoreCamera(savedCamera);
+    rateOverlay.load(entities);
     recalculate();
     persistEntities();
   }
@@ -2124,6 +2253,10 @@ export function mountBlueprintViewer(root: HTMLElement): () => void {
   }
 
   function recalculate() {
+    // Every edit lands here; the overlay rebuilds its model shortly after,
+    // and the Overlay Lab picks up the same blueprint when it's opened.
+    rateOverlay.update(entities);
+    setCurrentBlueprint(entities);
     const data = getData();
     result = calculate(data, entities, options.researchLevels);
     const throughputCtx: ThroughputContext = {
@@ -2860,6 +2993,7 @@ export function mountBlueprintViewer(root: HTMLElement): () => void {
     renderer.destroy();
     renderer = mountRenderer(canvas, getData(), getRenderCatalog());
     renderer.onHover(onSchematicHover);
+    rateOverlay.attach(renderer);
     renderer.setAltMode(altModeOn);
     wireEditCallbacks();
     wireCameraPersistence();
@@ -2986,7 +3120,9 @@ export function mountBlueprintViewer(root: HTMLElement): () => void {
 
   return () => {
     controller.abort();
+    rateOverlay.destroy();
     renderer.destroy();
+    rateWindowRaw.destroy();
     intakeWindow.destroy();
     resultsWindow.destroy();
     aboutWindow.destroy();

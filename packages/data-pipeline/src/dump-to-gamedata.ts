@@ -30,11 +30,13 @@ import type {
   MachineProto,
   ModuleProto,
   ModuleSlotPiece,
-  ProductProto,
   ProductivityTechnology,
+  ProductProto,
   QualityName,
   RecipeProto,
+  SplitterProto,
   Sprite,
+  UndergroundBeltProto,
 } from "@factoriotools/engine";
 import { loadLocale, localisedRecipeName, type LocaleTables } from "./locale.js";
 import { animationListGraphics, beltGraphics, directionColumnGraphics, pipeConnectionsOf, pipeCoversLayers, sheetsOf, toSprite, unwrap, unwrapAll } from "./sprite-shapes.js";
@@ -627,6 +629,7 @@ function mapMachines(raw: Raw, locale: LocaleTables): Record<string, MachineProt
         categories,
         moduleSlots: proto.module_slots ?? 0,
         allowedEffects: proto.allowed_effects,
+        baseEffect: proto.effect_receiver?.base_effect,
         energyUsage: parseEnergyValue(proto.energy_usage),
         drain: proto.energy_source?.drain !== undefined ? parseEnergyValue(proto.energy_source.drain) : undefined,
         energySource: energySourceOf(proto.energy_source),
@@ -713,11 +716,39 @@ function mapBelts(raw: Raw, locale: LocaleTables): Record<string, BeltProto> {
     belts[proto.name] = {
       name: proto.name,
       throughput: (proto.speed ?? 0) * 480,
+      speed: proto.speed ?? 0,
       graphics: graphicsForBelt(proto),
       localised: locale.entityName.get(proto.name) ?? proto.name,
     };
   }
   return belts;
+}
+
+/** Belt simulation data only; underground and splitter sprites live in the
+ *  render catalog. */
+function mapUndergroundBelts(raw: Raw, locale: LocaleTables): Record<string, UndergroundBeltProto> {
+  const out: Record<string, UndergroundBeltProto> = {};
+  for (const proto of Object.values(raw["underground-belt"] ?? {})) {
+    out[proto.name] = {
+      name: proto.name,
+      speed: proto.speed ?? 0,
+      maxDistance: proto.max_distance ?? 0,
+      localised: locale.entityName.get(proto.name) ?? proto.name,
+    };
+  }
+  return out;
+}
+
+function mapSplitters(raw: Raw, locale: LocaleTables): Record<string, SplitterProto> {
+  const out: Record<string, SplitterProto> = {};
+  for (const proto of Object.values(raw.splitter ?? {})) {
+    out[proto.name] = {
+      name: proto.name,
+      speed: proto.speed ?? 0,
+      localised: locale.entityName.get(proto.name) ?? proto.name,
+    };
+  }
+  return out;
 }
 
 /** Inserters composite a platform plate with a hand that the renderer rotates,
@@ -777,6 +808,8 @@ function main() {
   const modules = mapModules(raw, locale);
   const beacons = mapBeacons(raw, locale);
   const belts = mapBelts(raw, locale);
+  const undergroundBelts = mapUndergroundBelts(raw, locale);
+  const splitters = mapSplitters(raw, locale);
   const inserters = mapInserters(raw, locale);
 
   const qualityLevel = qualityLevelsOf(raw);
@@ -790,6 +823,8 @@ function main() {
     modules,
     beacons,
     belts,
+    undergroundBelts,
+    splitters,
     inserters,
     qualityMachineSpeed: qualityMultiplier,
     qualityModuleEffect: qualityMultiplier,

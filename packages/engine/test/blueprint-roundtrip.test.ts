@@ -215,4 +215,57 @@ test("a chest's request_filters stay read-only: filterItems round-trips to displ
   assert.equal(reWritten!.request_filters, undefined, "chest requests are still not writable — dropped, not guessed wrong");
 });
 
+test("splitter priorities and filter round-trip, reading both the 2.0 object and 1.1 string filter", () => {
+  const modern: BpEntity = {
+    entity_number: 1,
+    name: "splitter",
+    position: { x: 0.5, y: 0 },
+    input_priority: "left",
+    output_priority: "right",
+    filter: { name: "iron-plate", quality: "normal", comparator: "=" },
+  };
+  const legacy: BpEntity = { entity_number: 2, name: "splitter", position: { x: 2.5, y: 0 }, output_priority: "left", filter: "copper-plate" };
+  const [a, b] = normaliseEntities({ item: "blueprint", entities: [modern, legacy] });
+  assert.equal(a!.splitterInputPriority, "left");
+  assert.equal(a!.splitterOutputPriority, "right");
+  assert.equal(a!.splitterFilter, "iron-plate");
+  assert.equal(b!.splitterInputPriority, undefined);
+  assert.equal(b!.splitterFilter, "copper-plate");
+
+  const [written] = denormaliseEntities([a!]);
+  assert.equal(written!.input_priority, "left");
+  assert.equal(written!.output_priority, "right");
+  assert.deepEqual(written!.filter, { name: "iron-plate" });
+  assert.deepEqual(normaliseEntities({ item: "blueprint", entities: [written!] })[0], { ...a!, entityNumber: 1 });
+});
+
+test("a plain splitter writes no priority or filter keys", () => {
+  const [plain] = normaliseEntities({ item: "blueprint", entities: [{ entity_number: 1, name: "splitter", position: { x: 0.5, y: 0 } }] });
+  const [written] = denormaliseEntities([plain!]);
+  assert.equal("input_priority" in written!, false);
+  assert.equal("output_priority" in written!, false);
+  assert.equal("filter" in written!, false);
+});
+
+test("item hints come from combinators, display panels, infinity and requester chests, never virtual signals", () => {
+  const entities: BpEntity[] = [
+    {
+      entity_number: 1,
+      name: "constant-combinator",
+      position: { x: 0.5, y: 0.5 },
+      control_behavior: { sections: { sections: [{ filters: [{ name: "iron-plate" }, { type: "virtual", name: "signal-N" }] }, { filters: [{ name: "copper-plate" }] }] } },
+    },
+    { entity_number: 2, name: "display-panel", position: { x: 1.5, y: 0.5 }, icon: { name: "advanced-circuit" }, control_behavior: { parameters: [{ icon: { type: "virtual", name: "signal-anything" } }] } },
+    { entity_number: 3, name: "infinity-chest", position: { x: 2.5, y: 0.5 }, infinity_settings: { filters: [{ name: "coal" }] } },
+    { entity_number: 4, name: "requester-chest", position: { x: 3.5, y: 0.5 }, request_filters: { sections: [{ index: 1, filters: [{ index: 1, name: "stone" }] }, { index: 2, filters: [{ index: 1, name: "sulfur" }] }] } },
+    { entity_number: 5, name: "transport-belt", position: { x: 4.5, y: 0.5 } },
+  ];
+  const [cc, dp, inf, req, belt] = normaliseEntities({ item: "blueprint", entities });
+  assert.deepEqual(cc!.signalItems, ["iron-plate", "copper-plate"]);
+  assert.deepEqual(dp!.signalItems, ["advanced-circuit"]);
+  assert.deepEqual(inf!.signalItems, ["coal"]);
+  assert.deepEqual(req!.signalItems, ["stone", "sulfur"]);
+  assert.equal(belt!.signalItems, undefined);
+});
+
 console.log(`\n${passed} passing`);

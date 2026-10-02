@@ -1,0 +1,1268 @@
+<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"></head><body>
+<title>Bottleneck Overlay Studies</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@500;600;700&family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<style>
+/* Layout: a long study sheet. Each concept is a live canvas "plate" framed like the app's own
+   GUI windows, with a notes column beside it. Single dark theme on purpose: it is the app's world. */
+:root {
+  --ground: #1c1b1a;
+  --frame: #3d3c3b;
+  --panel: #2b2a29;
+  --inset: #21201f;
+  --edge: #121212;
+  --text: #e6e0d8;
+  --dim: #a8a39b;
+  --faint: #767168;
+  --gold: #ffcc80;
+  --ok: #93d977;
+  --warn: #f2c14e;
+  --bad: #e2765a;
+  --held: #86a8ff;
+  --iron: #b4c2d0;
+  --copper: #e58c50;
+  --gear: #dcd3b6;
+  --fast: #4f93dd;
+  --bulk: #74c24f;
+  --display: "Chakra Petch", "IBM Plex Sans", system-ui, sans-serif;
+  --body: "IBM Plex Sans", system-ui, sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, monospace;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+html { background: var(--ground); }
+body { background: var(--ground); color: var(--text); font: 15px/1.6 var(--body); margin: 0; }
+.wrap { max-width: 1280px; margin: 0 auto; padding-inline: 20px; padding-block: 28px 64px; }
+h1, h2, h3 { font-family: var(--display); font-weight: 600; text-wrap: balance; margin: 0; letter-spacing: 0.01em; }
+h1 { font-size: clamp(28px, 4.2vw, 46px); line-height: 1.08; color: var(--gold); max-width: 22ch; }
+h2 { font-size: 22px; line-height: 1.2; }
+h3 { font-size: 13px; text-transform: uppercase; letter-spacing: 0.1em; color: var(--dim); font-weight: 600; }
+p { margin: 0; max-width: 68ch; }
+.eyebrow { font: 500 12px/1 var(--mono); letter-spacing: 0.14em; text-transform: uppercase; color: var(--faint); }
+.lede { color: var(--dim); font-size: 17px; }
+code, .mono { font-family: var(--mono); font-size: 0.92em; }
+a { color: var(--held); }
+
+header.hero { display: grid; gap: 14px; padding-block: 8px 22px; }
+
+/* sticky simulation bar */
+.simbar {
+  position: sticky; top: env(safe-area-inset-top, 0px); z-index: 20;
+  display: flex; flex-wrap: wrap; align-items: center; gap: 10px 18px;
+  background: var(--frame); border: 1px solid var(--edge);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.1), 0 8px 24px rgba(0,0,0,0.35);
+  padding: 8px 12px; margin-bottom: 28px;
+}
+.simbar .group { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.simbar .label { font: 500 11px/1 var(--mono); letter-spacing: 0.12em; text-transform: uppercase; color: var(--dim); }
+.btn {
+  font: 600 13px/1 var(--display); color: var(--text); background: #575655;
+  border: 1px solid var(--edge); box-shadow: inset 0 1px 0 rgba(255,255,255,0.14), inset 0 -2px 0 rgba(0,0,0,0.25);
+  padding: 7px 11px; cursor: pointer; letter-spacing: 0.02em;
+}
+.btn:hover { background: #6b6a68; }
+.btn:focus-visible, button:focus-visible, input:focus-visible { outline: 2px solid var(--gold); outline-offset: 2px; }
+.btn[aria-pressed="true"] { background: #f0b44a; color: #221a0c; box-shadow: inset 0 1px 0 rgba(255,255,255,0.35), inset 0 -2px 0 rgba(0,0,0,0.2); }
+.readout { font: 500 14px/1 var(--mono); font-variant-numeric: tabular-nums; color: var(--text); white-space: nowrap; }
+.readout b { color: var(--gold); font-weight: 600; }
+.meter { width: 110px; height: 8px; background: var(--inset); border: 1px solid var(--edge); position: relative; }
+.meter i { position: absolute; inset: 0 auto 0 0; background: var(--ok); }
+.simbar .spacer { flex: 1 1 auto; }
+
+/* intro block */
+.testbuild { display: grid; grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr); gap: 28px; margin-bottom: 44px; align-items: start; }
+.testbuild p + p { margin-top: 10px; }
+.legend { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px 18px; background: var(--panel); border: 1px solid var(--edge); padding: 14px 16px; }
+.legend h3 { grid-column: 1 / -1; margin-bottom: 2px; }
+.sw { display: flex; gap: 10px; align-items: center; font-size: 13.5px; color: var(--dim); min-width: 0; }
+.sw i { flex: 0 0 auto; width: 22px; height: 8px; border-radius: 1px; }
+.sw b { color: var(--text); font-weight: 500; }
+
+/* concept plates */
+.concept { display: grid; grid-template-columns: minmax(0, 1fr) 300px; gap: 22px; margin-bottom: 56px; align-items: start; }
+.plate { background: var(--frame); border: 1px solid var(--edge); box-shadow: inset 0 1px 0 rgba(255,255,255,0.1), 0 14px 40px rgba(0,0,0,0.35); padding: 0 8px 8px; min-width: 0; }
+.plate-bar { display: flex; align-items: center; gap: 12px; padding: 9px 4px 9px; }
+.plate-bar .tag { font: 700 15px/1 var(--display); color: #221a0c; background: var(--gold); width: 26px; height: 26px; display: grid; place-items: center; flex: 0 0 auto; }
+.plate-bar h2 { color: var(--gold); font-size: 20px; }
+.plate-bar .grip { flex: 1 1 auto; height: 10px; background: repeating-linear-gradient(to bottom, rgba(0,0,0,0.45) 0 1px, rgba(255,255,255,0.08) 1px 2px, transparent 2px 4px); min-width: 20px; }
+.plate-bar .hint { font: 500 12px/1.2 var(--mono); color: var(--dim); text-align: right; }
+.stage { position: relative; background: var(--inset); border: 1px solid var(--edge); box-shadow: inset 0 2px 6px rgba(0,0,0,0.6); overflow: hidden; touch-action: pan-y; }
+.stage canvas { display: block; width: 100%; }
+.plate-tools { display: flex; flex-wrap: wrap; gap: 8px 14px; align-items: center; padding: 8px 2px 0; }
+.plate-tools input[type="range"] { flex: 1 1 180px; accent-color: var(--gold); min-width: 0; }
+
+.tip {
+  position: absolute; z-index: 3; pointer-events: none; width: 250px; max-width: calc(100% - 12px);
+  background: rgba(38, 37, 36, 0.96); border: 1px solid var(--edge);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.1), 0 10px 24px rgba(0,0,0,0.5); padding: 9px 11px 10px;
+  font-size: 13px; line-height: 1.45;
+}
+.tip .t { font: 600 14px/1.2 var(--display); color: var(--gold); margin-bottom: 5px; }
+.tip .row { display: flex; justify-content: space-between; gap: 10px; font-family: var(--mono); font-size: 12.5px; font-variant-numeric: tabular-nums; }
+.tip .row span:first-child { color: var(--dim); }
+.tip .why { margin-top: 6px; color: var(--dim); font-size: 12.5px; }
+.tip .bar { height: 5px; background: var(--edge); margin: 5px 0 6px; }
+.tip .bar i { display: block; height: 100%; }
+
+.notes { display: grid; gap: 16px; min-width: 0; padding-top: 4px; }
+.notes .pitch { font-size: 16px; color: var(--text); }
+.notes dl { margin: 0; display: grid; gap: 12px; }
+.notes dt { font: 500 11px/1 var(--mono); letter-spacing: 0.12em; text-transform: uppercase; color: var(--faint); margin-bottom: 4px; }
+.notes dd { margin: 0; color: var(--dim); font-size: 14px; }
+.cost { display: flex; gap: 12px; flex-wrap: wrap; font: 500 12px/1 var(--mono); color: var(--dim); }
+.pips { display: inline-flex; gap: 3px; vertical-align: middle; margin-left: 6px; }
+.pips i { width: 9px; height: 9px; background: var(--edge); border: 1px solid #000; }
+.pips i.on { background: var(--gold); }
+
+/* issues list (concept D) */
+.issues { display: grid; gap: 8px; }
+.issue {
+  display: grid; grid-template-columns: 4px minmax(0,1fr); text-align: left; width: 100%;
+  background: var(--panel); border: 1px solid var(--edge); color: var(--text); cursor: pointer; padding: 0; font: inherit;
+}
+.issue > i { background: var(--faint); }
+.issue[data-sev="bad"] > i { background: var(--bad); }
+.issue[data-sev="warn"] > i { background: var(--warn); }
+.issue[data-sev="info"] > i { background: var(--held); }
+.issue[data-sev="done"] > i { background: var(--ok); }
+.issue > div { padding: 9px 11px; display: grid; gap: 3px; min-width: 0; }
+.issue .it { font: 600 14px/1.25 var(--display); }
+.issue .im { font: 500 12px/1.3 var(--mono); color: var(--dim); font-variant-numeric: tabular-nums; }
+.issue[aria-pressed="true"] { background: #3a3937; border-color: var(--gold); }
+.issue:hover { background: #353432; }
+.fixrow { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.fixrow .btn { font-size: 12.5px; }
+
+/* recommendation + engine */
+.section { margin-bottom: 52px; display: grid; gap: 18px; }
+.section > h2 { font-size: 28px; color: var(--gold); }
+.rec { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; }
+.rec article { background: var(--panel); border: 1px solid var(--edge); padding: 16px; display: grid; gap: 8px; align-content: start; min-width: 0; }
+.rec article h3 { color: var(--gold); letter-spacing: 0.08em; }
+.rec article p { color: var(--dim); font-size: 14.5px; }
+.rec .role { font: 600 18px/1.2 var(--display); color: var(--text); }
+.twocol { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 28px; }
+.twocol > div { min-width: 0; display: grid; gap: 10px; align-content: start; }
+ul.clean { margin: 0; padding-left: 18px; display: grid; gap: 7px; color: var(--dim); }
+ul.clean li::marker { color: var(--gold); }
+ul.clean b { color: var(--text); font-weight: 500; }
+.phases { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 0; border: 1px solid var(--edge); background: var(--panel); }
+.phases div { padding: 12px 12px 14px; border-right: 1px solid var(--edge); display: grid; gap: 4px; align-content: start; min-width: 0; }
+.phases div:last-child { border-right: 0; }
+.phases b { font: 600 12px/1 var(--mono); color: var(--gold); letter-spacing: 0.08em; }
+.phases span { font-size: 13.5px; color: var(--dim); }
+.ask { background: var(--frame); border: 1px solid var(--edge); padding: 18px 20px; display: grid; gap: 8px; box-shadow: inset 0 1px 0 rgba(255,255,255,0.1); }
+.ask p { color: var(--text); }
+
+@media (max-width: 980px) {
+  .concept, .testbuild, .twocol { grid-template-columns: minmax(0, 1fr); }
+  .rec { grid-template-columns: minmax(0, 1fr); }
+  .phases { grid-template-columns: minmax(0, 1fr); }
+  .phases div { border-right: 0; border-bottom: 1px solid var(--edge); }
+}
+@media (max-width: 560px) {
+  .wrap { padding-inline: 16px; }
+  .legend { grid-template-columns: minmax(0, 1fr); }
+  .plate-bar .hint { display: none; }
+  .simbar .spacer { display: none; }
+  .simbar { position: static; }
+}
+</style>
+
+<div class="wrap">
+  <header class="hero">
+    <span class="eyebrow">FactorioTools · Rate calculator redesign</span>
+    <h1>Put the rate calculator on the factory floor</h1>
+    <p class="lede">The side panel lists everything and explains nothing. These five studies move the numbers onto the blueprint itself and run a tick-by-tick simulation underneath, so a bottleneck shows up where it actually is: on a lane, an inserter, or a machine. Every plate below is live and shares one running simulation.</p>
+  </header>
+
+  <div class="simbar" role="toolbar" aria-label="Simulation controls">
+    <div class="group">
+      <button class="btn" id="play" type="button" aria-pressed="false">Pause</button>
+      <button class="btn" id="spd1" type="button" data-speed="1" aria-pressed="true">1×</button>
+      <button class="btn" id="spd4" type="button" data-speed="4" aria-pressed="false">4×</button>
+      <button class="btn" id="spd16" type="button" data-speed="16" aria-pressed="false">16×</button>
+      <span class="readout" id="clock">0:00</span>
+    </div>
+    <div class="group">
+      <span class="label">What-if</span>
+      <button class="btn" id="fixPrio" type="button" aria-pressed="false">Splitter priority → feed</button>
+      <button class="btn" id="fixBulk" type="button" aria-pressed="false">Bulk inserters</button>
+      <button class="btn" id="reset" type="button">Reset</button>
+    </div>
+    <span class="spacer"></span>
+    <div class="group">
+      <span class="readout">Gears <b id="outRate">0.00</b>/s of 6.00</span>
+      <span class="meter" aria-hidden="true"><i id="outMeter" style="width:0%"></i></span>
+    </div>
+  </div>
+
+  <div class="testbuild">
+    <div>
+      <h3 style="margin-bottom:10px">The test build</h3>
+      <p>A fast (red) belt enters from the left carrying iron on its left lane and copper on its right, 15/s each. A splitter sends half of it up to the bus and half down a feed belt that runs past four assembling machine 2s making iron gears. Each one needs 3.00 iron/s; each is fed by one fast inserter that tops out around 2.31/s. Gears leave on the far lane of an output belt that dives under two pipes and exits right.</p>
+      <p>The build has two real problems and one red herring, all only visible at lane level. Use the what-if buttons above to fix them and watch every plate react.</p>
+    </div>
+    <div class="legend" aria-label="Status vocabulary shared by every concept">
+      <h3>One status vocabulary everywhere</h3>
+      <span class="sw"><i style="background:var(--ok)"></i><span><b>Working</b> · machine or lane at full use</span></span>
+      <span class="sw"><i style="background:var(--warn)"></i><span><b>Inserter-bound</b> · arm can't keep up</span></span>
+      <span class="sw"><i style="background:var(--bad)"></i><span><b>Starved</b> · nothing arrives to take</span></span>
+      <span class="sw"><i style="background:var(--held)"></i><span><b>Backed up</b> · lane full and standing</span></span>
+      <span class="sw"><i style="background:var(--iron)"></i><span><b>Iron plate</b></span></span>
+      <span class="sw"><i style="background:var(--copper)"></i><span><b>Copper plate</b></span></span>
+    </div>
+  </div>
+
+  <!-- A -->
+  <section class="concept" id="signal">
+    <div class="plate">
+      <div class="plate-bar"><span class="tag">A</span><h2>Signal layer</h2><span class="grip"></span><span class="hint">hover a machine, belt or inserter</span></div>
+      <div class="stage"><canvas data-view="signal" aria-label="Signal layer mockup: dimmed build with uptime rings and lane strips"></canvas><div class="tip" hidden></div></div>
+    </div>
+    <div class="notes">
+      <p class="pitch">The build stays the hero. The overlay adds two things: a ring around every machine that fills with its uptime, and two thin strips on every belt tile, one per lane.</p>
+      <dl>
+        <div><dt>Hidden</dt><dd>Every number. The map reads as colour first: green is fine, yellow is an arm, red is supply.</dd></div>
+        <div><dt>Revealed by</dt><dd>Hovering. The card names the limit in words ("limited by its inserter: 2.31/s of 3.00/s") instead of listing rates.</dd></div>
+        <div><dt>Watch out</dt><dd>Lane strips get busy on a 2,000-belt blueprint. Fade strips on lanes with no downstream demand.</dd></div>
+      </dl>
+      <div class="cost"><span>Build cost<span class="pips"><i class="on"></i><i></i><i></i></span></span><span>Clarity<span class="pips"><i class="on"></i><i class="on"></i><i class="on"></i></span></span></div>
+    </div>
+  </section>
+
+  <!-- B -->
+  <section class="concept" id="ribbons">
+    <div class="plate">
+      <div class="plate-bar"><span class="tag">B</span><h2>Flow ribbons</h2><span class="grip"></span><span class="hint">width = items per second</span></div>
+      <div class="stage"><canvas data-view="ribbons" aria-label="Flow ribbons mockup: belts drawn as glowing ribbons sized by throughput"></canvas></div>
+    </div>
+    <div class="notes">
+      <p class="pitch">Belts turn into light. Each lane becomes a ribbon whose width is its measured throughput and whose colour is its item. Splitters fork ribbons, undergrounds arc over what they cross, inserters are short arcs that pulse on every swing.</p>
+      <dl>
+        <div><dt>Hidden</dt><dd>The entity art, dimmed to a silhouette. What's left is where volume goes and where it thins out.</dd></div>
+        <div><dt>Revealed by</dt><dd>Reading widths. The feed ribbon visibly narrows at each inserter and runs out before the last machine.</dd></div>
+        <div><dt>Watch out</dt><dd>Beautiful but less exact. Best as a view you toggle (F), not the default.</dd></div>
+      </dl>
+      <div class="cost"><span>Build cost<span class="pips"><i class="on"></i><i class="on"></i><i></i></span></span><span>Clarity<span class="pips"><i class="on"></i><i class="on"></i><i></i></span></span></div>
+    </div>
+  </section>
+
+  <!-- C -->
+  <section class="concept" id="zoom">
+    <div class="plate">
+      <div class="plate-bar"><span class="tag">C</span><h2>Semantic zoom</h2><span class="grip"></span><span class="hint">zoom decides the detail</span></div>
+      <div class="stage"><canvas data-view="zoom" aria-label="Semantic zoom mockup: detail level follows the zoom level"></canvas></div>
+      <div class="plate-tools">
+        <button class="btn" type="button" data-zoom="0" aria-pressed="false">Overview</button>
+        <button class="btn" type="button" data-zoom="0.5" aria-pressed="true">Flow</button>
+        <button class="btn" type="button" data-zoom="1" aria-pressed="false">Detail</button>
+        <input type="range" id="zoomRange" min="0" max="100" value="50" aria-label="Zoom level">
+      </div>
+    </div>
+    <div class="notes">
+      <p class="pitch">No new controls. The scroll wheel people already use decides how much they see. Far out, machines collapse into status blocks and a group gets one summary. In the middle, lanes and rates. Close up, the real items, inserter hands and input buffers.</p>
+      <dl>
+        <div><dt>Hidden</dt><dd>Everything below the current zoom's level of detail, behind a gesture that costs nothing.</dd></div>
+        <div><dt>Revealed by</dt><dd>Zooming toward what looks wrong. The overview tells you where; the detail tells you why.</dd></div>
+        <div><dt>Watch out</dt><dd>Thresholds need tuning per blueprint size, and labels need collision handling at the middle level.</dd></div>
+      </dl>
+      <div class="cost"><span>Build cost<span class="pips"><i class="on"></i><i class="on"></i><i></i></span></span><span>Clarity<span class="pips"><i class="on"></i><i class="on"></i><i class="on"></i></span></span></div>
+    </div>
+  </section>
+
+  <!-- D -->
+  <section class="concept" id="jam">
+    <div class="plate">
+      <div class="plate-bar"><span class="tag">D</span><h2>Jam trace</h2><span class="grip"></span><span class="hint">pick an issue</span></div>
+      <div class="stage"><canvas data-view="jam" aria-label="Jam trace mockup: the chain from symptom to cause drawn on the build"></canvas></div>
+    </div>
+    <div class="notes">
+      <p class="pitch">Start from the answer. A short list of what's wrong, ranked by lost output. Pick one and the rest of the build fades while a line runs from the symptom upstream to the cause, with the measured rate at every step.</p>
+      <div class="issues" id="issues"></div>
+      <dl>
+        <div><dt>Hidden</dt><dd>Everything that is fine. This replaces the old panel's job: it listed every item; this lists what costs you output.</dd></div>
+        <div><dt>Watch out</dt><dd>The cause attribution has to be right. One wrong diagnosis and people stop trusting the list.</dd></div>
+      </dl>
+      <div class="cost"><span>Build cost<span class="pips"><i class="on"></i><i class="on"></i><i class="on"></i></span></span><span>Clarity<span class="pips"><i class="on"></i><i class="on"></i><i class="on"></i></span></span></div>
+    </div>
+  </section>
+
+  <!-- E -->
+  <section class="concept" id="lens">
+    <div class="plate">
+      <div class="plate-bar"><span class="tag">E</span><h2>Inspection lens</h2><span class="grip"></span><span class="hint">move over the build</span></div>
+      <div class="stage"><canvas data-view="lens" aria-label="Lens mockup: a magnifier showing lane-level detail"></canvas></div>
+    </div>
+    <div class="notes">
+      <p class="pitch">The build stays untouched except for small status lights. A magnifier follows the cursor and shows the lane-level truth underneath it, with readouts on its rim like a gauge bezel.</p>
+      <dl>
+        <div><dt>Hidden</dt><dd>All detail, everywhere except the one spot you're looking at.</dd></div>
+        <div><dt>Revealed by</dt><dd>Pointing. Hold Alt to summon it, release to put it away.</dd></div>
+        <div><dt>Watch out</dt><dd>Overlaps with semantic zoom, and it only answers "what's here", never "where's the problem".</dd></div>
+      </dl>
+      <div class="cost"><span>Build cost<span class="pips"><i class="on"></i><i class="on"></i><i></i></span></span><span>Clarity<span class="pips"><i class="on"></i><i class="on"></i><i></i></span></span></div>
+    </div>
+  </section>
+
+  <section class="section" id="recommendation">
+    <h2>Recommendation</h2>
+    <p class="lede">Combine three of them. Each one covers a different question, and they share one render pass and one simulation.</p>
+    <div class="rec">
+      <article><h3>A · Signal layer</h3><span class="role">The always-on layer</span><p>Rings and lane strips are on whenever the calculator is open. Cheap, calm, and readable in the colours Factorio players already know.</p></article>
+      <article><h3>C · Semantic zoom</h3><span class="role">Controls the detail</span><p>Decides how much of A is drawn. Zoomed out it collapses into group summaries; zoomed in it shows items and inserter hands. It needs no new controls.</p></article>
+      <article><h3>D · Jam trace</h3><span class="role">The entry point</span><p>Replaces the sidebar. One chip in the corner says "3 issues · −2.4 gears/s". Opening it gives the ranked list, the trace and the what-if fixes.</p></article>
+    </div>
+    <div class="twocol">
+      <div>
+        <h3>Where the old panel's contents go</h3>
+        <ul class="clean">
+          <li><b>Products and ingredients</b> shrink to a strip of item chips along the top edge. Clicking a chip lights up that item's lanes on the map.</li>
+          <li><b>Timescale, multiplier, target</b> move into a compact settings popover on that strip.</li>
+          <li><b>Machine groups</b> become the zoomed-out group summaries from C.</li>
+          <li><b>Warnings</b> join the issue list in D, ranked alongside bottlenecks.</li>
+          <li><b>Blueprint edges</b> get port tabs where belts enter and leave. You set what flows in there, and each one shows its measured rate.</li>
+        </ul>
+      </div>
+      <div>
+        <h3>What to leave out</h3>
+        <ul class="clean">
+          <li><b>B · Flow ribbons</b> as a second view mode behind a key, once lane-item inference exists. The data is the same, so it's cheap later.</li>
+          <li><b>E · Lens</b> is dropped. C answers the same question without a special tool.</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <section class="section" id="engine">
+    <h2>The simulation underneath</h2>
+    <p class="lede">The current bottleneck check only looks at what's physically next to a machine. A 1:1 lane simulation replaces it and runs headless in a Web Worker, so the renderer only reads positions each frame.</p>
+    <div class="twocol">
+      <div>
+        <h3>Mechanics to model</h3>
+        <ul class="clean">
+          <li><b>Transport lines.</b> Merge connected belt pieces into per-lane lines the way the game does. Items keep 0.25-tile spacing, and a line moves as one block until it hits a gap.</li>
+          <li><b>Curves and side-loading.</b> The inner and outer lanes of a curve have different lengths. A side-load only feeds the lane it hits.</li>
+          <li><b>Splitters.</b> Alternate items per lane, keep lanes separate, and honour input/output priority and filters from the blueprint.</li>
+          <li><b>Undergrounds.</b> Lanes continue through the tunnel at the tunnel's length. A side-load onto an entrance only reaches one lane, the classic lane-filter trick.</li>
+          <li><b>Inserters.</b> Real pickup and drop vectors, rotation and extension speed, hand size with research, chasing items on a moving belt, dropping on the far lane, and the machine's automatic insertion limits.</li>
+          <li><b>Machines.</b> Crafting progress, ingredient buffers, output full, modules and beacons from the existing <code>calc/effects.ts</code>.</li>
+        </ul>
+      </div>
+      <div>
+        <h3>What the data pipeline needs to add</h3>
+        <ul class="clean">
+          <li>Belt <code>speed</code> (only <code>throughput</code> exists today), underground <code>max_distance</code>, and splitter prototypes.</li>
+          <li>Inserter <code>rotation_speed</code>, <code>extension_speed</code>, <code>pickup_position</code>, <code>insert_position</code>, and hand-size bonuses.</li>
+          <li>Item stack sizes and the crafting machines' ingredient limits.</li>
+        </ul>
+        <h3 style="margin-top:8px">Open questions</h3>
+        <ul class="clean">
+          <li><b>What's on a belt?</b> A blueprint doesn't say. Infer it downstream from producers and upstream from what the inserters feed, then let the ports settle the rest.</li>
+          <li><b>When is it steady?</b> Warm up headless at 100×, then declare steady state once the output rates stop drifting.</li>
+          <li><b>Scale.</b> Simulate the selection only on huge prints, and share one line model with the renderer's existing <code>beltGraph.ts</code>.</li>
+        </ul>
+      </div>
+    </div>
+    <div class="phases" aria-label="Build phases">
+      <div><b>PHASE 1</b><span>Pipeline data, then belts, lanes, splitters and undergrounds in a new DOM-free <code>packages/sim</code>, with tests.</span></div>
+      <div><b>PHASE 2</b><span>Inserters and machines. Check the results against rates measured in-game on a set of reference prints.</span></div>
+      <div><b>PHASE 3</b><span>Signal layer and semantic zoom in the renderer, plus port tabs and the time strip.</span></div>
+      <div><b>PHASE 4</b><span>Issue ranking, trace drawing and what-if edits that re-run the simulation.</span></div>
+      <div><b>PHASE 5</b><span>Flow ribbons as a second view. Remove the old side panel.</span></div>
+    </div>
+  </section>
+
+  <div class="ask">
+    <h3>Your call</h3>
+    <p>Does A + C + D feel right, or would you rather lead with a different one? I'd start with phase 1: the simulation core is the foundation for every option, and its correctness is testable on its own.</p>
+  </div>
+</div>
+
+<script>
+(() => {
+"use strict";
+// ---------- constants ----------
+const W = 32, H = 12, GAP = 0.25, V = 0.0625, SW = 13, CRAFT = 40, ILIM = 4, OUTCAP = 8;
+const A1 = 1 / 45, A5 = 1 / 300;
+const cssv = (n) => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+const P = {};
+for (const k of ["ground", "ok", "warn", "bad", "held", "gold", "text", "dim", "iron", "copper", "gear", "fast", "bulk", "faint"]) P[k] = cssv("--" + k);
+const SC = { ok: P.ok, warn: P.warn, bad: P.bad, out: P.warn };
+const SL = { ok: "WORKING", warn: "INSERTER", bad: "STARVED", out: "OUTPUT FULL" };
+const ITEMC = { iron: P.iron, copper: P.copper, gear: P.gear };
+const ITEMN = { iron: "Iron", copper: "Copper", gear: "Gear" };
+const reduceMotion = matchMedia("(prefers-reduced-motion: reduce)").matches;
+const fmt = (v) => (v < 9.995 ? v.toFixed(2) : v.toFixed(1));
+const clamp = (v, a = 0, b = 1) => Math.max(a, Math.min(b, v));
+const lerp = (a, b, t) => a + (b - a) * t;
+
+// ---------- simulation ----------
+function mkLine(id, y, x0, x1, next, hidden) {
+  const t0 = Math.floor(x0), n = Math.ceil(x1) - t0;
+  const f = (v) => [new Float32Array(n).fill(v), new Float32Array(n).fill(v)];
+  return { id, y, x0, x1, next, hidden, t0, n, lanes: [[], []], dens: f(0), spd: f(1), flow: f(0), sunkTick: [0, 0], rate: [0, 0] };
+}
+let sim;
+function newSim() {
+  const L = {
+    in: mkLine("in", 3, 0, 6.5, "split"),
+    bus: mkLine("bus", 2, 6.5, 32, "sink"),
+    feed: mkLine("feed", 3, 6.5, 26, null),
+    out: mkLine("out", 9, 9, 32, "sink", [26.62, 29.38]),
+  };
+  const M = [], I = [], O = [];
+  for (let i = 0; i < 4; i++) {
+    M.push({ i, x: 10 + 4 * i, cx: 11.5 + 4 * i, cy: 6.5, iron: 0, gear: 0, prog: 0, crafting: false, ang: i, up: 0, fIns: 0, fStarve: 0, fOut: 0, rate: 0 });
+    I.push({ x: 11 + 4 * i, y: 4, ph: "home", t: 0, hand: 0, busy: 0, rate: 0 });
+    O.push({ x: 11 + 4 * i, y: 8, ph: "home", t: 0, hand: 0, busy: 0 });
+  }
+  return { L, M, I, O, tick: 0, toggle: [0, 0], fix: { prio: false, bulk: false } };
+}
+const LINES = () => [sim.L.in, sim.L.bus, sim.L.feed, sim.L.out];
+
+function canAccept(line, ln) { const a = line.lanes[ln]; return !a.length || a[a.length - 1].x >= line.x0 + GAP - 1e-9; }
+function split(ln, item) {
+  const { feed, bus } = sim.L;
+  const order = sim.fix.prio ? [feed, bus] : (sim.toggle[ln] ? [feed, bus] : [bus, feed]);
+  for (const t of order) {
+    if (canAccept(t, ln)) { t.lanes[ln].push({ x: t.x0, item, mv: true }); sim.toggle[ln] ^= 1; return true; }
+  }
+  return false;
+}
+function moveLine(line) {
+  line.sunkTick[0] = line.sunkTick[1] = 0;
+  for (let ln = 0; ln < 2; ln++) {
+    const a = line.lanes[ln];
+    for (let i = 0; i < a.length; i++) {
+      const it = a[i];
+      const lim = i === 0 ? line.x1 : a[i - 1].x - GAP;
+      const nx = Math.min(it.x + V, lim);
+      if (nx > it.x + 1e-9) { it.x = nx; it.mv = true; } else it.mv = false;
+    }
+    if (a.length && a[0].x >= line.x1 - 1e-9) {
+      if (line.next === "sink") { a.shift(); line.sunkTick[ln]++; }
+      else if (line.next === "split" && split(ln, a[0].item)) a.shift();
+    }
+  }
+}
+function room(a, x) { for (const it of a) if (Math.abs(it.x - x) < GAP) return false; return true; }
+function insertSorted(a, it) { let j = 0; while (j < a.length && a[j].x > it.x) j++; a.splice(j, 0, it); }
+
+function stepIns(k) {
+  const ins = sim.I[k], m = sim.M[k], hand = sim.fix.bulk ? 2 : 1, c = ins.x + 0.5;
+  if (ins.ph === "home") {
+    if (m.iron < ILIM) {
+      let got = 0;
+      for (let ln = 0; ln < 2 && got < hand; ln++) {
+        const a = sim.L.feed.lanes[ln];
+        for (let j = 0; j < a.length && got < hand; j++) {
+          if (a[j].item === "iron" && Math.abs(a[j].x - c) <= 0.5) { a.splice(j, 1); j--; got++; }
+        }
+      }
+      if (got) { ins.hand = got; ins.ph = "out"; ins.t = SW; }
+    }
+  } else if (ins.ph === "out") {
+    if (--ins.t <= 0) { m.iron += ins.hand; ins.rate += ins.hand; ins.hand = 0; ins.ph = "back"; ins.t = SW; }
+  } else if (ins.ph === "back") {
+    if (--ins.t <= 0) ins.ph = "home";
+  }
+  ins.busy += ((ins.ph !== "home" ? 1 : 0) - ins.busy) * A5;
+}
+function stepOut(k) {
+  const o = sim.O[k], m = sim.M[k], c = o.x + 0.5;
+  if (o.ph === "home") { if (m.gear > 0) { m.gear--; o.hand = 1; o.ph = "out"; o.t = SW; } }
+  else if (o.ph === "out") { if (--o.t <= 0) o.ph = "drop"; }
+  else if (o.ph === "drop") {
+    const a = sim.L.out.lanes[1];
+    if (room(a, c)) { insertSorted(a, { x: c, item: "gear", mv: false }); o.hand = 0; o.ph = "back"; o.t = SW; }
+  } else if (o.ph === "back") { if (--o.t <= 0) o.ph = "home"; }
+  o.busy += ((o.ph !== "home" ? 1 : 0) - o.busy) * A5;
+}
+function stepM(k) {
+  const m = sim.M[k];
+  let made = 0;
+  if (!m.crafting && m.iron >= 2 && m.gear < OUTCAP) { m.iron -= 2; m.crafting = true; m.prog = 0; }
+  if (m.crafting) {
+    m.prog += 1 / CRAFT; m.ang += 0.07;
+    if (m.prog >= 1 - 1e-9) {
+      m.gear++; made = 1; m.crafting = false; m.prog = 0;
+      if (m.iron >= 2 && m.gear < OUTCAP) { m.iron -= 2; m.crafting = true; }
+    }
+  }
+  const w = m.crafting ? 1 : 0;
+  m.up += (w - m.up) * A5;
+  const cause = m.gear >= OUTCAP ? "out" : (sim.I[k].ph !== "home" ? "ins" : "starve");
+  m.fIns += ((!w && cause === "ins" ? 1 : 0) - m.fIns) * A5;
+  m.fStarve += ((!w && cause === "starve" ? 1 : 0) - m.fStarve) * A5;
+  m.fOut += ((!w && cause === "out" ? 1 : 0) - m.fOut) * A5;
+  m.rate += (made * 60 - m.rate) * A5;
+}
+function stats(line) {
+  for (let ln = 0; ln < 2; ln++) {
+    const cnt = new Uint8Array(line.n), mv = new Uint8Array(line.n);
+    for (const it of line.lanes[ln]) {
+      const k = Math.min(line.n - 1, Math.max(0, Math.floor(it.x) - line.t0));
+      cnt[k]++; if (it.mv) mv[k]++;
+    }
+    const D = line.dens[ln], S = line.spd[ln], F = line.flow[ln];
+    for (let k = 0; k < line.n; k++) {
+      D[k] += (cnt[k] / 4 - D[k]) * A1;
+      if (cnt[k]) S[k] += (mv[k] / cnt[k] - S[k]) * A1;
+      F[k] += (mv[k] * V * 60 - F[k]) * A1;
+    }
+    line.rate[ln] += (line.sunkTick[ln] * 60 - line.rate[ln]) * A5;
+  }
+}
+function step() {
+  const L = sim.L;
+  moveLine(L.out); moveLine(L.bus); moveLine(L.feed); moveLine(L.in);
+  for (let ln = 0; ln < 2; ln++) {
+    const a = L.in.lanes[ln];
+    if (!a.length || a[a.length - 1].x >= GAP) a.push({ x: 0, item: ln ? "copper" : "iron", mv: true });
+  }
+  for (let k = 0; k < 4; k++) { stepIns(k); stepM(k); stepOut(k); }
+  for (const l of LINES()) stats(l);
+  sim.tick++;
+}
+function mStatus(m) {
+  if (m.up > 0.94) return "ok";
+  if (m.fOut > m.fIns && m.fOut > m.fStarve) return "out";
+  return m.fStarve > m.fIns ? "bad" : "warn";
+}
+const insCap = () => (sim.fix.bulk ? 2 : 1) * 60 / (2 * SW);
+const flowAt = (line, ln, x) => line.flow[ln][clamp(Math.floor(x) - line.t0, 0, line.n - 1)];
+function reset() { sim = newSim(); for (let i = 0; i < 3600; i++) step(); }
+reset();
+
+// ---------- canvas views ----------
+const views = [];
+const X = (c, x) => x * c.s + c.ox;
+const Y = (c, y) => y * c.s + c.oy;
+function rr(g, x, y, w, h, r, fill) {
+  g.beginPath(); g.moveTo(x + r, y); g.arcTo(x + w, y, x + w, y + h, r); g.arcTo(x + w, y + h, x, y + h, r);
+  g.arcTo(x, y + h, x, y, r); g.arcTo(x, y, x + w, y, r); g.closePath();
+  if (fill) { g.fillStyle = fill; g.fill(); }
+}
+function font(g, px, w = 500, fam = "IBM Plex Mono") { g.font = `${w} ${Math.round(px)}px "${fam}", ui-monospace, monospace`; }
+function dim(g, a) { g.fillStyle = `rgba(14,13,12,${a})`; g.fillRect(0, 0, g.canvas.width, g.canvas.height); }
+function hexA(hex, a) {
+  const n = parseInt(hex.slice(1), 16);
+  return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${a})`;
+}
+
+function drawGear(g, cx, cy, r, teeth, ang, fill, hole) {
+  g.beginPath();
+  const n = teeth * 4;
+  for (let i = 0; i <= n; i++) {
+    const a = ang + (i / n) * Math.PI * 2;
+    const rad = (i % 4 < 2) ? r : r * 0.76;
+    const px = cx + Math.cos(a) * rad, py = cy + Math.sin(a) * rad;
+    i ? g.lineTo(px, py) : g.moveTo(px, py);
+  }
+  g.closePath(); g.fillStyle = fill; g.fill();
+  if (hole) { g.beginPath(); g.arc(cx, cy, r * 0.32, 0, Math.PI * 2); g.fillStyle = hole; g.fill(); }
+}
+function drawItem(g, x, y, r, item, alpha = 1) {
+  g.globalAlpha = alpha;
+  if (item === "gear") { drawGear(g, x, y, r * 1.12, 6, 0.3, P.gear, "#4d473c"); g.globalAlpha = 1; return; }
+  g.fillStyle = "rgba(0,0,0,0.45)"; g.fillRect(x - r + r * 0.25, y - r * 0.7 + r * 0.3, r * 2, r * 1.4);
+  rr(g, x - r, y - r * 0.7, r * 2, r * 1.4, r * 0.25, ITEMC[item]);
+  g.fillStyle = "rgba(255,255,255,0.35)"; g.fillRect(x - r * 0.8, y - r * 0.62, r * 1.6, r * 0.22);
+  g.globalAlpha = 1;
+}
+
+// scene geometry
+const BELTS = [];
+for (let x = 0; x <= 5; x++) BELTS.push([x, 3]);
+for (let x = 7; x <= 31; x++) BELTS.push([x, 2]);
+for (let x = 7; x <= 25; x++) BELTS.push([x, 3]);
+for (let x = 9; x <= 25; x++) BELTS.push([x, 9]);
+BELTS.push([30, 9], [31, 9], [6, 2], [6, 3]);
+const POLES = [[9, 6], [13, 6], [17, 6], [21, 6], [25, 6]];
+const PIPES = [27, 28];
+
+function drawGround(g, c) {
+  g.fillStyle = P.ground; g.fillRect(0, 0, g.canvas.width, g.canvas.height);
+  // faint concrete apron under the build
+  g.fillStyle = "rgba(255,255,255,0.018)"; g.fillRect(X(c, 8), Y(c, 1.5), 19 * c.s, 9 * c.s);
+  g.strokeStyle = "rgba(255,255,255,0.035)"; g.lineWidth = 1; g.beginPath();
+  for (let x = 0; x <= W; x++) { const px = Math.round(X(c, x)) + 0.5; g.moveTo(px, Y(c, 0)); g.lineTo(px, Y(c, H)); }
+  for (let y = 0; y <= H; y++) { const py = Math.round(Y(c, y)) + 0.5; g.moveTo(X(c, 0), py); g.lineTo(X(c, W), py); }
+  g.stroke();
+}
+function drawBelt(g, c, x, y, ph) {
+  const s = c.s, px = X(c, x), py = Y(c, y);
+  g.fillStyle = "#2a2725"; g.fillRect(px, py + s * 0.1, s + 0.6, s * 0.8);
+  g.strokeStyle = "rgba(255,196,150,0.11)"; g.lineWidth = Math.max(1, s * 0.05); g.beginPath();
+  for (let k = 0; k < 2; k++) {
+    const cx = px + s * ((k * 0.5 + ph) % 1) + s * 0.1;
+    for (const ly of [0.3, 0.7]) { const cy = py + s * ly; g.moveTo(cx - s * 0.09, cy - s * 0.1); g.lineTo(cx, cy); g.lineTo(cx - s * 0.09, cy + s * 0.1); }
+  }
+  g.stroke();
+  g.fillStyle = "rgba(255,255,255,0.05)"; g.fillRect(px, py + s * 0.495, s + 0.6, Math.max(1, s * 0.012));
+  g.fillStyle = "#8b3a2f"; g.fillRect(px, py + s * 0.06, s + 0.6, s * 0.07); g.fillRect(px, py + s * 0.87, s + 0.6, s * 0.07);
+}
+function drawUG(g, c, x, y, isIn, ph) {
+  const s = c.s;
+  drawBelt(g, c, x, y, ph);
+  const hx = X(c, x + (isIn ? 0.4 : 0)), py = Y(c, y);
+  g.fillStyle = "rgba(0,0,0,0.4)"; g.fillRect(hx + s * 0.06, py + s * 0.08, s * 0.62, s * 0.92);
+  rr(g, hx, py + s * 0.02, s * 0.6, s * 0.96, s * 0.08, "#4a433d");
+  g.fillStyle = "#8b3a2f"; g.fillRect(hx + s * 0.08, py + s * 0.1, s * 0.44, s * 0.08); g.fillRect(hx + s * 0.08, py + s * 0.82, s * 0.44, s * 0.08);
+  g.fillStyle = "#121110"; g.fillRect(isIn ? hx : hx + s * 0.52, py + s * 0.14, s * 0.08, s * 0.72);
+}
+function drawSplitter(g, c) {
+  const s = c.s, px = X(c, 6.25), py = Y(c, 2.06);
+  g.fillStyle = "rgba(0,0,0,0.45)"; g.fillRect(px + s * 0.1, py + s * 0.1, s * 0.5, s * 1.9);
+  rr(g, px, py, s * 0.5, s * 1.88, s * 0.08, "#4d4742");
+  g.fillStyle = "#8b3a2f"; g.fillRect(px + s * 0.08, py + s * 0.12, s * 0.34, s * 0.1); g.fillRect(px + s * 0.08, py + s * 1.66, s * 0.34, s * 0.1);
+  g.fillStyle = "#2c2926"; g.fillRect(px + s * 0.16, py + s * 0.4, s * 0.18, s * 1.08);
+  g.fillStyle = "rgba(255,255,255,0.12)"; g.fillRect(px, py, s * 0.5, Math.max(1, s * 0.03));
+}
+function drawPipes(g, c) {
+  const s = c.s;
+  for (const x of PIPES) {
+    const px = X(c, x + 0.5);
+    g.fillStyle = "rgba(0,0,0,0.4)"; g.fillRect(px - s * 0.16, Y(c, 6.1), s * 0.42, 5.9 * s);
+    g.fillStyle = "#6c675f"; g.fillRect(px - s * 0.2, Y(c, 6), s * 0.4, 6 * s);
+    g.fillStyle = "rgba(255,255,255,0.14)"; g.fillRect(px - s * 0.14, Y(c, 6), s * 0.07, 6 * s);
+    for (let y = 6; y <= 12; y++) { g.fillStyle = "#4e4a44"; g.fillRect(px - s * 0.25, Y(c, y) - s * 0.06, s * 0.5, s * 0.12); }
+  }
+}
+function drawPoles(g, c) {
+  const s = c.s;
+  g.strokeStyle = "rgba(210,130,80,0.35)"; g.lineWidth = Math.max(1, s * 0.025);
+  for (let i = 0; i < POLES.length - 1; i++) {
+    const [ax, ay] = POLES[i], [bx, by] = POLES[i + 1];
+    g.beginPath(); g.moveTo(X(c, ax + 0.5), Y(c, ay + 0.2));
+    g.quadraticCurveTo(X(c, (ax + bx) / 2 + 0.5), Y(c, ay + 0.55), X(c, bx + 0.5), Y(c, by + 0.2)); g.stroke();
+  }
+  for (const [x, y] of POLES) {
+    g.fillStyle = "rgba(0,0,0,0.45)"; g.fillRect(X(c, x + 0.42), Y(c, y + 0.3), s * 0.3, s * 0.5);
+    g.fillStyle = "#6d5238"; g.fillRect(X(c, x + 0.38), Y(c, y + 0.1), s * 0.24, s * 0.62);
+    g.fillStyle = "#86674a"; g.fillRect(X(c, x + 0.2), Y(c, y + 0.14), s * 0.6, s * 0.12);
+  }
+}
+function drawAsm(g, c, m) {
+  const s = c.s, px = X(c, m.x), py = Y(c, 5);
+  g.fillStyle = "rgba(0,0,0,0.42)"; g.fillRect(px + s * 0.28, py + s * 0.28, s * 2.86, s * 2.86);
+  rr(g, px + s * 0.08, py + s * 0.08, s * 2.84, s * 2.84, s * 0.14, "#5b6067");
+  g.strokeStyle = "rgba(255,255,255,0.14)"; g.lineWidth = Math.max(1, s * 0.03);
+  g.beginPath(); g.moveTo(px + s * 0.2, py + s * 0.1); g.lineTo(px + s * 2.8, py + s * 0.1); g.stroke();
+  g.fillStyle = "#4b79ab";
+  for (const [dx, dy] of [[0.2, 0.2], [2.5, 0.2], [0.2, 2.5], [2.5, 2.5]]) g.fillRect(px + s * dx, py + s * dy, s * 0.3, s * 0.3);
+  rr(g, px + s * 0.5, py + s * 0.5, s * 2.0, s * 2.0, s * 0.1, "#33363b");
+  drawGear(g, X(c, m.cx), Y(c, m.cy - 0.05), s * 0.62, 10, m.ang, "#8f9399", "#33363b");
+  g.fillStyle = "rgba(0,0,0,0.5)"; g.fillRect(px + s * 0.55, py + s * 2.3, s * 1.9, s * 0.1);
+  g.fillStyle = P.gold; g.fillRect(px + s * 0.55, py + s * 2.3, s * 1.9 * m.prog, s * 0.1);
+}
+function armP(ins) {
+  if (ins.ph === "home") return 0;
+  if (ins.ph === "out") return 1 - ins.t / SW;
+  if (ins.ph === "drop") return 1;
+  return ins.t / SW;
+}
+function drawIns(g, c, ins, item, color) {
+  const s = c.s, cx = X(c, ins.x + 0.5), cy = Y(c, ins.y + 0.5);
+  g.fillStyle = "rgba(0,0,0,0.4)"; g.fillRect(cx - s * 0.22, cy - s * 0.18, s * 0.52, s * 0.52);
+  rr(g, cx - s * 0.26, cy - s * 0.26, s * 0.52, s * 0.52, s * 0.08, "#3c3a37");
+  g.beginPath(); g.arc(cx, cy, s * 0.15, 0, Math.PI * 2); g.fillStyle = "#57534d"; g.fill();
+  const a = -Math.PI / 2 + Math.PI * armP(ins), L = s * 0.8;
+  const hx = cx + Math.cos(a) * L, hy = cy + Math.sin(a) * L;
+  g.strokeStyle = color; g.lineWidth = s * 0.12; g.lineCap = "round";
+  g.beginPath(); g.moveTo(cx, cy); g.lineTo(hx, hy); g.stroke(); g.lineCap = "butt";
+  rr(g, hx - s * 0.1, hy - s * 0.1, s * 0.2, s * 0.2, s * 0.04, "#2b2927");
+  if (ins.hand) drawItem(g, hx, hy, s * 0.13, item);
+}
+function drawItems(g, c, alpha = 1) {
+  const r = c.s * 0.12;
+  for (const line of LINES()) {
+    for (let ln = 0; ln < 2; ln++) {
+      const ly = line.y + 0.5 + (ln ? 0.25 : -0.25);
+      for (const it of line.lanes[ln]) {
+        if (line.hidden && it.x > line.hidden[0] && it.x < line.hidden[1]) continue;
+        drawItem(g, X(c, it.x), Y(c, ly), r, it.item, alpha);
+      }
+    }
+  }
+}
+function drawWorld(g, c, o = {}) {
+  const ph = (sim.tick * V) % 1;
+  drawGround(g, c);
+  for (const [x, y] of BELTS) drawBelt(g, c, x, y, ph);
+  drawUG(g, c, 26, 9, true, ph); drawUG(g, c, 29, 9, false, ph);
+  if (o.items !== false) drawItems(g, c);
+  drawSplitter(g, c);
+  drawPipes(g, c);
+  for (const m of sim.M) drawAsm(g, c, m);
+  drawPoles(g, c);
+  const col = sim.fix.bulk ? P.bulk : P.fast;
+  if (o.arms !== false) {
+    sim.I.forEach((ins) => drawIns(g, c, ins, "iron", col));
+    sim.O.forEach((o2) => drawIns(g, c, o2, "gear", P.fast));
+  }
+}
+
+// lane state + strips
+function laneState(line, ln, k) {
+  const d = line.dens[ln][k], sp = line.spd[ln][k], x = line.t0 + k;
+  if (line.id === "feed" && ln === 0 && d < 0.3) {
+    for (let i = 0; i < 4; i++) if (mStatus(sim.M[i]) === "bad" && sim.I[i].x >= x) return "short";
+  }
+  if (d < 0.03) return "empty";
+  if (d > 0.55 && sp < 0.3) return "held";
+  return "flow";
+}
+function laneColor(st, d, t) {
+  if (st === "short") return hexA(P.bad, 0.55 + 0.35 * Math.sin(t / 9) ** 2);
+  if (st === "held") return hexA(P.held, 0.85);
+  if (st === "empty") return "rgba(255,255,255,0.07)";
+  return hexA(P.ok, 0.3 + 0.7 * clamp(d));
+}
+const isHiddenTile = (line, x) => line.hidden && x >= 27 && x <= 28;
+function laneStrips(g, c, o = {}) {
+  const s = c.s, w = (o.w || 0.14) * s;
+  for (const line of LINES()) {
+    for (let ln = 0; ln < 2; ln++) {
+      const ly = Y(c, line.y + 0.5 + (ln ? 0.25 : -0.25));
+      for (let k = 0; k < line.n; k++) {
+        const x = line.t0 + k, xa = Math.max(x, line.x0), xb = Math.min(x + 1, line.x1);
+        if (xb <= xa) continue;
+        if (o.only && !o.only(line, ln, x)) continue;
+        const st = laneState(line, ln, k);
+        const col = laneColor(st, line.dens[ln][k], sim.tick);
+        if (isHiddenTile(line, x)) {
+          g.strokeStyle = col; g.lineWidth = Math.max(1, s * 0.05); g.setLineDash([s * 0.12, s * 0.12]);
+          g.beginPath(); g.moveTo(X(c, xa), ly); g.lineTo(X(c, xb), ly); g.stroke(); g.setLineDash([]);
+        } else {
+          g.fillStyle = col; g.fillRect(X(c, xa) + 1, ly - w / 2, (xb - xa) * s - 2, w);
+        }
+      }
+    }
+  }
+}
+function pill(g, x, y, text, o = {}) {
+  const fs = o.fs || 12, padX = fs * 0.6, h = fs * 1.7;
+  font(g, fs, o.weight || 500);
+  const tw = g.measureText(text).width, wdt = tw + padX * 2 + (o.swatch ? fs * 1.05 : 0);
+  let px = x; if (o.align === "right") px = x - wdt; else if (o.align === "center") px = x - wdt / 2;
+  const py = y - h / 2;
+  rr(g, px, py, wdt, h, Math.min(4, h / 3), o.bg || "rgba(22,21,20,0.9)");
+  if (o.border) { g.strokeStyle = o.border; g.lineWidth = Math.max(1, fs * 0.09); g.stroke(); }
+  let tx = px + padX;
+  if (o.swatch) { rr(g, tx, y - fs * 0.35, fs * 0.7, fs * 0.7, 2, o.swatch); tx += fs * 1.05; }
+  g.fillStyle = o.fg || P.text; g.textBaseline = "middle"; g.textAlign = "left"; g.fillText(text, tx, y + 0.5);
+  return { x: px, y: py, w: wdt, h };
+}
+function fsFor(c, k = 0.34, min = 10, max = 14) { return clamp(c.s * k, min * dpr(), max * dpr()); }
+function dpr() { return Math.min(2, window.devicePixelRatio || 1); }
+
+function ports(g, c) {
+  const fs = fsFor(c, 0.3, 9, 12);
+  pill(g, X(c, 0.15), Y(c, 2.45), `IN  Fe 15.0 · Cu 15.0 /s`, { fs, border: "rgba(255,204,128,0.5)" });
+  const b = sim.L.bus;
+  pill(g, X(c, 31.85), Y(c, 1.45), `BUS OUT  Fe ${fmt(b.rate[0])} · Cu ${fmt(b.rate[1])} /s`, { fs, align: "right", border: "rgba(255,204,128,0.5)" });
+  pill(g, X(c, 31.85), Y(c, 10.55), `OUT  Gear ${fmt(sim.L.out.rate[1])} /s`, { fs, align: "right", border: "rgba(255,204,128,0.5)" });
+}
+function ring(g, c, m, o = {}) {
+  const s = c.s, cx = X(c, m.cx), cy = Y(c, m.cy), r = s * 1.2, st = mStatus(m), col = SC[st];
+  g.lineWidth = s * 0.14;
+  g.strokeStyle = "rgba(255,255,255,0.1)"; g.beginPath(); g.arc(cx, cy, r, 0, Math.PI * 2); g.stroke();
+  g.strokeStyle = col; g.beginPath(); g.arc(cx, cy, r, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * clamp(m.up)); g.stroke();
+  g.beginPath(); g.arc(cx, cy, r * 0.78, 0, Math.PI * 2); g.fillStyle = "rgba(20,19,18,0.88)"; g.fill();
+  font(g, clamp(s * 0.5, 10, 64), 600); g.fillStyle = P.text; g.textAlign = "center"; g.textBaseline = "middle";
+  g.fillText(`${Math.round(m.up * 100)}%`, cx, cy - s * 0.08);
+  font(g, clamp(s * 0.19, 7, 22), 600); g.fillStyle = col; g.fillText(SL[st], cx, cy + s * 0.38);
+  // status light
+  g.save(); g.shadowColor = col; g.shadowBlur = s * 0.5;
+  g.beginPath(); g.arc(X(c, m.x + 2.72), Y(c, 5.28), s * 0.11, 0, Math.PI * 2); g.fillStyle = col; g.fill(); g.restore();
+  g.textAlign = "left";
+}
+
+// ---------- view: A signal ----------
+function hitTest(tx, ty) {
+  for (const m of sim.M) if (tx >= m.x && tx < m.x + 3 && ty >= 5 && ty < 8) return { kind: "m", m };
+  for (let i = 0; i < 4; i++) {
+    const ins = sim.I[i]; if (Math.floor(tx) === ins.x && Math.floor(ty) === 4) return { kind: "i", i };
+    const o = sim.O[i]; if (Math.floor(tx) === o.x && Math.floor(ty) === 8) return { kind: "o", i };
+  }
+  for (const line of LINES()) {
+    const y = line.id === "in" ? 3 : line.y;
+    if (Math.floor(ty) === y && tx >= Math.max(line.x0, line.id === "bus" || line.id === "feed" ? 7 : line.x0) && tx < line.x1) {
+      if (line.id === "in" && tx >= 6) continue;
+      return { kind: "b", line, x: Math.floor(tx) };
+    }
+  }
+  if (Math.floor(tx) === 6 && (Math.floor(ty) === 2 || Math.floor(ty) === 3)) return { kind: "s" };
+  return null;
+}
+function tipHTML(h) {
+  const row = (a, b) => `<div class="row"><span>${a}</span><span>${b}</span></div>`;
+  if (h.kind === "m") {
+    const m = h.m, st = mStatus(m), col = SC[st], need = 3;
+    const supply = sim.I[m.i].rate;
+    let why = "Running at full speed.";
+    if (st === "warn") why = `Limited by its input inserter: ${fmt(insCap())}/s at best, the recipe needs ${fmt(need)}/s.`;
+    if (st === "bad") why = `Starved. The iron lane is nearly empty by the time it reaches this machine; ${fmt(flowAt(sim.L.feed, 0, m.cx - 1))}/s passes the inserter.`;
+    return `<div class="t">Assembler ${m.i + 1} · Iron gear</div>
+      <div class="bar"><i style="width:${Math.round(m.up * 100)}%;background:${col}"></i></div>
+      ${row("Uptime", `${Math.round(m.up * 100)}%`)}${row("Output", `${fmt(m.rate)} gear/s of 1.50`)}${row("Buffer", `Fe ${m.iron}/${ILIM} · gear ${m.gear}`)}
+      <div class="why">${why}</div>`;
+  }
+  if (h.kind === "i" || h.kind === "o") {
+    const ins = h.kind === "i" ? sim.I[h.i] : sim.O[h.i];
+    const nm = h.kind === "i" && sim.fix.bulk ? "Bulk inserter" : "Fast inserter";
+    return `<div class="t">${nm} · ${h.kind === "i" ? "input" : "output"}</div>
+      ${row("Busy", `${Math.round(ins.busy * 100)}%`)}${row("Capacity", `${fmt(h.kind === "i" ? insCap() : 60 / (2 * SW))}/s`)}
+      <div class="why">${h.kind === "i" ? (ins.busy > 0.9 ? "Swinging nonstop. This arm is the limit." : "Mostly waiting for iron to pass by.") : "Plenty of headroom; drops on the far lane."}</div>`;
+  }
+  if (h.kind === "s") {
+    return `<div class="t">Fast splitter</div>${row("Mode", sim.fix.prio ? "priority → feed" : "50 / 50 per lane")}
+      <div class="why">${sim.fix.prio ? "Feed belt gets everything it can take; the rest goes to the bus." : "Half the iron goes up to the bus whether or not the machines below need it."}</div>`;
+  }
+  const line = h.line, k = clamp(h.x - line.t0, 0, line.n - 1);
+  const names = line.id === "out" ? ["—", "Gear"] : ["Iron", "Copper"];
+  const lab = { flow: "moving", held: "backed up", empty: "empty", short: "running dry" };
+  const lr = (ln) => {
+    const st = laneState(line, ln, k);
+    return row(`${ln ? "Right" : "Left"} · ${names[ln]}`, `${fmt(line.flow[ln][k])}/s · ${lab[st]}`);
+  };
+  const nm = { in: "Input belt", bus: "Bus belt", feed: "Feed belt", out: "Output belt" }[line.id];
+  return `<div class="t">${nm} · tile ${h.x}${isHiddenTile(line, h.x) ? " (underground)" : ""}</div>${lr(0)}${lr(1)}
+    <div class="why">Fast belt: 15.0/s per lane, 4 items per lane per tile.</div>`;
+}
+
+// ---------- view: B ribbons ----------
+function laneItem(line, ln) { return line.id === "out" ? (ln ? "gear" : null) : (ln ? "copper" : "iron"); }
+function drawRibbons(v) {
+  const { g, c } = v, s = c.s;
+  drawWorld(g, c, { items: false });
+  dim(g, 0.82);
+  g.globalCompositeOperation = "lighter";
+  for (const line of LINES()) {
+    for (let ln = 0; ln < 2; ln++) {
+      const item = laneItem(line, ln); if (!item) continue;
+      const col = ITEMC[item], ly = line.y + 0.5 + (ln ? 0.22 : -0.22);
+      for (let k = 0; k < line.n; k++) {
+        const x = line.t0 + k, xa = Math.max(x, line.x0), xb = Math.min(x + 1, line.x1);
+        if (xb <= xa) continue;
+        const f = line.flow[ln][k], d = line.dens[ln][k];
+        let wv = 0.03 + 0.34 * clamp(f / 15);
+        const held = d > 0.55 && line.spd[ln][k] < 0.3;
+        if (held) wv = 0.1;
+        if (isHiddenTile(line, x)) continue;
+        for (const [mul, a] of [[2.6, 0.08], [1, held ? 0.25 : 0.6]]) {
+          g.fillStyle = hexA(col, a);
+          g.fillRect(X(c, xa), Y(c, ly) - (wv * mul * s) / 2, (xb - xa) * s + 0.5, wv * mul * s);
+        }
+        if (held) {
+          g.strokeStyle = hexA(P.held, 0.5); g.lineWidth = 1; g.setLineDash([s * 0.08, s * 0.1]);
+          g.strokeRect(X(c, xa) + 1, Y(c, ly) - s * 0.09, (xb - xa) * s - 2, s * 0.18); g.setLineDash([]);
+        }
+      }
+      if (line.hidden) {
+        const f = flowAt(line, ln, 27.5), wv = (0.03 + 0.34 * clamp(f / 15)) * s;
+        g.strokeStyle = hexA(col, 0.55); g.lineWidth = wv; g.setLineDash([s * 0.18, s * 0.12]);
+        g.beginPath(); g.moveTo(X(c, 26.5), Y(c, ly)); g.bezierCurveTo(X(c, 27.2), Y(c, ly - 1.3), X(c, 28.8), Y(c, ly - 1.3), X(c, 29.5), Y(c, ly)); g.stroke(); g.setLineDash([]);
+      }
+    }
+  }
+  // particles: the actual simulated items
+  for (const line of LINES()) for (let ln = 0; ln < 2; ln++) {
+    const ly = line.y + 0.5 + (ln ? 0.22 : -0.22);
+    for (const it of line.lanes[ln]) {
+      if (line.hidden && it.x > line.hidden[0] && it.x < line.hidden[1]) continue;
+      g.fillStyle = "rgba(255,255,255,0.8)"; g.fillRect(X(c, it.x) - s * 0.035, Y(c, ly) - s * 0.035, s * 0.07, s * 0.07);
+    }
+  }
+  // inserter arcs
+  const arc = (x, y0, y1, busy, p, col, carrying) => {
+    const cx = X(c, x), a0 = Y(c, y0), a1 = Y(c, y1), bx = X(c, x + 0.55);
+    g.strokeStyle = hexA(col, 0.12 + 0.6 * busy); g.lineWidth = Math.max(1.5, s * 0.07);
+    g.beginPath(); g.moveTo(cx, a0); g.quadraticCurveTo(bx, (a0 + a1) / 2, cx, a1); g.stroke();
+    if (carrying) {
+      const t = p, px = (1 - t) * (1 - t) * cx + 2 * (1 - t) * t * bx + t * t * cx, py = (1 - t) * (1 - t) * a0 + 2 * (1 - t) * t * ((a0 + a1) / 2) + t * t * a1;
+      g.beginPath(); g.arc(px, py, s * 0.1, 0, Math.PI * 2); g.fillStyle = hexA(col, 0.95); g.fill();
+    }
+  };
+  sim.I.forEach((ins) => arc(ins.x + 0.5, 3.3, 5.3, ins.busy, armP(ins), P.iron, ins.hand > 0));
+  sim.O.forEach((o) => arc(o.x + 0.5, 7.7, 9.75, o.busy, armP(o), P.gear, o.hand > 0));
+  g.globalCompositeOperation = "source-over";
+  // splitter node
+  g.save(); g.shadowColor = P.gold; g.shadowBlur = s * 0.6;
+  rr(g, X(c, 6.3), Y(c, 2.15), s * 0.4, s * 1.7, s * 0.1, "rgba(255,204,128,0.25)"); g.strokeStyle = P.gold; g.lineWidth = 1.5; g.stroke(); g.restore();
+  // machine nodes
+  for (const m of sim.M) {
+    const cx = X(c, m.cx), cy = Y(c, m.cy), st = mStatus(m), col = SC[st], r = s * 1.0;
+    g.beginPath(); g.arc(cx, cy, r, 0, Math.PI * 2); g.fillStyle = hexA(col, 0.12 + 0.12 * m.up); g.fill();
+    g.strokeStyle = hexA(col, 0.8); g.lineWidth = Math.max(1.5, s * 0.05); g.stroke();
+    drawGear(g, cx, cy - s * 0.2, s * 0.32, 8, m.ang, hexA(P.gear, 0.9), "rgba(20,19,18,1)");
+    font(g, clamp(s * 0.3, 9, 28), 600); g.fillStyle = P.text; g.textAlign = "center"; g.textBaseline = "middle";
+    g.fillText(`${fmt(m.rate)}/s`, cx, cy + s * 0.45); g.textAlign = "left";
+  }
+  const fs = fsFor(c, 0.3, 9, 12);
+  const feed = sim.L.feed, bus = sim.L.bus;
+  pill(g, X(c, 7.3), Y(c, 1.4), `Fe ${fmt(flowAt(bus, 0, 8))} · Cu ${fmt(flowAt(bus, 1, 8))}`, { fs, swatch: P.iron });
+  for (const x of [9, 13, 17, 21, 25]) {
+    pill(g, X(c, x), Y(c, 4.5), `${fmt(flowAt(feed, 0, x))}`, { fs: fs * 0.95, align: "center", swatch: P.iron, bg: "rgba(22,21,20,0.85)" });
+  }
+  pill(g, X(c, 31.85), Y(c, 10.55), `Gear ${fmt(sim.L.out.rate[1])}/s`, { fs, align: "right", swatch: P.gear });
+  pill(g, X(c, 0.15), Y(c, 2.45), `Fe 15.0 · Cu 15.0`, { fs, swatch: P.iron });
+}
+
+// ---------- view: C semantic zoom ----------
+let zoomT = 0.5, zoomTarget = 0.5;
+function drawZoom(v) {
+  const { g } = v, cw = g.canvas.width, ch = g.canvas.height, s0 = cw / W;
+  zoomT += (zoomTarget - zoomT) * 0.15;
+  const t = zoomT, e = t * t * (3 - 2 * t);
+  const s = s0 * lerp(1, 2.4, e), fx = lerp(16, 20.2, e), fy = lerp(6, 5.3, e);
+  const c = { s, ox: cw / 2 - fx * s, oy: ch / 2 - fy * s };
+  const w0 = clamp(1 - t / 0.38), w2 = clamp((t - 0.62) / 0.3), w1 = clamp(1 - Math.abs(t - 0.5) / 0.32);
+  drawWorld(g, c);
+  dim(g, 0.72 * (1 - w2) + 0.1 * w2);
+  // overview blocks
+  if (w0 > 0.01) {
+    g.globalAlpha = w0;
+    for (const line of LINES()) {
+      const y = Y(c, line.y + 0.5);
+      for (let k = 0; k < line.n; k++) {
+        const x = line.t0 + k, xa = Math.max(x, line.x0), xb = Math.min(x + 1, line.x1);
+        if (xb <= xa || isHiddenTile(line, x)) continue;
+        const s0t = laneState(line, 0, k), s1t = laneState(line, 1, k);
+        const pri = ["short", "flow", "held", "empty"];
+        const st = pri.find((p) => p === s0t || p === s1t);
+        g.fillStyle = laneColor(st, Math.max(line.dens[0][k], line.dens[1][k]), sim.tick);
+        g.fillRect(X(c, xa), y - s * 0.22, (xb - xa) * s + 0.5, s * 0.44);
+      }
+    }
+    for (const m of sim.M) {
+      const st = mStatus(m);
+      rr(g, X(c, m.x + 0.1), Y(c, 5.1), s * 2.8, s * 2.8, s * 0.15, hexA(SC[st], 0.85));
+      font(g, clamp(s * 0.8, 10, 90), 700, "Chakra Petch"); g.fillStyle = "#1a1917"; g.textAlign = "center"; g.textBaseline = "middle";
+      g.fillText(`${Math.round(m.up * 100)}`, X(c, m.cx), Y(c, m.cy));
+      g.textAlign = "left";
+    }
+    const tot = sim.M.reduce((a, m) => a + m.rate, 0), avg = sim.M.reduce((a, m) => a + m.up, 0) / 4;
+    pill(g, X(c, 17.5), Y(c, 4.45), `Iron gear ×4 · ${Math.round(avg * 100)}% · ${fmt(tot)} of 6.00/s`, { fs: fsFor(c, 0.36, 10, 15), align: "center", border: P.gold, weight: 600 });
+    g.globalAlpha = 1;
+  }
+  // flow layer
+  if (w1 > 0.01) {
+    g.globalAlpha = w1;
+    laneStrips(g, c, { w: 0.16 });
+    for (const m of sim.M) ring(g, c, m);
+    const fs = fsFor(c, 0.26, 9, 13), feed = sim.L.feed;
+    for (const x of [9, 13, 17, 21, 25]) pill(g, X(c, x), Y(c, 4.5), `${fmt(flowAt(feed, 0, x))}/s`, { fs, align: "center", swatch: P.iron });
+    pill(g, X(c, 10), Y(c, 1.45), `Fe ${fmt(flowAt(sim.L.bus, 0, 10))} · Cu ${fmt(flowAt(sim.L.bus, 1, 10))}/s`, { fs, swatch: P.iron });
+    pill(g, X(c, 22), Y(c, 10.5), `Gear ${fmt(flowAt(sim.L.out, 1, 24))}/s`, { fs, align: "center", swatch: P.gear });
+    g.globalAlpha = 1;
+  }
+  // detail layer
+  if (w2 > 0.01) {
+    g.globalAlpha = w2;
+    const fs = fsFor(c, 0.2, 9, 14);
+    for (const m of sim.M) {
+      const st = mStatus(m);
+      pill(g, X(c, m.cx), Y(c, 7.55), `Fe ${m.iron}/${ILIM} · gear ${m.gear}`, { fs, align: "center", border: hexA(SC[st], 0.9) });
+    }
+    sim.I.forEach((ins) => pill(g, X(c, ins.x + 0.98), Y(c, 4.5), `${Math.round(ins.busy * 100)}% busy`, { fs: fs * 0.9, bg: "rgba(22,21,20,0.8)", fg: ins.busy > 0.9 ? P.warn : P.dim }));
+    g.globalAlpha = 1;
+  }
+  font(g, fsFor(c, 0.3, 10, 12), 600); g.fillStyle = P.dim; g.textBaseline = "top";
+  const lvl = t < 0.3 ? "OVERVIEW" : t < 0.72 ? "FLOW" : "DETAIL";
+  pill(g, 10 * dpr(), ch - 14 * dpr(), `${lvl} · ${lerp(1, 2.4, e).toFixed(1)}×`, { fs: 11 * dpr(), fg: P.gold });
+}
+
+// ---------- view: D jam trace ----------
+let selIssue = "starve";
+function issueList() {
+  const lost = (ms) => ms.reduce((a, m) => a + Math.max(0, 1.5 - m.rate), 0);
+  const starved = sim.M.filter((m) => mStatus(m) === "bad");
+  const bound = sim.M.filter((m) => mStatus(m) === "warn");
+  const names = (ms) => ms.map((m) => m.i + 1).join(", ");
+  const L = [
+    {
+      id: "starve", sev: starved.length ? "bad" : "done", lost: lost(starved), fix: "prio",
+      title: starved.length ? `Assembler ${names(starved)} starved of iron` : "No starved machines",
+      fixLabel: "Give the splitter priority to the feed belt",
+    },
+    {
+      id: "ins", sev: bound.length ? "warn" : "done", lost: lost(bound), fix: "bulk",
+      title: bound.length ? `${bound.length === 1 ? "Assembler" : "Assemblers"} ${names(bound)} limited by their inserter` : "No inserter limits",
+      fixLabel: "Swap to bulk inserters",
+    },
+    { id: "held", sev: "info", lost: 0, title: "Copper lane backed up on the feed belt", fix: null },
+  ];
+  return L.sort((a, b) => (a.sev === "done") - (b.sev === "done") || b.lost - a.lost || (a.sev === "info") - (b.sev === "info"));
+}
+const issuesEl = document.getElementById("issues");
+function renderIssues() {
+  const list = issueList();
+  const html = list.map((it) => {
+    const im = it.sev === "done" ? "Resolved" : it.sev === "info" ? "Costs nothing · unused lane" : `−${fmt(it.lost)} gear/s`;
+    return `<button type="button" class="issue" data-sev="${it.sev}" data-id="${it.id}" aria-pressed="${selIssue === it.id}"><i></i><div><span class="it">${it.title}</span><span class="im">${im}</span></div></button>`;
+  }).join("");
+  const sel = list.find((i) => i.id === selIssue);
+  let fix = "";
+  if (sel && sel.fix) {
+    const on = sim.fix[sel.fix];
+    fix = `<div class="fixrow"><button type="button" class="btn" data-fix="${sel.fix}" aria-pressed="${on}">${on ? "Undo: " : "Try: "}${sel.fixLabel}</button></div>`;
+  } else if (sel && sel.id === "held") {
+    fix = `<div class="fixrow"><span class="im" style="color:var(--dim);font-size:13px">Nothing downstream uses copper. Harmless, but a splitter filter would free the lane.</span></div>`;
+  }
+  const next = html + fix;
+  if (issuesEl._last !== next) { issuesEl.innerHTML = next; issuesEl._last = next; }
+}
+issuesEl.addEventListener("click", (e) => {
+  const b = e.target.closest(".issue"); if (b) { selIssue = b.dataset.id; renderIssues(); return; }
+  const f = e.target.closest("[data-fix]"); if (f) setFix(f.dataset.fix, !sim.fix[f.dataset.fix]);
+});
+function badge(g, c, x, y, n, text, col, align = "left") {
+  const s = c.s, px = X(c, x), py = Y(c, y), r = clamp(s * 0.26, 9, 16) * (dpr() > 1 ? 1.4 : 1);
+  g.beginPath(); g.arc(px, py, r, 0, Math.PI * 2); g.fillStyle = col; g.fill();
+  font(g, r * 1.1, 700, "Chakra Petch"); g.fillStyle = "#1a1917"; g.textAlign = "center"; g.textBaseline = "middle"; g.fillText(String(n), px, py + 0.5);
+  g.textAlign = "left";
+  const fs = fsFor(c, 0.28, 10, 13);
+  pill(g, align === "left" ? px + r + 4 : px - r - 4, py, text, { fs, align: align === "left" ? "left" : "right", border: hexA(col, 0.8) });
+}
+function traceLine(g, c, pts, col) {
+  const s = c.s;
+  g.save(); g.shadowColor = col; g.shadowBlur = s * 0.5; g.strokeStyle = col; g.lineWidth = Math.max(2, s * 0.08);
+  g.setLineDash([s * 0.3, s * 0.14]); g.lineDashOffset = -sim.tick * 0.4;
+  g.beginPath(); pts.forEach(([x, y], i) => (i ? g.lineTo(X(c, x), Y(c, y)) : g.moveTo(X(c, x), Y(c, y)))); g.stroke();
+  g.restore();
+}
+function drawJam(v) {
+  const { g, c } = v, s = c.s;
+  drawWorld(g, c);
+  dim(g, 0.74);
+  const list = issueList(), sel = list.find((i) => i.id === selIssue) || list[0];
+  const col = sel.sev === "done" ? P.ok : SC[sel.sev] || P.held;
+  if (sel.id === "starve") {
+    const target = sim.M.filter((m) => mStatus(m) === "bad").pop();
+    const feed = sim.L.feed;
+    if (!target) {
+      laneStrips(g, c, { only: (l, ln) => l.id === "feed" && ln === 0, w: 0.2 });
+      sim.M.forEach((m) => ring(g, c, m));
+      badge(g, c, 8, 4.5, "✓", "Every machine gets iron now", P.ok);
+      return;
+    }
+    for (const m of sim.M) if (m.i <= target.i) { drawAsm(g, c, m); }
+    laneStrips(g, c, { only: (l, ln, x) => (l.id === "feed" && ln === 0 && x <= target.x + 2) || (l.id === "in" && ln === 0) || (l.id === "bus" && ln === 0 && x < 12), w: 0.22 });
+    drawSplitter(g, c);
+    sim.I.forEach((ins, k) => { if (k <= target.i) drawIns(g, c, ins, "iron", sim.fix.bulk ? P.bulk : P.fast); });
+    ring(g, c, target);
+    const ti = sim.I[target.i];
+    traceLine(g, c, [[target.cx, target.cy - 1.2], [ti.x + 0.5, 4.5], [ti.x + 0.5, 3.25], [7, 3.25], [6.5, 3.0]], col);
+    // lane readings upstream
+    const fs = fsFor(c, 0.26, 9, 12);
+    for (let k = 0; k <= target.i; k++) {
+      const x = sim.I[k].x + 0.5;
+      pill(g, X(c, x - 1.2), Y(c, 2.45), `${fmt(flowAt(feed, 0, x - 1))}/s`, { fs, align: "center", swatch: P.iron });
+    }
+    badge(g, c, target.cx + 1.55, 7.6, 1, `Starved · ${Math.round(target.up * 100)}% uptime`, P.bad);
+    badge(g, c, ti.x + 1.0, 4.5, 2, `Arm idle ${Math.round((1 - ti.busy) * 100)}% of the time`, P.bad);
+    badge(g, c, 12.8, 4.45, 3, `Each arm upstream takes ~${fmt(insCap())}/s`, P.warn, "left");
+    badge(g, c, 6.5, 1.0, 4, sim.fix.prio ? `Splitter now favours the feed` : `Splitter sends half the iron to the bus`, sim.fix.prio ? P.ok : P.bad);
+  } else if (sel.id === "ins") {
+    const ms = sim.M.filter((m) => mStatus(m) === "warn");
+    if (!ms.length) { sim.M.forEach((m) => ring(g, c, m)); badge(g, c, 8, 4.5, "✓", "No machine waits on its arm", P.ok); return; }
+    for (const m of ms) {
+      drawAsm(g, c, m); drawIns(g, c, sim.I[m.i], "iron", sim.fix.bulk ? P.bulk : P.fast); ring(g, c, m);
+      const ins = sim.I[m.i];
+      g.save(); g.shadowColor = P.warn; g.shadowBlur = s * 0.6; g.strokeStyle = P.warn; g.lineWidth = Math.max(2, s * 0.06);
+      g.strokeRect(X(c, ins.x + 0.08), Y(c, 4.08), s * 0.84, s * 0.84); g.restore();
+    }
+    const m0 = ms[0];
+    badge(g, c, m0.x - 0.2, 4.5, 1, `Arm busy ${Math.round(sim.I[m0.i].busy * 100)}% · max ${fmt(insCap())}/s`, P.warn, "right");
+    badge(g, c, m0.cx, 8.6, 2, `Recipe needs 3.00 iron/s`, P.warn);
+  } else {
+    laneStrips(g, c, { only: (l, ln) => l.id === "feed" && ln === 1, w: 0.24 });
+    badge(g, c, 25.4, 4.5, 1, "Copper lane standing still", P.held, "right");
+    badge(g, c, 12.8, 1.1, 2, "No machine here takes copper", P.held);
+  }
+}
+
+// ---------- view: E lens ----------
+let lens = { x: 22.4, y: 3.8, tx: 22.4, ty: 3.8, active: false };
+function drawLens(v) {
+  const { g, c } = v, s = c.s;
+  lens.x += (lens.tx - lens.x) * 0.25; lens.y += (lens.ty - lens.y) * 0.25;
+  drawWorld(g, c);
+  for (const m of sim.M) {
+    const col = SC[mStatus(m)];
+    g.save(); g.shadowColor = col; g.shadowBlur = s * 0.5;
+    g.beginPath(); g.arc(X(c, m.x + 2.72), Y(c, 5.28), s * 0.12, 0, Math.PI * 2); g.fillStyle = col; g.fill(); g.restore();
+  }
+  const R = s * 3.1, mag = 2.3, lx = X(c, lens.x), ly = Y(c, lens.y);
+  g.save(); g.beginPath(); g.arc(lx, ly, R, 0, Math.PI * 2); g.clip();
+  const c2 = { s: s * mag, ox: lx - lens.x * s * mag, oy: ly - lens.y * s * mag };
+  drawWorld(g, c2);
+  dim(g, 0.25);
+  laneStrips(g, c2, { w: 0.06 });
+  drawItems(g, c2);
+  g.restore();
+  // bezel
+  g.lineWidth = s * 0.28; g.strokeStyle = "#2a2826"; g.beginPath(); g.arc(lx, ly, R + s * 0.14, 0, Math.PI * 2); g.stroke();
+  g.lineWidth = Math.max(1.5, s * 0.05); g.strokeStyle = P.gold; g.beginPath(); g.arc(lx, ly, R, 0, Math.PI * 2); g.stroke();
+  g.strokeStyle = "rgba(255,204,128,0.5)"; g.lineWidth = 1;
+  for (let i = 0; i < 48; i++) {
+    const a = (i / 48) * Math.PI * 2, r0 = R + s * 0.04, r1 = R + s * (i % 4 ? 0.14 : 0.24);
+    g.beginPath(); g.moveTo(lx + Math.cos(a) * r0, ly + Math.sin(a) * r0); g.lineTo(lx + Math.cos(a) * r1, ly + Math.sin(a) * r1); g.stroke();
+  }
+  // readouts
+  const reads = [];
+  let best = null;
+  for (const line of LINES()) {
+    const dy = Math.abs(line.y + 0.5 - lens.y);
+    if (lens.x >= line.x0 && lens.x < line.x1 && dy < 1.6 && (!best || dy < best.dy)) best = { line, dy };
+  }
+  if (best) {
+    const l = best.line, k = clamp(Math.floor(lens.x) - l.t0, 0, l.n - 1);
+    const nm = l.id === "out" ? ["—", "Gear"] : ["Iron", "Copper"];
+    const lab = { flow: "moving", held: "backed up", empty: "empty", short: "running dry" };
+    for (let ln = 0; ln < 2; ln++) {
+      if (nm[ln] === "—") continue;
+      const st = laneState(l, ln, k);
+      reads.push({ t: `${ln ? "R" : "L"} ${nm[ln]} ${fmt(l.flow[ln][k])}/s · ${lab[st]}`, col: st === "short" ? P.bad : st === "held" ? P.held : st === "flow" ? P.ok : P.dim });
+    }
+  }
+  const m = sim.M.find((m) => Math.abs(m.cx - lens.x) < 2.2 && Math.abs(m.cy - lens.y) < 3.2);
+  if (m) reads.push({ t: `Asm ${m.i + 1} ${Math.round(m.up * 100)}% · ${SL[mStatus(m)].toLowerCase()}`, col: SC[mStatus(m)] });
+  const right = lens.x < 23;
+  const fs = fsFor(c, 0.3, 10, 13);
+  reads.forEach((r, i) => {
+    const a = (right ? -0.55 : Math.PI + 0.55) + (right ? 1 : -1) * i * 0.34;
+    const px = lx + Math.cos(a) * (R + s * 0.5), py = ly + Math.sin(a) * (R + s * 0.5);
+    pill(g, px, py, r.t, { fs, align: right ? "left" : "right", border: r.col });
+  });
+}
+
+// ---------- wiring ----------
+function setupView(canvas) {
+  const stage = canvas.parentElement;
+  const v = { canvas, g: canvas.getContext("2d"), kind: canvas.dataset.view, visible: true, c: { s: 1, ox: 0, oy: 0 }, stage, tip: stage.querySelector(".tip"), hover: null };
+  const resize = () => {
+    const w = stage.clientWidth, d = dpr();
+    canvas.width = Math.round(w * d); canvas.height = Math.round((w * H / W) * d);
+    canvas.style.height = `${Math.round(w * H / W)}px`;
+    v.c = { s: canvas.width / W, ox: 0, oy: 0 };
+    draw(v);
+  };
+  new ResizeObserver(resize).observe(stage);
+  new IntersectionObserver((es) => es.forEach((e) => (v.visible = e.isIntersecting))).observe(canvas);
+  const toTile = (e) => {
+    const r = canvas.getBoundingClientRect();
+    return [((e.clientX - r.left) / r.width) * W, ((e.clientY - r.top) / r.height) * H, e.clientX - r.left, e.clientY - r.top];
+  };
+  if (v.kind === "signal") {
+    canvas.addEventListener("pointermove", (e) => { const [tx, ty, px, py] = toTile(e); v.hover = hitTest(tx, ty); v.hp = [px, py]; updateTip(v); });
+    canvas.addEventListener("pointerleave", () => { v.hover = null; updateTip(v); });
+  }
+  if (v.kind === "lens") {
+    canvas.addEventListener("pointermove", (e) => { const [tx, ty] = toTile(e); lens.tx = tx; lens.ty = ty; lens.active = true; });
+    canvas.addEventListener("pointerleave", () => { lens.tx = 22.4; lens.ty = 3.8; lens.active = false; });
+  }
+  views.push(v);
+  resize();
+}
+function updateTip(v) {
+  let h = v.hover, px, py;
+  const r = v.canvas.getBoundingClientRect();
+  const pinned = !h;
+  if (pinned) h = { kind: "m", m: sim.M[3] };
+  else { [px, py] = v.hp; px += 16; py += 14; }
+  v.tip.innerHTML = tipHTML(h);
+  v.tip.hidden = false;
+  const tw = v.tip.offsetWidth, th = v.tip.offsetHeight;
+  if (pinned) { px = 8; py = r.height - th - 8; }
+  else {
+    if (px + tw > r.width - 6) px = Math.max(6, v.hp[0] - tw - 16);
+    if (py + th > r.height - 6) py = Math.max(6, r.height - th - 6);
+  }
+  v.tip.style.left = `${px}px`; v.tip.style.top = `${py}px`;
+  if (r.width < 520) v.tip.hidden = !v.hover;
+}
+function draw(v) {
+  const g = v.g;
+  if (v.kind === "zoom") return drawZoom(v);
+  if (v.kind === "ribbons") return drawRibbons(v);
+  if (v.kind === "jam") return drawJam(v);
+  if (v.kind === "lens") return drawLens(v);
+  const c = v.c;
+  drawWorld(g, c);
+  dim(g, 0.6);
+  laneStrips(g, c, { w: 0.13 });
+  for (const m of sim.M) ring(g, c, m);
+  ports(g, c);
+  {
+    g.strokeStyle = P.gold; g.lineWidth = Math.max(1.5, c.s * 0.05);
+    const h = v.hover || { kind: "m", m: sim.M[3] };
+    if (h.kind === "m") g.strokeRect(X(c, h.m.x + 0.05), Y(c, 5.05), c.s * 2.9, c.s * 2.9);
+    if (h.kind === "i" || h.kind === "o") { const e = h.kind === "i" ? sim.I[h.i] : sim.O[h.i]; g.strokeRect(X(c, e.x), Y(c, e.y), c.s, c.s); }
+    if (h.kind === "b") g.strokeRect(X(c, h.x), Y(c, h.line.y), c.s, c.s);
+    if (h.kind === "s") g.strokeRect(X(c, 6), Y(c, 2), c.s, c.s * 2);
+  }
+}
+
+document.querySelectorAll("canvas[data-view]").forEach(setupView);
+
+// controls
+let playing = !reduceMotion, speed = 1, acc = 0, last = performance.now(), lastUI = 0;
+const playBtn = document.getElementById("play");
+const syncPlay = () => { playBtn.textContent = playing ? "Pause" : "Play"; playBtn.setAttribute("aria-pressed", String(!playing)); };
+playBtn.addEventListener("click", () => { playing = !playing; syncPlay(); });
+syncPlay();
+document.querySelectorAll("[data-speed]").forEach((b) => b.addEventListener("click", () => {
+  speed = +b.dataset.speed;
+  document.querySelectorAll("[data-speed]").forEach((x) => x.setAttribute("aria-pressed", String(x === b)));
+  if (!playing) { playing = true; syncPlay(); }
+}));
+function setFix(k, on) {
+  sim.fix[k] = on;
+  document.getElementById(k === "prio" ? "fixPrio" : "fixBulk").setAttribute("aria-pressed", String(on));
+  issuesEl._last = null; renderIssues();
+  if (!playing) { playing = true; syncPlay(); }
+}
+document.getElementById("fixPrio").addEventListener("click", () => setFix("prio", !sim.fix.prio));
+document.getElementById("fixBulk").addEventListener("click", () => setFix("bulk", !sim.fix.bulk));
+document.getElementById("reset").addEventListener("click", () => {
+  reset();
+  for (const k of ["prio", "bulk"]) document.getElementById(k === "prio" ? "fixPrio" : "fixBulk").setAttribute("aria-pressed", "false");
+  issuesEl._last = null; renderIssues(); views.forEach(draw);
+});
+const zr = document.getElementById("zoomRange");
+const syncZoomBtns = () => document.querySelectorAll("[data-zoom]").forEach((b) => b.setAttribute("aria-pressed", String(Math.abs(+b.dataset.zoom - zoomTarget) < 0.01)));
+zr.addEventListener("input", () => { zoomTarget = zr.value / 100; syncZoomBtns(); });
+document.querySelectorAll("[data-zoom]").forEach((b) => b.addEventListener("click", () => { zoomTarget = +b.dataset.zoom; zr.value = zoomTarget * 100; syncZoomBtns(); }));
+
+const clockEl = document.getElementById("clock"), outEl = document.getElementById("outRate"), meterEl = document.getElementById("outMeter");
+function ui() {
+  const secs = Math.floor(sim.tick / 60);
+  clockEl.textContent = `${Math.floor(secs / 60)}:${String(secs % 60).padStart(2, "0")}`;
+  const r = sim.L.out.rate[1];
+  outEl.textContent = fmt(r);
+  meterEl.style.width = `${clamp(r / 6) * 100}%`;
+  meterEl.style.background = r > 5.7 ? P.ok : r > 4.5 ? P.warn : P.bad;
+  renderIssues();
+  const sv = views.find((v) => v.kind === "signal"); if (sv) updateTip(sv);
+}
+function frame(now) {
+  const dt = Math.min(0.1, (now - last) / 1000); last = now;
+  if (playing) {
+    acc += dt * 60 * speed;
+    let n = Math.min(400, Math.floor(acc)); acc -= n;
+    while (n-- > 0) step();
+  }
+  for (const v of views) if (v.visible) draw(v);
+  if (now - lastUI > 250) { ui(); lastUI = now; }
+  requestAnimationFrame(frame);
+}
+ui();
+requestAnimationFrame(frame);
+})();
+</script>
+</body></html>

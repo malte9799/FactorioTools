@@ -224,8 +224,11 @@ export function calculate(
     }
 
     const speed = resolved.baseSpeed * (1 + resolved.totalEffects.speed);
-    // No per-tick ceiling: 2.0 completes several crafts in one tick when
-    // speed allows (verified in-game: a beaconed AM3 on inserters at 92.7/s).
+    // No one-craft-per-tick ceiling: 2.0 machines finish several crafts in a
+    // tick when speed allows. A legendary, beaconed build that fills a
+    // stacked turbo belt with 240 green science/s depends on an inserter
+    // assembler making ~125 crafts/s, which the old 60/s cap made look
+    // impossible.
     const craftsPerSecond = speed / recipe.energyRequired;
     const power =
       machine.energySource === "electric"

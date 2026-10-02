@@ -62,6 +62,14 @@ test("two unmodded assemblers on gears", () => {
   close(result.totalPower, 300_000, "power");
 });
 
+test("a very fast machine is not capped at one craft per tick", () => {
+  // 2.0 finishes several crafts a tick when speed allows; a machine 100×
+  // faster than an assembling machine 2 on gears (0.5 s) makes 150/s, not 60.
+  const fast = { ...vanilla, machines: { ...vanilla.machines, "assembling-machine-2": { ...vanilla.machines["assembling-machine-2"]!, speed: 75 } } };
+  const placed = normaliseEntities({ item: "blueprint", entities: [{ entity_number: 1, name: "assembling-machine-2", position: { x: 0, y: 0 }, recipe: "iron-gear-wheel" }] });
+  close(calculate(fast, placed).groups[0]!.craftsPerSecond, 150, "crafts/s");
+});
+
 test("productivity modules slow the machine and boost output", () => {
   const result = ratesOf([
     {
@@ -87,6 +95,17 @@ test("productivity modules slow the machine and boost output", () => {
   const plates = result.ingredients.find((f) => f.name === "iron-plate")!;
   close(plates.consumed, 2.7, "plates consumed");
   close(group.powerPerMachine, 150_000 * 1.8, "power with prod modules");
+});
+
+test("a machine's own base productivity adds to its modules", () => {
+  // Space Age's foundry is +50% productivity on its own; allowed_effects
+  // only filters modules and beacons, never the machine's own bonus.
+  const machine = { ...vanilla.machines["assembling-machine-2"]!, baseEffect: { productivity: 0.5 }, allowedEffects: ["speed" as const] };
+  const data = { ...vanilla, machines: { ...vanilla.machines, "assembling-machine-2": machine } };
+  const placed = normaliseEntities({ item: "blueprint", entities: [{ entity_number: 1, name: "assembling-machine-2", position: { x: 0, y: 0 }, recipe: "iron-gear-wheel" }] });
+  const result = calculate(data, placed);
+  close(result.groups[0]!.effects.productivity, 0.5, "base productivity");
+  close(result.products.find((f) => f.name === "iron-gear-wheel")!.produced, 1.5 * 1.5, "gears produced");
 });
 
 test("beacons in range apply, out of range do not", () => {

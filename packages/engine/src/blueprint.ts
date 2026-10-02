@@ -8,7 +8,9 @@ import type {
   BpFilterMode,
   BpItemFilter,
   BpItemRequest,
+  BpSignalFilter,
   BpSpoilPriority,
+  BpSplitterSide,
   BpWire,
   ModuleStack,
   PlacedEntity,
@@ -238,7 +240,37 @@ export function normaliseEntities(blueprint: Blueprint): PlacedEntity[] {
     overrideStackSize: entity.override_stack_size,
     spoilPriority: entity.spoil_priority,
     undergroundType: entity.type === "input" || entity.type === "output" ? entity.type : undefined,
+    splitterInputPriority: asSplitterSide(entity.input_priority),
+    splitterOutputPriority: asSplitterSide(entity.output_priority),
+    splitterFilter: readSplitterFilter(entity.filter),
+    signalItems: readSignalItems(entity),
   }));
+}
+
+/** Every item (not virtual signal or fluid) a combinator, display panel,
+ *  infinity chest or requester names; undefined when there are none. */
+function readSignalItems(entity: BpEntity): string[] | undefined {
+  const found: (BpSignalFilter | undefined)[] = [
+    ...(entity.control_behavior?.sections?.sections ?? []).flatMap((s) => s.filters ?? []),
+    ...(entity.control_behavior?.parameters ?? []).map((p) => p.icon),
+    entity.icon,
+    ...(entity.infinity_settings?.filters ?? []),
+    ...(entity.request_filters?.sections ?? []).flatMap((s) => s.filters ?? []),
+  ];
+  const names = found
+    .filter((f): f is BpSignalFilter & { name: string } => !!f && typeof f.name === "string" && (f.type === undefined || f.type === "item"))
+    .map((f) => safeName(f.name));
+  return names.length ? [...new Set(names)] : undefined;
+}
+
+function asSplitterSide(side: unknown): BpSplitterSide | undefined {
+  return side === "left" || side === "right" ? side : undefined;
+}
+
+function readSplitterFilter(filter: BpEntity["filter"]): string | undefined {
+  if (typeof filter === "string") return safeName(filter);
+  if (filter && typeof filter.name === "string") return safeName(filter.name);
+  return undefined;
 }
 
 /* ---------- PlacedEntity[] -> Blueprint (the inverse of normaliseEntities) ---------- */
@@ -307,6 +339,9 @@ export function denormaliseEntities(entities: PlacedEntity[]): BpEntity[] {
     }
     if (e.overrideStackSize !== undefined) bp.override_stack_size = e.overrideStackSize;
     if (e.spoilPriority) bp.spoil_priority = e.spoilPriority as BpSpoilPriority;
+    if (e.splitterInputPriority) bp.input_priority = e.splitterInputPriority;
+    if (e.splitterOutputPriority) bp.output_priority = e.splitterOutputPriority;
+    if (e.splitterFilter) bp.filter = { name: e.splitterFilter };
     return bp;
   });
 }
