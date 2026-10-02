@@ -113,10 +113,10 @@ function makeSection(
   const isOpen = !collapsed.has(key);
   header.classList.toggle("is-open", isOpen);
   header.setAttribute("aria-expanded", String(isOpen));
-  if (options.iconName) header.appendChild(icon(options.iconName, "", 20));
+  if (options.iconName) header.appendChild(icon(options.iconName, "", 16));
   const label = document.createElement("span");
   label.className = "bp-section-label";
-  label.appendChild(renderRichLabel(title, 18));
+  label.appendChild(renderRichLabel(title, 14));
   label.title = title;
   const disclosure = document.createElement("span");
   disclosure.className = "bp-disclosure";
@@ -260,10 +260,10 @@ function makeRow(label: string, options: RowOptions, refresh: () => void): HTMLE
   const button = document.createElement("button");
   button.type = "button";
   button.className = "bp-row-main";
-  button.appendChild(icon(options.iconName, "", 20));
+  button.appendChild(icon(options.iconName, "", 16));
   const text = document.createElement("span");
   text.className = "bp-row-label";
-  text.appendChild(renderRichLabel(label, 18));
+  text.appendChild(renderRichLabel(label, 14));
   button.appendChild(text);
   // The raw name, `[tag]` markup and all, stays the hover reference for a
   // label whose icons replaced part of the text.
@@ -389,7 +389,7 @@ export function buildLibrarySidebar(container: HTMLElement, callbacks: LibraryCa
   saveRow.className = "bp-save-row";
   const nameInput = document.createElement("input");
   nameInput.type = "text";
-  nameInput.placeholder = "Name the current blueprint…";
+  nameInput.placeholder = "Name current blueprint…";
   nameInput.className = "library-save-input";
   nameInput.setAttribute("aria-label", "Name for the blueprint to save");
   const saveButton = makeIconButton("is-confirm", SAVE_SVG, "Save current blueprint", () => save());

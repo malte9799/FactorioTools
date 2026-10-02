@@ -110,8 +110,8 @@
   /* Fixed chrome: the nav bar's height, and the docked sidebar's width
      open and folded — the toolbar positions itself off these. */
   --nav-h: 51px;
-  --sidebar-w: 248px;
-  --sidebar-collapsed-w: 38px;
+  --sidebar-w: 212px;
+  --sidebar-collapsed-w: 34px;
 
   --text: #e6e0d8;
   --text-dim: #a5a19a;
@@ -424,36 +424,38 @@ body:has(#library-window.is-collapsed:not([hidden])) #window-toolbar { left: cal
   transition: width 0.15s ease;
 }
 
-/* Flush against the left edge of the screen from under the nav bar to the
-   bottom, the way the game docks its Surfaces panel — square on the screen
-   edges, frame and shadow only on the side facing the map. */
+/* Flush against the left edge of the screen under the nav bar, the way the
+   game docks its Surfaces panel — square on the screen edges, frame and
+   shadow only on the sides facing the map. Only as tall as its content,
+   growing until it fills the screen height, then the list scrolls. */
 #library-window {
   top: var(--nav-h);
   left: 0;
-  bottom: 0;
+  max-height: calc(100vh - var(--nav-h));
+  max-height: calc(100dvh - var(--nav-h));
   width: var(--sidebar-w);
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  border-radius: 0;
-  border-width: 0 1px 0 0;
+  border-radius: 0 0 3px 0;
+  border-width: 0 1px 1px 0;
   box-shadow:
-    inset -1px 0 0 var(--bevel-light),
+    inset -1px -1px 0 var(--bevel-light),
     6px 0 18px rgba(0, 0, 0, 0.45);
 }
 
-#library-window .gui-titlebar { padding: 8px 6px 6px 12px; }
+#library-window .gui-titlebar { padding: 6px 5px 4px 10px; font-size: 16px; }
 #library-window .gui-titlebar > span:first-child { flex: 1; }
 
-/* Folded: a slim full-height strip at the screen edge with only the toggle
+/* Folded: a slim tab at the screen edge with only the toggle
    showing, so the map gets the room back without losing the way in. */
 #library-window.is-collapsed { width: var(--sidebar-collapsed-w); }
-#library-window.is-collapsed .gui-titlebar { padding: 8px 0; justify-content: center; }
+#library-window.is-collapsed .gui-titlebar { padding: 5px 0; justify-content: center; }
 #library-window.is-collapsed .gui-body,
 #library-window.is-collapsed .gui-titlebar > span:first-child { display: none; }
 
 #library-window .gui-body {
-  flex: 1;
+  flex: 0 1 auto;
   min-height: 0;
   display: flex;
   flex-direction: column;
@@ -463,8 +465,8 @@ body:has(#library-window.is-collapsed:not([hidden])) #window-toolbar { left: cal
 
 .library-collapse-toggle {
   flex: none;
-  width: 24px;
-  height: 24px;
+  width: 22px;
+  height: 22px;
   padding: 0;
   display: flex;
   align-items: center;
@@ -479,7 +481,7 @@ body:has(#library-window.is-collapsed:not([hidden])) #window-toolbar { left: cal
    lighter section headers in gold, the selected row filled gold. */
 
 .bp-list {
-  flex: 1;
+  flex: 0 1 auto;
   min-height: 0;
   overflow-y: auto;
   display: flex;
@@ -505,9 +507,9 @@ body:has(#library-window.is-collapsed:not([hidden])) #window-toolbar { left: cal
   min-width: 0;
   display: flex;
   align-items: center;
-  gap: 8px;
-  min-height: 34px;
-  padding: 0 10px;
+  gap: 6px;
+  min-height: 28px;
+  padding: 0 8px;
   text-align: left;
   border: none;
   border-radius: 0;
@@ -515,7 +517,7 @@ body:has(#library-window.is-collapsed:not([hidden])) #window-toolbar { left: cal
 
 .bp-row-main {
   font-family: var(--body);
-  font-size: 14px;
+  font-size: 13px;
   font-weight: 500;
   color: var(--text);
   background: var(--row);
@@ -549,7 +551,7 @@ body:has(#library-window.is-collapsed:not([hidden])) #window-toolbar { left: cal
 }
 
 .bp-row-label .rich-text-icon,
-.bp-section-label .rich-text-icon { vertical-align: -4px; margin: 0 1px; }
+.bp-section-label .rich-text-icon { vertical-align: -3px; margin: 0 1px; }
 
 /* Trash/duplicate dock onto the right of the hovered or selected row. */
 .bp-row-actions { display: none; gap: 1px; }
@@ -559,8 +561,8 @@ body:has(#library-window.is-collapsed:not([hidden])) #window-toolbar { left: cal
 
 .bp-icon-button {
   flex: none;
-  width: 34px;
-  min-height: 34px;
+  width: 28px;
+  min-height: 28px;
   padding: 0;
   display: grid;
   place-items: center;
@@ -571,7 +573,7 @@ body:has(#library-window.is-collapsed:not([hidden])) #window-toolbar { left: cal
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.5), inset 0 -2px 0 rgba(0, 0, 0, 0.25);
 }
 
-.bp-icon-button svg { width: 18px; height: 18px; display: block; }
+.bp-icon-button svg { width: 15px; height: 15px; display: block; }
 .bp-icon-button:hover { background: var(--selected); }
 .bp-icon-button:active { box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.45); }
 
@@ -590,7 +592,7 @@ body:has(#library-window.is-collapsed:not([hidden])) #window-toolbar { left: cal
 
 .bp-section-header {
   font-family: var(--display);
-  font-size: 15px;
+  font-size: 13px;
   font-weight: 700;
   color: var(--gold-strong);
   background: linear-gradient(180deg, #615f5e, #545352);
@@ -622,9 +624,9 @@ body:has(#library-window.is-collapsed:not([hidden])) #window-toolbar { left: cal
 
 /* A sub-book inside the current book: a quieter header, one step indented. */
 .bp-section.is-nested .bp-section-header {
-  min-height: 30px;
+  min-height: 26px;
   font-family: var(--body);
-  font-size: 13px;
+  font-size: 12px;
   font-weight: 600;
   color: var(--text);
   background: var(--panel-2);
@@ -651,16 +653,16 @@ body:has(#library-window.is-collapsed:not([hidden])) #window-toolbar { left: cal
 
 .bp-save-row { display: flex; gap: 2px; }
 
-.bp-save-row .library-save-input { height: 34px; }
+.bp-save-row .library-save-input { height: 28px; font-size: 12px; }
 .bp-save-row .bp-icon-button { border-radius: 2px; }
 
 /* The game's light grey push button — "+ Add space platform" in the
    reference — with its gold hover. */
 .bp-new-button {
   width: 100%;
-  min-height: 36px;
+  min-height: 30px;
   font-family: var(--display);
-  font-size: 14px;
+  font-size: 13px;
   font-weight: 600;
   color: #1b1b1b;
   background: var(--light-button);
@@ -709,9 +711,9 @@ body:has(#library-window.is-collapsed:not([hidden])) #window-toolbar { left: cal
 .library-rename-input {
   flex: 1;
   min-width: 0;
-  min-height: 34px;
-  padding: 0 10px;
-  font-size: 14px;
+  min-height: 28px;
+  padding: 0 8px;
+  font-size: 13px;
   color: var(--text);
   background: var(--panel-2);
   border: 1px solid var(--gold);
@@ -2240,7 +2242,7 @@ canvas.select-mode {
   .site-nav nav::-webkit-scrollbar { display: none; }
   .site-nav nav a { flex: none; white-space: nowrap; padding: 5px 8px; font-size: 11px; letter-spacing: 0.04em; }
 
-  :root { --nav-h: 46px; --sidebar-w: min(248px, calc(100vw - 48px)); }
+  :root { --nav-h: 46px; --sidebar-w: min(212px, calc(100vw - 48px)); }
 
   /* Icons only, scrolling sideways when they still don't fit. */
   #window-toolbar {
