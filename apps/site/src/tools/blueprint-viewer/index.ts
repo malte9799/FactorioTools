@@ -33,6 +33,7 @@ import type { GridMenuHandle } from "./grid-menu.js";
 import { buildLibrarySidebar } from "./library-sidebar.js";
 import { buildQuickbar, type QuickbarHandle, type QuickbarItem } from "./quickbar.js";
 import { buildGridMenu } from "./grid-menu.js";
+import { BlueprintLinkError, looksLikeBlueprintString, parseBlueprintLink, resolveBlueprintLink, SHARE_TARGETS } from "./blueprint-links.js";
 import { saveToLibrary } from "./blueprint-library.js";
 import { RateOverlay } from "../../rate-overlay/controller.js";
 import { setCurrentBlueprint, VIEWER_AUTOSAVE_KEY } from "../../current-blueprint.js";
@@ -73,29 +74,6 @@ const TEMPLATE = `
       <button type="button" id="library-collapse-toggle" class="library-collapse-toggle" title="Collapse sidebar" aria-label="Collapse sidebar">◂</button>
     </div>
     <div class="gui-body" id="library-body"></div>
-  </div>
-
-  <div id="intake-window" class="gui-window floating-window" hidden>
-    <div class="gui-titlebar">
-      <span>Blueprint Viewer</span>
-      <span class="grip" aria-hidden="true"></span>
-    </div>
-    <div class="gui-body">
-      <p class="eyebrow">Blueprint analysis</p>
-      <p class="lede">Import a blueprint string from your clipboard, or edit the layout directly.</p>
-      <div class="intake-actions">
-        <button id="import" class="primary" type="button">Import from clipboard</button>
-        <button id="export" class="ghost" type="button">Export to clipboard</button>
-      </div>
-      <div class="intake-actions">
-        <button id="demo" class="ghost" type="button">Load an example</button>
-        <button id="rotation-test" class="ghost" type="button">Load rotation test</button>
-        <button id="debug-lab" class="ghost" type="button">Load debug lab</button>
-        <select id="bp-picker" hidden aria-label="Blueprint in book"></select>
-      </div>
-      <textarea id="bp-input" hidden></textarea>
-      <p id="status" data-kind="info"></p>
-    </div>
   </div>
 
   <div id="results-window" class="gui-window floating-window" hidden>
@@ -275,15 +253,31 @@ const TEMPLATE = `
   </div>
 
   <div id="window-toolbar" role="toolbar" aria-label="Windows">
-    <button type="button" data-toggle="library-window" data-icon="blueprint-book" title="Blueprints"><span class="tab-label">Blueprints</span></button>
-    <button type="button" data-toggle="intake-window" data-icon="blueprint" title="Import and export"><span class="tab-label">Import</span></button>
+    <button type="button" id="import-menu-button" data-icon="blueprint" title="Import and export" aria-haspopup="menu" aria-expanded="false"><span class="tab-label">Import / Export</span><span class="tab-caret" aria-hidden="true">▾</span></button>
+    <select id="bp-picker" hidden aria-label="Blueprint in book"></select>
     <button type="button" data-toggle="rate-window" data-icon="arithmetic-combinator" title="Rate Calculator"><span class="tab-label">Rates</span></button>
-    <button type="button" data-toggle="palette-window" data-icon="assembling-machine-1" title="Build"><span class="tab-label">Build</span></button>
     <span class="toolbar-divider" aria-hidden="true"></span>
     <button type="button" data-toggle="graphics-window" data-icon="small-lamp" title="Graphics"><span class="tab-label">Graphics</span></button>
     <button type="button" data-toggle="debug-window" data-icon="radar" title="Performance stats (F8)"><span class="tab-label">Debug</span></button>
     <button type="button" data-toggle="about-window" data-icon="programmable-speaker" title="About"><span class="tab-label">About</span></button>
   </div>
+
+  <div id="import-menu" class="toolbar-menu" role="menu" hidden>
+    <button type="button" role="menuitem" id="import-clipboard" class="toolbar-menu-item">Import from clipboard</button>
+    <form id="import-link-form" class="toolbar-menu-link">
+      <input id="import-link" type="text" placeholder="Link or blueprint string…" aria-label="Blueprint link"
+        autocomplete="off" spellcheck="false" />
+      <button type="submit" class="toolbar-menu-go" title="Import from link">Import</button>
+    </form>
+    <p class="toolbar-menu-hint">factorioprints.com or fprints.xyz link, or a string</p>
+    <button type="button" role="menuitem" id="import-example" class="toolbar-menu-item">Load a random example</button>
+    <div class="toolbar-menu-sep" role="separator"></div>
+    <button type="button" role="menuitem" id="export-clipboard" class="toolbar-menu-item">Export to clipboard</button>
+    <div id="export-share"></div>
+  </div>
+
+  <p id="status" class="status-toast" data-kind="info" role="status" hidden></p>
+  <textarea id="bp-input" hidden></textarea>
 
   <div id="debug-window" class="gui-window floating-window" hidden>
     <div class="gui-titlebar">
@@ -429,7 +423,6 @@ export function mountBlueprintViewer(root: HTMLElement): () => void {
     bringToFront: () => {},
   };
 
-  const intakeWindow = makeFloatingWindow($("#intake-window"), { x: 16, y: 66 });
   const resultsWindow = makeFloatingWindow(resultsWindowEl, { x: Math.max(16, window.innerWidth - 460), y: 66 });
   const aboutWindow = makeFloatingWindow($("#about-window"), { x: 16, y: window.innerHeight - 120 });
   const graphicsWindow = makeFloatingWindow($("#graphics-window"), { x: Math.max(8, window.innerWidth - 356), y: 96, width: 340 });
@@ -519,7 +512,6 @@ export function mountBlueprintViewer(root: HTMLElement): () => void {
   // to open its GUI" convention rather than a manually-toggled panel.
   const allWindows: Record<string, { el: HTMLElement; show(): void; hide(): void; bringToFront(): void }> = {
     "library-window": libraryWindow,
-    "intake-window": intakeWindow,
     "results-window": resultsWindow,
     "rate-window": rateWindow,
     "graphics-window": graphicsWindow,
@@ -582,14 +574,6 @@ export function mountBlueprintViewer(root: HTMLElement): () => void {
 
   for (const button of root.querySelectorAll<HTMLButtonElement>("[data-toggle]")) {
     button.addEventListener("click", () => {
-      // The Build window is a menu state, not a free-floating panel — its
-      // body is built fresh on open, so it has to go through the state
-      // machine rather than a bare show()/hide() that would reveal a stale
-      // (or empty) grid.
-      if (button.dataset.toggle === "palette-window") {
-        enterMenuState(menuState === "build" ? "default" : "build");
-        return;
-      }
       const target = allWindows[button.dataset.toggle!];
       if (target) toggleWindow(target);
     }, { signal });
@@ -1076,6 +1060,8 @@ export function mountBlueprintViewer(root: HTMLElement): () => void {
   /** Which of the three box tools boxModeOn means — the quickbar lights the
    *  matching planner button. */
   let boxModeKind: "copyBox" | "cutBox" | "deleteBox" | null = null;
+  /** Set while the library window's reassign waits for a copy box. */
+  let pendingReselect: ((bpString: string) => void) | null = null;
   /** True while a copy/cut's multi-entity ghost is armed on the cursor
    *  ('paste' mode) — set by copyBoxToClipboardAndGhost, cleared by setMode
    *  (any call puts the renderer into a mode other than 'paste'). Tracked
@@ -1102,9 +1088,17 @@ export function mountBlueprintViewer(root: HTMLElement): () => void {
     setAltMode(!altModeOn);
   }, { signal });
 
-  function setStatus(message: string, kind: "info" | "error" = "info") {
+  /** Status lines surface as a short toast under the toolbar. Errors always
+   *  show; routine info (tool hints, "placed 3 entities") only when the
+   *  caller asks, so working on the canvas doesn't flash a toast per click. */
+  let statusTimer: ReturnType<typeof setTimeout> | undefined;
+  function setStatus(message: string, kind: "info" | "error" = "info", show = kind === "error") {
     status.textContent = message;
     status.dataset.kind = kind;
+    if (!show) return;
+    status.hidden = false;
+    clearTimeout(statusTimer);
+    statusTimer = setTimeout(() => { status.hidden = true; }, kind === "error" ? 6000 : 3500);
   }
 
   function groupForEntity(entityNumber: number): MachineGroup | null {
@@ -1721,6 +1715,8 @@ export function mountBlueprintViewer(root: HTMLElement): () => void {
     // before this call is no longer current and should stop being tracked
     // as such.
     pasteArmed = false;
+    // Any other tool (or Escape) abandons a pending reassign.
+    pendingReselect = null;
     if (newMode === "idle") {
       paletteSelection = null;
       renderer.setInteractionMode({ kind: "idle" });
@@ -1861,6 +1857,18 @@ export function mountBlueprintViewer(root: HTMLElement): () => void {
     // A box drawn in copy mode copies (clipboard + armed paste ghost) and
     // leaves the originals untouched.
     renderer.onCopyBox((numbers) => {
+      // The library window's reassign: the box becomes that blueprint's
+      // new contents instead of going onto the cursor.
+      if (pendingReselect) {
+        const apply = pendingReselect;
+        pendingReselect = null;
+        const boxedEntities = entities.filter((e) => numbers.has(e.entityNumber));
+        const boxedWires = wires.filter((w) => numbers.has(w.from) && numbers.has(w.to));
+        setMode("idle");
+        if (boxedEntities.length === 0) return;
+        apply(encodeBlueprintString({ blueprint: toBlueprint(boxedEntities, { item: "blueprint", label: undefined, version: blueprints[0]?.version }, boxedWires) }));
+        return;
+      }
       void copyBoxToClipboardAndGhost(numbers);
     });
     // Commits one stamp of an armed paste ghost (see copyBoxToClipboardAndGhost).
@@ -2570,7 +2578,59 @@ export function mountBlueprintViewer(root: HTMLElement): () => void {
     // selectBlueprint call, no unsaved-changes guard, since that dropdown
     // never had one either and this is the same gesture from the sidebar.
     onSelectCurrent: (flatIndex) => selectBlueprint(flatIndex),
+    onReselect(apply) {
+      setMode("copyBox");
+      pendingReselect = apply;
+      setStatus("Reselect — drag a box over the buildings this blueprint should hold (Esc to cancel).", "info", true);
+    },
+    onPickUp: pickUpBlueprint,
+    notify: (message, kind = "info") => setStatus(message, kind, true),
   });
+
+  /** Takes a saved blueprint into the cursor as a paste ghost, like picking
+   *  it out of the game's library — with its snap-to-grid, if it has one. */
+  function pickUpBlueprint(bpString: string): void {
+    let bp: Blueprint | undefined;
+    try {
+      bp = collectBlueprints(decodeBlueprintString(bpString))[0];
+    } catch {
+      bp = undefined;
+    }
+    const picked = bp ? normaliseEntities(bp) : [];
+    if (!bp || picked.length === 0) {
+      setStatus("That blueprint has nothing to place.", "error");
+      return;
+    }
+    const placeholderIdByOriginal = new Map(picked.map((e, i) => [e.entityNumber, -1 - i]));
+    const placeholders = picked.map((e) => ({ ...e, entityNumber: placeholderIdByOriginal.get(e.entityNumber)! }));
+    const placeholderWires = normaliseWires(bp)
+      .filter((w) => placeholderIdByOriginal.has(w.from) && placeholderIdByOriginal.has(w.to))
+      .map((w) => ({ ...w, from: placeholderIdByOriginal.get(w.from)!, to: placeholderIdByOriginal.get(w.to)! }));
+    // A whole-tile anchor keeps every entity on its own grid parity however
+    // the ghost moves.
+    const xs = picked.map((e) => e.x);
+    const ys = picked.map((e) => e.y);
+    const anchor = { x: Math.round((Math.min(...xs) + Math.max(...xs)) / 2), y: Math.round((Math.min(...ys) + Math.max(...ys)) / 2) };
+    const size = bp["snap-to-grid"];
+    setMode("idle");
+    pasteArmed = true;
+    renderer.setInteractionMode({
+      kind: "paste",
+      entities: placeholders,
+      wires: placeholderWires,
+      anchor,
+      groupRotation: 0,
+      snap: size
+        ? {
+            size: { x: size.x, y: size.y },
+            absolute: bp["absolute-snapping"] === true,
+            offset: { x: bp["position-relative-to-grid"]?.x ?? 0, y: bp["position-relative-to-grid"]?.y ?? 0 },
+          }
+        : undefined,
+    });
+    canvas.classList.add("edit-mode");
+    setStatus(`Holding “${bp.label || "blueprint"}” — click to place (Esc to stop).`, "info", true);
+  }
 
   /** The blueprint on screen as a string, or null with nothing placed —
    *  what the library saves. */
@@ -2697,54 +2757,140 @@ export function mountBlueprintViewer(root: HTMLElement): () => void {
   // On a phone the open sidebar would cover most of the map: start folded.
   if (matchMedia("(max-width: 640px)").matches) setLibraryCollapsed(true);
 
-  $("#import").addEventListener("click", async () => {
-    try {
-      const text = await navigator.clipboard.readText();
-      if (!text.trim()) {
-        setStatus("Clipboard is empty.", "error");
-        return;
-      }
-      input.value = text;
-      await guardedLoad(text);
-    } catch {
-      setStatus("Couldn't read the clipboard — your browser may need permission granted first.", "error");
+  // Import/Export dropdown on the toolbar. The menu lives outside the
+  // toolbar (which scrolls sideways on phones and would clip it) and is
+  // placed under its button on open.
+  const importMenuButton = $<HTMLButtonElement>("#import-menu-button");
+  const importMenu = $<HTMLDivElement>("#import-menu");
+  const importLink = $<HTMLInputElement>("#import-link");
+  function setImportMenuOpen(open: boolean): void {
+    importMenu.hidden = !open;
+    importMenuButton.classList.toggle("is-active", open);
+    importMenuButton.setAttribute("aria-expanded", String(open));
+    if (!open) return;
+    const r = importMenuButton.getBoundingClientRect();
+    importMenu.style.left = `${Math.max(8, Math.min(r.left, window.innerWidth - importMenu.offsetWidth - 8))}px`;
+    importMenu.style.top = `${r.bottom + 4}px`;
+  }
+  importMenuButton.addEventListener("click", () => setImportMenuOpen(importMenu.hidden), { signal });
+  document.addEventListener("pointerdown", (e) => {
+    if (importMenu.hidden) return;
+    const target = e.target as Node;
+    if (!importMenu.contains(target) && !importMenuButton.contains(target)) setImportMenuOpen(false);
+  }, { signal });
+  window.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && !importMenu.hidden) {
+      e.preventDefault();
+      setImportMenuOpen(false);
     }
   }, { signal });
 
-  $("#export").addEventListener("click", async () => {
+  async function importText(text: string): Promise<void> {
+    input.value = text;
+    await guardedLoad(text);
+  }
+
+  $("#import-clipboard").addEventListener("click", async () => {
+    setImportMenuOpen(false);
+    let text: string;
+    try {
+      text = await navigator.clipboard.readText();
+    } catch {
+      setStatus("Couldn't read the clipboard — your browser may need permission granted first.", "error");
+      return;
+    }
+    if (!text.trim()) {
+      setStatus("Clipboard is empty.", "error");
+      return;
+    }
+    // A copied link imports the same as one typed into the link field.
+    if (!looksLikeBlueprintString(text) && parseBlueprintLink(text)) {
+      await importFromLink(text);
+      return;
+    }
+    await importText(text);
+  }, { signal });
+
+  async function importFromLink(text: string): Promise<void> {
+    setStatus("Fetching blueprint…", "info", true);
+    try {
+      const bpString = await resolveBlueprintLink(text);
+      status.hidden = true;
+      await importText(bpString);
+      importLink.value = "";
+    } catch (err) {
+      setStatus(err instanceof BlueprintLinkError ? err.message : "Couldn't import from that link.", "error");
+    }
+  }
+
+  $<HTMLFormElement>("#import-link-form").addEventListener("submit", (e) => {
+    e.preventDefault();
+    const text = importLink.value.trim();
+    if (!text) {
+      importLink.focus();
+      return;
+    }
+    setImportMenuOpen(false);
+    void importFromLink(text);
+  }, { signal });
+
+  $("#import-example").addEventListener("click", async () => {
+    setImportMenuOpen(false);
+    try {
+      const pool = await loadExamplePool();
+      const pick = pool[Math.floor(Math.random() * pool.length)]!;
+      await importText(pick.bp);
+    } catch {
+      setStatus("Couldn't load an example blueprint — check your connection and try again.", "error");
+    }
+  }, { signal });
+
+  /** Copies the current blueprint; false (with the reason shown) if there
+   *  is nothing to copy or the clipboard refused. */
+  async function exportToClipboard(): Promise<boolean> {
     if (!entities.length) {
       setStatus("Nothing to export yet — import or build a blueprint first.", "error");
-      return;
+      return false;
     }
     const template = blueprints[0] ?? { item: "blueprint" as const, label: undefined, version: undefined };
     const bpString = encodeBlueprintString({ blueprint: toBlueprint(entities, template, wires) });
     try {
       await navigator.clipboard.writeText(bpString);
       input.value = bpString;
-      setStatus(`Copied ${entities.length} entities to clipboard.`);
+      return true;
     } catch {
       setStatus("Couldn't write to the clipboard — your browser may need permission granted first.", "error");
+      return false;
     }
+  }
+
+  $("#export-clipboard").addEventListener("click", async () => {
+    setImportMenuOpen(false);
+    if (await exportToClipboard()) setStatus(`Copied ${entities.length} entities to clipboard.`, "info", true);
   }, { signal });
 
-  $("#demo").addEventListener("click", async () => {
-    try {
-      const pool = await loadExamplePool();
-      const pick = pool[Math.floor(Math.random() * pool.length)]!;
-      input.value = pick.bp;
-      await guardedLoad(pick.bp);
-    } catch {
-      setStatus("Couldn't load an example blueprint — check your connection and try again.", "error");
-    }
-  }, { signal });
-  $("#rotation-test").addEventListener("click", () => {
-    input.value = ROTATION_TEST_BLUEPRINT;
-    void guardedLoad(ROTATION_TEST_BLUEPRINT);
-  }, { signal });
-  $("#debug-lab").addEventListener("click", () => {
-    input.value = DEBUG_BLUEPRINT;
-    void guardedLoad(DEBUG_BLUEPRINT);
-  }, { signal });
+  // Neither site has an upload API (both need an account), so "share" is:
+  // copy the string, open the site's upload page, paste it there.
+  for (const target of SHARE_TARGETS) {
+    const item = document.createElement("button");
+    item.type = "button";
+    item.role = "menuitem";
+    item.className = "toolbar-menu-item";
+    item.textContent = `Share on ${target.name} ↗`;
+    item.title = `Copies the blueprint string and opens ${target.name} — paste it there to publish`;
+    item.addEventListener("click", async () => {
+      setImportMenuOpen(false);
+      // Opened before the clipboard await so the popup still counts as
+      // part of the click.
+      const tab = window.open(target.url, "_blank", "noopener");
+      if (await exportToClipboard()) {
+        setStatus(`Copied — paste the string on ${target.name}.`, "info", true);
+      } else {
+        tab?.close();
+      }
+    }, { signal });
+    $("#export-share").appendChild(item);
+  }
   // Switching between blueprints WITHIN the same already-loaded book isn't
   // gated — it's not "loading something new" the way import/library-pick
   // is, and selectBlueprint's own reset (undoStack/hasUnsavedChanges) only
@@ -3324,7 +3470,6 @@ export function mountBlueprintViewer(root: HTMLElement): () => void {
     renderer.destroy();
     graphicsWindow.destroy();
     rateWindowRaw.destroy();
-    intakeWindow.destroy();
     resultsWindow.destroy();
     aboutWindow.destroy();
     paletteWindow.destroy();

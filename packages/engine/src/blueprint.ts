@@ -380,7 +380,7 @@ export function denormaliseWires(wires: WireLink[], entities: PlacedEntity[]): B
  *  no PlacedEntity equivalent (the blueprint's own item/label/version). */
 export function toBlueprint(
   entities: PlacedEntity[],
-  template: Pick<Blueprint, "item" | "label" | "version">,
+  template: Pick<Blueprint, "item" | "label" | "version" | "description" | "icons">,
   wires: WireLink[] = [],
 ): Blueprint {
   const bp: Blueprint = {

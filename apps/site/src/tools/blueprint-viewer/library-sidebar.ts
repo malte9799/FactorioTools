@@ -8,8 +8,26 @@ import {
   duplicateInLibrary,
   duplicateBookInLibrary,
   renameInLibrary,
+  editInLibrary,
+  readEntryMeta,
+  decodeEntry,
+  replaceContentsInLibrary,
   type SavedBlueprint,
 } from "./blueprint-library.js";
+import { openLibraryWindow } from "./blueprint-library-window.js";
+import { blueprintIcon } from "./blueprint-icon.js";
+import type { BpIcon } from "@factoriotools/engine";
+
+/** Each saved entry's own icons, decoded out of its string once and kept
+ *  until the string changes — the list re-renders on every click. */
+const iconCache = new Map<string, { bpString: string; icons: BpIcon[] }>();
+function entryIcons(entry: SavedBlueprint): BpIcon[] {
+  const hit = iconCache.get(entry.id);
+  if (hit && hit.bpString === entry.bpString) return hit.icons;
+  const icons = readEntryMeta(entry).icons;
+  iconCache.set(entry.id, { bpString: entry.bpString, icons });
+  return icons;
+}
 import { icon } from "./legacy-view/icons.js";
 import { renderRichLabel } from "./rich-text.js";
 
@@ -31,6 +49,14 @@ export interface LibraryCallbacks {
    *  handler, so a book doesn't need re-importing just to look at a
    *  different one of its blueprints. */
   onSelectCurrent(flatIndex: number): void;
+  /** The library window's reassign: arm the copy tool, and hand the boxed
+   *  selection (as a blueprint string) to `apply` once one is drawn. */
+  onReselect(apply: (bpString: string) => void): void;
+  /** Shift+click on a saved blueprint: take it into the cursor to place,
+   *  with its snap-to-grid. */
+  onPickUp(bpString: string): void;
+  /** A short confirmation or error line for the user. */
+  notify(message: string, kind?: "info" | "error"): void;
 }
 
 interface BuiltinEntry {
@@ -148,65 +174,6 @@ function makeSection(
   return { section, body };
 }
 
-/** Closes any open row context menu — module-level since only one can ever
- *  be open at a time (matches native right-click menu behavior: opening a
- *  new one, or clicking elsewhere, dismisses whatever was open). */
-let closeOpenMenu: (() => void) | null = null;
-
-function closeAnyOpenMenu(): void {
-  closeOpenMenu?.();
-  closeOpenMenu = null;
-}
-
-interface RowMenuAction {
-  label: string;
-  danger?: boolean;
-  onClick(): void;
-}
-
-function showRowMenu(x: number, y: number, actions: RowMenuAction[]): void {
-  closeAnyOpenMenu();
-
-  const menu = document.createElement("div");
-  menu.className = "library-context-menu";
-  menu.style.left = `${x}px`;
-  menu.style.top = `${y}px`;
-
-  for (const action of actions) {
-    const item = document.createElement("button");
-    item.type = "button";
-    item.className = "library-context-item";
-    if (action.danger) item.classList.add("is-danger");
-    item.textContent = action.label;
-    item.addEventListener("click", () => {
-      closeAnyOpenMenu();
-      action.onClick();
-    });
-    menu.appendChild(item);
-  }
-
-  document.body.appendChild(menu);
-
-  const onOutside = (e: MouseEvent) => {
-    if (!menu.contains(e.target as Node)) close();
-  };
-  const onKey = (e: KeyboardEvent) => {
-    if (e.key === "Escape") close();
-  };
-  function close(): void {
-    menu.remove();
-    document.removeEventListener("mousedown", onOutside, true);
-    document.removeEventListener("keydown", onKey, true);
-  }
-  closeOpenMenu = close;
-  // Deferred so the click that opened the menu (a contextmenu event, but
-  // guard anyway) doesn't immediately trigger onOutside via bubbling.
-  setTimeout(() => {
-    document.addEventListener("mousedown", onOutside, true);
-    document.addEventListener("keydown", onKey, true);
-  }, 0);
-}
-
 /** A saved-blueprint row's rename mode: swaps the label button for a text
  *  input, committing on Enter/blur and cancelling on Escape. */
 function startRename(labelButton: HTMLButtonElement, id: string, currentLabel: string, refresh: () => void): void {
@@ -241,12 +208,17 @@ function startRename(labelButton: HTMLButtonElement, id: string, currentLabel: s
 interface RowOptions {
   key: string;
   iconName: string;
+  /** Replaces the plain item icon — a saved blueprint's art with its own
+   *  icons drawn on it. */
+  iconElement?: HTMLElement;
   onClick(): void;
   /** Trash button; omitted rows show it greyed out, like the game's own
    *  disabled trash beside "Add space platform". */
   onDelete?: () => void;
   onDuplicate?: () => void;
   onContextMenu?: (e: MouseEvent, labelButton: HTMLButtonElement) => void;
+  /** Shift+click instead of a plain click. */
+  onPickUp?: () => void;
   onRename?: (labelButton: HTMLButtonElement) => void;
 }
 
@@ -260,7 +232,7 @@ function makeRow(label: string, options: RowOptions, refresh: () => void): HTMLE
   const button = document.createElement("button");
   button.type = "button";
   button.className = "bp-row-main";
-  button.appendChild(icon(options.iconName, "", 16));
+  button.appendChild(options.iconElement ?? icon(options.iconName, "", 16));
   const text = document.createElement("span");
   text.className = "bp-row-label";
   text.appendChild(renderRichLabel(label, 14));
@@ -268,7 +240,11 @@ function makeRow(label: string, options: RowOptions, refresh: () => void): HTMLE
   // The raw name, `[tag]` markup and all, stays the hover reference for a
   // label whose icons replaced part of the text.
   button.title = label;
-  button.addEventListener("click", () => {
+  button.addEventListener("click", (e) => {
+    if (e.shiftKey && options.onPickUp) {
+      options.onPickUp();
+      return;
+    }
     activeKey = options.key;
     options.onClick();
     refresh();
@@ -315,31 +291,69 @@ function savedRow(entry: SavedBlueprint, callbacks: LibraryCallbacks, refresh: (
     {
       key,
       iconName: "blueprint",
+      iconElement: blueprintIcon("blueprint", entryIcons(entry), 24),
       onClick: () => callbacks.onLoad(entry.bpString),
+      onPickUp: () => callbacks.onPickUp(entry.bpString),
       onDelete: remove,
       onDuplicate: duplicate,
       onRename: rename,
-      onContextMenu: (e, labelButton) => {
+      onContextMenu: (e) => {
         e.preventDefault();
-        showRowMenu(e.clientX, e.clientY, [
-          {
-            label: "Copy string",
-            onClick: async () => {
-              try {
-                await navigator.clipboard.writeText(entry.bpString);
-              } catch {
-                /* clipboard unavailable — silently ignore, not worth surfacing here */
-              }
-            },
-          },
-          { label: "Duplicate", onClick: duplicate },
-          { label: "Rename", onClick: () => rename(labelButton) },
-          { label: "Delete", danger: true, onClick: remove },
-        ]);
+        openEntryWindow(entry.id, callbacks, refresh);
       },
     },
     refresh,
   );
+}
+
+/** The game's library window for one saved blueprint, read fresh from
+ *  storage so a reopen (after reassign) shows the new contents. */
+function openEntryWindow(id: string, callbacks: LibraryCallbacks, refresh: () => void): void {
+  const entry = listSaved().find((e) => e.id === id);
+  if (!entry) return;
+  openLibraryWindow({
+    meta: readEntryMeta(entry),
+    blueprint: decodeEntry(entry),
+    onSave: (meta) => {
+      try {
+        editInLibrary(id, meta);
+      } catch {
+        callbacks.notify("Couldn't save — the stored blueprint doesn't decode.", "error");
+      }
+      refresh();
+    },
+    onReselect: () => {
+      callbacks.onReselect((bpString) => {
+        try {
+          replaceContentsInLibrary(id, bpString);
+        } catch {
+          callbacks.notify("Couldn't use that selection as the blueprint's contents.", "error");
+        }
+        refresh();
+        openEntryWindow(id, callbacks, refresh);
+      });
+    },
+    onDuplicate: () => {
+      duplicateInLibrary(id);
+      refresh();
+      callbacks.notify(`Duplicated “${entry.label}”.`);
+    },
+    onExport: async () => {
+      const latest = listSaved().find((e) => e.id === id);
+      if (!latest) return false;
+      try {
+        await navigator.clipboard.writeText(latest.bpString);
+        return true;
+      } catch {
+        return false;
+      }
+    },
+    onDelete: () => {
+      deleteFromLibrary(id);
+      if (activeKey === `saved:${id}`) activeKey = null;
+      refresh();
+    },
+  });
 }
 
 /** Renders the currently-loaded (not necessarily saved) book's own folder

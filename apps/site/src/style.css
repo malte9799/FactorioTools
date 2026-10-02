@@ -326,14 +326,27 @@ button.primary {
 
 button.primary:hover { background: #6fa34b; }
 
-#status {
+/* Status toast, just under the window toolbar. */
+.status-toast {
+  position: fixed;
+  top: calc(var(--nav-h) + 52px);
+  left: 50%;
+  z-index: 4000;
+  max-width: min(520px, calc(100vw - 32px));
   margin: 0;
-  font-family: var(--mono);
-  font-size: 12px;
-  color: var(--text-dim);
+  padding: 7px 12px;
+  transform: translateX(-50%);
+  font-family: var(--body);
+  font-size: 13px;
+  color: var(--text);
+  background: var(--frame) var(--grain);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  box-shadow: inset 0 0 0 1px var(--bevel-light), 0 6px 16px rgba(0, 0, 0, 0.45);
+  pointer-events: none;
 }
 
-#status[data-kind="error"] { color: var(--deficit); }
+.status-toast[data-kind="error"] { color: #ffd2c8; border-color: #6b211b; background: #4a2522; }
 
 /* ---------- window toolbar ---------- */
 
@@ -386,6 +399,84 @@ body:has(#library-window.is-collapsed:not([hidden])) #window-toolbar { left: cal
 }
 
 #window-toolbar button:first-child { border-radius: 2px 0 0 2px; }
+#window-toolbar .tab-caret { margin-left: -2px; font-size: 10px; opacity: 0.75; }
+
+/* Which blueprint of a loaded book is showing; only there for books. */
+#window-toolbar #bp-picker {
+  flex: none;
+  height: 32px;
+  max-width: 220px;
+  margin-left: 3px;
+  padding: 0 8px;
+  font-size: 13px;
+}
+
+/* Dropdown hanging off a toolbar tab (Import). Fixed-positioned by the
+   script so the sideways-scrolling toolbar can't clip it. */
+.toolbar-menu {
+  position: fixed;
+  z-index: 3000;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  width: 280px;
+  padding: 3px;
+  background: var(--frame) var(--grain);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  box-shadow: inset 0 0 0 1px var(--bevel-light), 0 8px 20px rgba(0, 0, 0, 0.5);
+}
+
+.toolbar-menu[hidden] { display: none; }
+
+.toolbar-menu-item {
+  text-align: left;
+  padding: 7px 10px;
+  font-family: var(--body);
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text);
+  background: var(--row);
+  border: none;
+  border-radius: 0;
+  box-shadow: inset 0 1px 0 var(--bevel-light);
+}
+
+.toolbar-menu-item:hover { color: var(--selected-text); background: var(--selected); }
+
+.toolbar-menu-link {
+  display: flex;
+  gap: 3px;
+  padding: 4px;
+  background: var(--row);
+  box-shadow: inset 0 1px 0 var(--bevel-light);
+}
+
+.toolbar-menu-link input {
+  flex: 1;
+  min-width: 0;
+  padding: 5px 7px;
+  font-family: var(--body);
+  font-size: 12px;
+  color: var(--text);
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 2px;
+  box-shadow: inset 0 1px 2px var(--bevel-dark);
+}
+
+.toolbar-menu-go { padding: 0 10px; font-size: 12px; }
+
+.toolbar-menu-hint {
+  margin: 0;
+  padding: 0 10px 6px;
+  font-size: 11px;
+  color: var(--text-dim);
+  background: var(--row);
+}
+
+.toolbar-menu-sep { height: 1px; margin: 2px 0; background: var(--border); }
+#export-share { display: contents; }
 #window-toolbar button:last-child { border-radius: 0 2px 2px 0; }
 #window-toolbar button:hover { background: var(--row-hover); }
 #window-toolbar button:active { box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.5); }
@@ -434,7 +525,6 @@ body:has(#library-window.is-collapsed:not([hidden])) #window-toolbar { left: cal
   max-height: calc(100vh - var(--nav-h));
   max-height: calc(100dvh - var(--nav-h));
   width: var(--sidebar-w);
-  display: flex;
   flex-direction: column;
   overflow: hidden;
   border-radius: 0 0 3px 0;
@@ -443,6 +533,10 @@ body:has(#library-window.is-collapsed:not([hidden])) #window-toolbar { left: cal
     inset -1px -1px 0 var(--bevel-light),
     6px 0 18px rgba(0, 0, 0, 0.45);
 }
+
+/* :not([hidden]) so the toolbar's Blueprints tab can actually hide it — a
+   bare `display: flex` would outrank the browser's [hidden] default. */
+#library-window:not([hidden]) { display: flex; }
 
 #library-window .gui-titlebar { padding: 6px 5px 4px 10px; font-size: 16px; }
 #library-window .gui-titlebar > span:first-child { flex: 1; }
@@ -723,35 +817,6 @@ body:has(#library-window.is-collapsed:not([hidden])) #window-toolbar { left: cal
 
 /* ---------- library row context menu ---------- */
 
-.library-context-menu {
-  position: fixed;
-  z-index: 5000;
-  display: flex;
-  flex-direction: column;
-  gap: 1px;
-  min-width: 150px;
-  padding: 3px;
-  background: var(--frame) var(--grain);
-  border: 1px solid var(--border);
-  border-radius: 3px;
-  box-shadow: inset 0 0 0 1px var(--bevel-light), 0 8px 20px rgba(0, 0, 0, 0.5);
-}
-
-.library-context-item {
-  text-align: left;
-  padding: 7px 10px;
-  font-family: var(--body);
-  font-size: 13px;
-  font-weight: 500;
-  color: var(--text);
-  background: var(--row);
-  border: none;
-  border-radius: 0;
-  box-shadow: inset 0 1px 0 var(--bevel-light);
-}
-
-.library-context-item:hover { color: var(--selected-text); background: var(--selected); }
-.library-context-item.is-danger:hover { color: #2a0d0b; background: #e3706a; }
 
 /* ---------- quickbar ---------- */
 /* The game's bottom-of-screen strip: the hotbar (bar number + ten slots)
@@ -759,7 +824,10 @@ body:has(#library-window.is-collapsed:not([hidden])) #window-toolbar { left: cal
    bottom edge. The all-bars panel opens straight above the hotbar. */
 
 .quickbar {
-  --qb-slot: 40px;
+  /* Colours and bevels sampled from in-game screenshots of the quickbar. */
+  --qb-slot: 34px;
+  --qb-frame: #4a4949;
+  --qb-well: #393230;
   position: fixed;
   left: 50%;
   bottom: 0;
@@ -769,49 +837,83 @@ body:has(#library-window.is-collapsed:not([hidden])) #window-toolbar { left: cal
   transform: translateX(-50%);
 }
 
+/* Flat frame: a soft light top edge, a dark outline, barely any drop
+   shadow — the game draws no glow around it. */
 .qb-frame {
-  background: var(--frame) var(--grain);
-  border: 1px solid var(--border);
-  box-shadow: inset 0 0 0 1px var(--bevel-light), 0 -4px 14px rgba(0, 0, 0, 0.4);
-  padding: 6px;
+  background: var(--qb-frame);
+  border: 1px solid #262322;
+  box-shadow: inset 0 1px 0 #7d7c7b, inset 0 2px 1px rgba(255, 255, 255, 0.12), 0 0 3px rgba(0, 0, 0, 0.45);
+  padding: 5px;
 }
 
-.qb-hotbar { border-radius: 3px 0 0 0; border-bottom: none; }
-.qb-tools { border-radius: 3px 3px 0 0; border-bottom: none; margin-left: -1px; }
+.qb-hotbar { position: relative; border-bottom: none; }
+.qb-tools { border-bottom: none; margin-left: -1px; }
+
+/* The recessed trench every group of buttons sits in: a black top lip,
+   a brownish floor, and the frame's light edge catching just below it. */
+.qb-well {
+  display: flex;
+  gap: 2px;
+  padding: 2px 1px 1px;
+  background: var(--qb-well);
+  box-shadow:
+    inset 0 1px 0 #000,
+    inset 0 2px 1px rgba(0, 0, 0, 0.35),
+    0 1px 0 rgba(255, 255, 255, 0.22),
+    0 2px 1px rgba(255, 255, 255, 0.06);
+}
 
 .qb-bar-row {
   display: flex;
   align-items: stretch;
-  gap: 6px;
+  gap: 3px;
+}
+
+/* Light buttons (bar numbers, default-style tools): flat grey, a bright
+   top edge, a dark bottom edge, slightly shaded sides. No outline — the
+   well around them is the outline. */
+.qb-bar-num,
+.qb-tool {
+  --qb-face: #a3a3a3;
+  --qb-lit: #d0d0d0;
+  --qb-shade: #3d3d3d;
+  padding: 0;
+  border: none;
+  border-radius: 0;
+  background: var(--qb-face);
+  box-shadow:
+    inset 0 1px 0 var(--qb-lit),
+    inset 0 2px 1px color-mix(in srgb, var(--qb-lit) 45%, transparent),
+    inset 0 -1px 0 var(--qb-shade),
+    inset 0 -2px 1px color-mix(in srgb, var(--qb-shade) 55%, transparent),
+    inset 1px 0 1px rgba(0, 0, 0, 0.12),
+    inset -1px 0 1px rgba(0, 0, 0, 0.12);
 }
 
 .qb-bar-num {
   flex: none;
-  width: calc(var(--qb-slot) + 6px);
-  min-height: calc(var(--qb-slot) + 6px);
-  padding: 0;
+  width: var(--qb-slot);
+  height: var(--qb-slot);
   font-family: var(--display);
-  font-size: 16px;
+  font-size: 14px;
   font-weight: 700;
   color: #1b1b1b;
-  background: var(--light-button);
-  border: 1px solid var(--border);
-  border-radius: 2px;
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.5), inset 0 -2px 0 rgba(0, 0, 0, 0.25);
 }
 
 .qb-bar-num.is-open,
-.qb-bar-num.is-active { background: linear-gradient(180deg, #f7e2b4, #ecc987); }
-.qb-bar-num:hover { background: linear-gradient(180deg, #f2c46c, #e0a53f); }
-
-.qb-slots {
-  display: flex;
-  gap: 2px;
-  padding: 2px;
-  background: var(--panel-2);
-  border: 1px solid var(--border);
-  box-shadow: inset 0 2px 3px var(--bevel-dark);
+.qb-bar-num.is-active { --qb-face: #f0c97f; --qb-lit: #ffe7b8; --qb-shade: #7a5a22; }
+/* Hovered grey buttons (bar numbers, default-style tools) turn the game's
+   orange, with a faint warm glow spilling onto the well around them. */
+.qb-bar-num:hover,
+.qb-tool.is-grey:hover:not(:disabled) {
+  --qb-face: #e0af54;
+  --qb-lit: #f1d49c;
+  --qb-shade: #5a3e13;
+  outline: 2px solid rgba(157, 137, 103, 0.55);
+  outline-offset: 0;
 }
+
+.qb-slots { display: flex; gap: 2px; }
 
 .qb-slot {
   position: relative;
@@ -821,35 +923,40 @@ body:has(#library-window.is-collapsed:not([hidden])) #window-toolbar { left: cal
   padding: 0;
   display: grid;
   place-items: center;
-  background: #424141;
-  border: 1px solid #1f1f1f;
+  background: #4a4a4a;
+  border: none;
   border-radius: 3px;
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.07), inset 0 -2px 3px rgba(0, 0, 0, 0.35);
+  box-shadow:
+    inset 0 1px 0 #656464,
+    inset 0 2px 1px rgba(255, 255, 255, 0.05),
+    inset 0 -1px 0 #222,
+    inset 0 -2px 1px rgba(0, 0, 0, 0.35),
+    inset 0 0 1px rgba(0, 0, 0, 0.5);
 }
 
-.qb-slot.is-group-start { margin-left: 6px; }
+.qb-slot.is-group-start { margin-left: 4px; }
 .qb-slot .icon { background-color: transparent; border: none; box-shadow: none; pointer-events: none; }
 
 /* A hovered slot, and every slot of a bar whose number is hovered, light up
    in the game's selection yellow. */
 .qb-slot:hover,
-.qb-bar-row:has(.qb-bar-num:hover) .qb-slot {
-  background: linear-gradient(180deg, #ffcf55, #f2ac2c);
-  border-color: #8a5d12;
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.45), 0 0 6px rgba(255, 190, 60, 0.45);
+.qb-bar-row:has(.qb-bar-num:hover) .qb-slot,
+.qb-slots.is-hot .qb-slot {
+  background: #f2b84a;
+  box-shadow: inset 0 1px 0 #ffd98a, inset 0 -1px 0 #7a5212, inset 0 -2px 1px rgba(122, 82, 18, 0.5);
 }
 
-.qb-slot:active { box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.5); }
+.qb-slot:active { box-shadow: inset 0 2px 3px rgba(0, 0, 0, 0.5); }
 
 /* The slot whose item is in the cursor. */
-.qb-slot.is-held { border-color: var(--gold); box-shadow: inset 0 0 0 2px rgba(255, 204, 128, 0.7); }
+.qb-slot.is-held { box-shadow: inset 0 0 0 2px var(--gold), inset 0 -2px 1px rgba(0, 0, 0, 0.35); }
 
 .qb-quality {
   position: absolute;
   left: 3px;
   bottom: 3px;
-  width: 9px;
-  height: 9px;
+  width: 8px;
+  height: 8px;
   border-radius: 2px;
   border: 1px solid rgba(0, 0, 0, 0.6);
   pointer-events: none;
@@ -861,11 +968,9 @@ body:has(#library-window.is-collapsed:not([hidden])) #window-toolbar { left: cal
 
 .qb-panel {
   position: absolute;
-  left: 0;
+  left: -1px;
   bottom: 100%;
-  border-radius: 3px 3px 0 0;
   border-bottom: none;
-  box-shadow: inset 0 0 0 1px var(--bevel-light), 0 -6px 20px rgba(0, 0, 0, 0.5);
 }
 
 .qb-panel::after {
@@ -873,52 +978,65 @@ body:has(#library-window.is-collapsed:not([hidden])) #window-toolbar { left: cal
   content: "";
   display: block;
   height: 1px;
-  margin: 6px -6px -6px;
-  background: var(--border);
+  margin: 5px -5px -5px;
+  background: #262322;
 }
 
-.qb-panel-header { display: flex; justify-content: flex-end; margin-bottom: 6px; }
-.qb-panel-rows { display: flex; flex-direction: column; gap: 4px; }
+.qb-panel-header { display: flex; justify-content: flex-end; margin-bottom: 5px; }
+.qb-panel-rows { display: flex; align-items: flex-start; gap: 3px; }
+.qb-num-col,
+.qb-slot-col { flex-direction: column; }
 
-.qb-tools {
+.qb-tool-grid {
   display: grid;
   grid-auto-flow: column;
   grid-template-rows: repeat(2, var(--qb-slot));
   grid-auto-columns: var(--qb-slot);
-  gap: 3px;
+  gap: 2px;
 }
 
 .qb-tool {
   width: var(--qb-slot);
   height: var(--qb-slot);
-  padding: 0;
   display: grid;
   place-items: center;
-  border: 1px solid var(--border);
-  border-radius: 2px;
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.4), inset 0 -2px 0 rgba(0, 0, 0, 0.3);
 }
 
-.qb-tool img { width: 80%; height: 80%; display: block; pointer-events: none; }
+.qb-tool img { width: 84%; height: 84%; display: block; pointer-events: none; }
 /* Shortcut sprites not in the dataset yet (see quickbar.ts): a plain label. */
 .qb-tool.is-missing-sprite { font-family: var(--display); font-size: 10px; font-weight: 700; color: #1b1b1b; }
 .qb-tool.is-missing-sprite:not(.is-grey) { color: #fff; }
 .qb-tool .icon { background-color: transparent; border: none; box-shadow: none; pointer-events: none; }
 
-.qb-tool.is-grey { color: #262626; background: linear-gradient(180deg, #cbcbcb, #a9a9a9); }
-.qb-tool.is-red { background: linear-gradient(180deg, #d0463d, #b1322a); }
-.qb-tool.is-green { background: linear-gradient(180deg, #4c9a33, #387d24); }
-.qb-tool.is-blue { background: linear-gradient(180deg, #3a7fb2, #2c6694); }
+.qb-tool.is-red { --qb-face: #ac2c25; --qb-lit: #ce7a79; --qb-shade: #491411; }
+.qb-tool.is-green { --qb-face: #3a7921; --qb-lit: #6fa85b; --qb-shade: #1e410d; }
+.qb-tool.is-blue { --qb-face: #317195; --qb-lit: #49a1d5; --qb-shade: #11303f; }
 
-.qb-tool:hover:not(:disabled) { filter: brightness(1.12); }
-.qb-tool:active:not(:disabled) { box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.5); }
+/* The global button:hover grey must not reach these. Coloured tools
+   (planners) take a translucent white wash on hover instead of orange. */
+.qb-bar-num:hover,
+.qb-tool:hover { background: var(--qb-face); }
+.qb-tool:not(.is-grey):hover:not(:disabled) {
+  background: linear-gradient(rgba(255, 255, 255, 0.18), rgba(255, 255, 255, 0.18)), var(--qb-face);
+}
+.qb-tool:active:not(:disabled) { box-shadow: inset 0 2px 3px rgba(0, 0, 0, 0.5); }
 
 /* A tool that is on (planner in hand, alt mode, a wire): pressed in, gold rim. */
 .qb-tool.is-active {
-  box-shadow: inset 0 0 0 2px var(--gold), inset 0 2px 5px rgba(0, 0, 0, 0.45), 0 0 6px rgba(255, 204, 128, 0.5);
+  box-shadow: inset 0 0 0 2px var(--gold), inset 0 2px 4px rgba(0, 0, 0, 0.45);
 }
 
-.qb-tool:disabled { filter: grayscale(0.6) brightness(0.65); cursor: default; }
+/* Disabled, as the game draws it: sunk into a flat dark grey (shadow on
+   top, light at the bottom) with the glyph faded to mid-grey, whatever the
+   button's colour. */
+.qb-tool:disabled {
+  --qb-face: #575757;
+  background: var(--qb-face);
+  box-shadow: inset 0 1px 0 #222, inset 0 2px 1px rgba(0, 0, 0, 0.4), inset 0 -1px 0 #616161;
+  cursor: default;
+}
+.qb-tool:disabled img { filter: grayscale(1) brightness(0.55); }
+.qb-tool.is-grey:disabled img { filter: invert(1) brightness(0.6); }
 
 /* ---------- floating windows ---------- */
 
@@ -1785,9 +1903,6 @@ canvas.select-mode {
 
 /* ---------- floating window sizing ---------- */
 
-#intake-window { width: 420px; }
-#intake-window .intake-actions { margin-top: 12px; }
-
 #results-window { width: 440px; }
 #results-window .gui-body { max-height: calc(100vh - 100px); overflow-y: auto; }
 
@@ -2423,11 +2538,410 @@ canvas.select-mode {
   /* Smaller slots; the tool grid wraps above the hotbar when both don't fit. */
   .quickbar { --qb-slot: 26px; flex-wrap: wrap-reverse; justify-content: center; width: max-content; max-width: 100vw; }
   .qb-frame { padding: 4px; }
-  .qb-bar-row { gap: 4px; }
   .qb-slot.is-group-start { margin-left: 3px; }
-  .qb-bar-num { font-size: 13px; }
-  .qb-tools { border-radius: 3px 3px 0 0; margin-left: 0; }
+  .qb-bar-num { font-size: 12px; }
+  .qb-tools { margin-left: 0; }
   .qb-slot .icon { transform: scale(0.7); }
 
   .floating-window { max-width: calc(100vw - 16px); }
 }
+
+/* ---------- blueprint edit dialog ----------
+   The game's "Blueprint edit" window (colours sampled from an in-game
+   screenshot): a light inner panel, grey text fields that turn cream while
+   focused, the item art with its icons laid over it, four icon slots in a
+   sunken well, and a green arrow-ended Confirm in the footer. */
+
+
+
+
+.bp-edit-label {
+  margin: 4px 0 6px;
+  font-family: var(--display);
+  font-size: 15px;
+  font-weight: 700;
+  color: #fff;
+}
+
+.bp-edit-description {
+  width: 100%;
+  padding: 6px 7px;
+  font-family: var(--body);
+  font-size: 14px;
+  color: #1b1b1b;
+  background: #9a9a9a;
+  border: none;
+  border-radius: 2px;
+  box-shadow: inset 0 1px 0 #202020, inset 0 2px 2px rgba(0, 0, 0, 0.35), 0 1px 0 rgba(255, 255, 255, 0.12);
+}
+
+.bp-edit-description { min-height: 104px; resize: vertical; line-height: 1.35; word-break: normal; }
+
+.bp-edit-description:focus,
+.bp-lib-name-input:focus {
+  outline: none;
+  background: #f0e3c7;
+  box-shadow: inset 0 1px 0 #100e08, inset 0 2px 1px #b59f7a, 0 1px 0 rgba(255, 255, 255, 0.12);
+}
+
+.bp-edit-icon-row { display: flex; align-items: center; gap: 12px; }
+
+/* The item's own art with the chosen icons drawn into its frame. */
+.bp-edit-preview {
+  position: relative;
+  flex: none;
+  width: 64px;
+  height: 64px;
+}
+
+.bp-edit-preview .icon,
+.bp-edit-slot .icon { background-color: transparent; border: none; border-radius: 0; box-shadow: none; }
+
+
+/* Sunken well of four raised slots, as in the quickbar. */
+.bp-edit-slots {
+  display: flex;
+  gap: 2px;
+  padding: 2px 1px 1px;
+  background: #353535;
+  box-shadow: inset 0 1px 0 #000, inset 0 2px 1px rgba(0, 0, 0, 0.35), 0 1px 0 rgba(255, 255, 255, 0.18);
+}
+
+.bp-edit-slot {
+  width: 38px;
+  height: 38px;
+  padding: 0;
+  display: grid;
+  place-items: center;
+  background: #575556;
+  border: none;
+  border-radius: 3px;
+  box-shadow: inset 0 1px 0 #737172, inset 0 -1px 0 #222, inset 0 -2px 1px rgba(0, 0, 0, 0.35);
+}
+
+.bp-edit-slot:hover,
+.bp-edit-slot.is-picking {
+  background: #e0af54;
+  box-shadow: inset 0 1px 0 #f1d49c, inset 0 -1px 0 #5a3e13;
+}
+
+.bp-edit-footer {
+  display: flex;
+  align-items: stretch;
+  gap: 8px;
+  padding: 2px 4px 6px 10px;
+}
+
+.bp-edit-footer .grip {
+  flex: 1;
+  margin: 6px 0;
+  background-image: repeating-linear-gradient(
+    90deg,
+    var(--bevel-dark) 0 1px,
+    var(--bevel-light) 1px 2px,
+    transparent 2px 4px
+  );
+  opacity: 0.55;
+}
+
+.bp-edit-confirm {
+  flex: none;
+  height: 34px;
+  padding: 0 26px 0 22px;
+  font-family: var(--display);
+  font-size: 16px;
+  font-weight: 700;
+  color: #313131;
+  background: #8bc484;
+  border: none;
+  border-radius: 0;
+  clip-path: polygon(0 0, calc(100% - 10px) 0, 100% 50%, calc(100% - 10px) 100%, 0 100%);
+  box-shadow: inset 0 1px 0 #b7e0b1, inset 0 -2px 0 #5e8259;
+}
+
+.bp-edit-confirm:hover { background: #a0d699; }
+
+/* The icon picker floats beside the dialog, inside its backdrop. */
+.bp-edit-picker {
+  position: fixed;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+}
+
+/* A blueprint's art with its own icons over it (blueprint-icon.ts). */
+.bp-composed-icon {
+  position: relative;
+  flex: none;
+  display: inline-block;
+}
+
+.bp-composed-icon .icon { background-color: transparent; border: none; border-radius: 0; box-shadow: none; }
+
+.bp-composed-icon-grid {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-content: center;
+}
+
+/* ---------- blueprint library window ----------
+   The game's "Blueprint in the blueprint library" window (colours sampled
+   from an in-game screenshot): edit form on the left — a dark name strip
+   with the action buttons, then light panels for icon, description, snap
+   to grid and components — and a dark live preview on the right. */
+
+.bp-lib-window {
+  display: flex;
+  flex-direction: column;
+  width: min(760px, calc(100vw - 24px));
+  max-height: calc(100vh - 24px);
+}
+
+.bp-lib-columns {
+  display: flex;
+  gap: 10px;
+  min-height: 0;
+  padding: 2px 8px 0;
+}
+
+.bp-lib-form {
+  flex: 0 0 400px;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  background: #3b3a3b;
+  border: 1px solid #000;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06), 0 1px 0 var(--bevel-light);
+}
+
+.bp-lib-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 34px;
+  padding: 4px 6px 4px 10px;
+  border-bottom: 1px solid #000;
+}
+
+.bp-lib-name {
+  min-width: 0;
+  overflow: hidden;
+  font-family: var(--display);
+  font-size: 15px;
+  font-weight: 700;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  color: #fcedd1;
+}
+
+.bp-lib-name-input {
+  width: 100%;
+  padding: 3px 6px;
+  font-family: var(--display);
+  font-size: 14px;
+  font-weight: 700;
+  color: #1b1b1b;
+  background: #f0e3c7;
+  border: none;
+  border-radius: 2px;
+}
+
+.bp-lib-rename {
+  flex: none;
+  width: 18px;
+  height: 18px;
+  padding: 1px;
+  background: #a5a5a5;
+  border: 1px solid #000;
+  border-radius: 1px;
+}
+.bp-lib-rename img { width: 100%; height: 100%; display: block; }
+.bp-lib-rename:hover { background: #e0af54; }
+
+.bp-lib-actions { display: flex; gap: 3px; margin-left: auto; }
+
+/* Square tool buttons, the quickbar's bevel in the game's colours. */
+.bp-lib-action {
+  --face: #a5a5a5;
+  --lit: #d0d0d0;
+  --shade: #3d3d3d;
+  width: 26px;
+  height: 26px;
+  padding: 3px;
+  display: grid;
+  place-items: center;
+  background: var(--face);
+  border: 1px solid #1a1a1a;
+  border-radius: 0;
+  box-shadow: inset 0 1px 0 var(--lit), inset 0 -1px 0 var(--shade), inset 0 -2px 1px color-mix(in srgb, var(--shade) 50%, transparent);
+}
+.bp-lib-action img { width: 100%; height: 100%; display: block; pointer-events: none; }
+.bp-lib-action.is-blue { --face: #337599; --lit: #4ea3d2; --shade: #11303f; }
+.bp-lib-action.is-green { --face: #407c29; --lit: #6fa85b; --shade: #1e410d; }
+.bp-lib-action.is-red { --face: #ea7672; --lit: #f6aaa7; --shade: #6b211b; }
+.bp-lib-action:hover:not(:disabled) { background: linear-gradient(rgba(255, 255, 255, 0.18), rgba(255, 255, 255, 0.18)), var(--face); }
+.bp-lib-action.is-grey:hover:not(:disabled) { --face: #e0af54; --lit: #f1d49c; --shade: #5a3e13; background: var(--face); }
+.bp-lib-action:disabled { cursor: default; opacity: 0.45; }
+.bp-lib-action.is-armed { --face: #c4402b; outline: 2px solid #ffcc80; }
+.bp-lib-action.is-flash { outline: 2px solid #8bc484; }
+
+.bp-lib-panels {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 6px;
+}
+
+.bp-lib-panel {
+  flex: none;
+  padding: 8px 12px 12px;
+  background: #5b595b;
+  border: 1px solid #1a1a1a;
+  box-shadow: inset 0 1px 0 #777, inset 0 -1px 0 rgba(0, 0, 0, 0.35);
+}
+
+.bp-lib-panel .bp-edit-label { display: flex; align-items: center; gap: 5px; margin: 0 0 8px; }
+.bp-lib-panel .bp-edit-description { min-height: 84px; }
+
+.bp-lib-info {
+  display: inline-grid;
+  place-items: center;
+  width: 12px;
+  height: 12px;
+  font-family: Georgia, serif;
+  font-size: 9px;
+  font-weight: 700;
+  font-style: italic;
+  color: #fff;
+  background: #5b9bd5;
+  border-radius: 50%;
+  cursor: help;
+}
+
+/* Snap to grid: label column, then X/Y (or Width/Height) input pairs. */
+.bp-lib-check,
+.bp-lib-radio {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-family: var(--display);
+  font-size: 15px;
+  font-weight: 700;
+  color: #fff;
+  cursor: pointer;
+}
+.bp-lib-radio { gap: 6px; font-weight: 500; color: #e6e0d8; }
+.bp-lib-check input,
+.bp-lib-radio input { margin: 0; accent-color: #e0af54; width: 15px; height: 15px; }
+
+.bp-lib-snap-grid {
+  display: grid;
+  grid-template-columns: 1fr auto 46px auto 46px;
+  align-items: center;
+  gap: 6px 8px;
+  margin-top: 10px;
+}
+
+.bp-lib-snap-label { display: inline-flex; align-items: center; gap: 5px; font-size: 14px; color: #e6e0d8; }
+.bp-lib-snap-grid > .bp-lib-radio:last-child { grid-column: 1 / -1; }
+.bp-lib-axis { font-size: 14px; color: #e6e0d8; text-align: right; }
+
+.bp-lib-number {
+  width: 100%;
+  height: 26px;
+  padding: 0 4px;
+  font-family: var(--body);
+  font-size: 13px;
+  text-align: center;
+  color: #fff;
+  background: #4a494a;
+  border: none;
+  border-radius: 2px;
+  box-shadow: inset 0 1px 0 #202020, inset 0 2px 2px rgba(0, 0, 0, 0.35), 0 1px 0 rgba(255, 255, 255, 0.12);
+  -moz-appearance: textfield;
+}
+.bp-lib-number::-webkit-inner-spin-button,
+.bp-lib-number::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
+.bp-lib-number:focus { outline: none; color: #1b1b1b; background: #f0e3c7; }
+
+.bp-lib-snap.is-off .bp-lib-snap-grid { opacity: 0.55; }
+.bp-lib-number:disabled { color: transparent; }
+
+/* Components: a dark well of slots, item icon with its count bottom-right. */
+.bp-lib-components {
+  display: grid;
+  grid-template-columns: repeat(10, 1fr);
+  gap: 2px;
+  padding: 2px;
+  background: #2e2d2e;
+  box-shadow: inset 0 1px 0 #000, inset 0 2px 2px rgba(0, 0, 0, 0.4), 0 1px 0 rgba(255, 255, 255, 0.15);
+}
+
+.bp-lib-component {
+  position: relative;
+  aspect-ratio: 1;
+  display: grid;
+  place-items: center;
+  background: #3b3a3b;
+  border-radius: 2px;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08), inset 0 -1px 0 rgba(0, 0, 0, 0.5);
+}
+.bp-lib-component:not(.is-empty) { background: #4f4d4e; }
+.bp-lib-component .icon { background-color: transparent; border: none; box-shadow: none; }
+
+.bp-lib-count {
+  position: absolute;
+  right: 2px;
+  bottom: 0;
+  font-family: var(--display);
+  font-size: 11px;
+  font-weight: 700;
+  color: #fff;
+  text-shadow: 0 0 2px #000, 0 0 2px #000, 0 0 1px #000;
+  pointer-events: none;
+}
+
+/* Right: the preview — a dark well with its own heading strip. */
+.bp-lib-preview {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 420px;
+  background: #3b3a3b;
+  border: 1px solid #000;
+}
+
+.bp-lib-preview-head {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  min-height: 34px;
+  padding: 7px 10px;
+  border-bottom: 1px solid #000;
+  font-family: var(--display);
+  color: #fff;
+}
+.bp-lib-preview-head strong { font-size: 15px; color: #fcedd1; }
+.bp-lib-hint { font-size: 12px; color: var(--text-dim); }
+
+.bp-lib-preview-canvas { position: relative; flex: 1; min-height: 0; background: #2f2e2f; }
+.bp-lib-empty { margin: 16px; color: var(--text-dim); }
+
+.bp-lib-window .bp-edit-footer { padding: 8px 8px 8px 10px; }
+
+@media (max-width: 760px) {
+  .bp-lib-columns { flex-direction: column; overflow-y: auto; }
+  .bp-lib-form { flex-basis: auto; }
+  .bp-lib-preview { min-height: 240px; }
+}
+
+/* A quality diamond in the bottom-left corner of an icon slot. */
+.bp-edit-slot,
+.bp-composed-icon-cell { position: relative; }
+.bp-composed-icon-cell { display: block; }
+.quality-badge { position: absolute; left: 1px; bottom: 1px; pointer-events: none; }
+.bp-composed-icon-cell .quality-badge { left: 0; bottom: 0; }

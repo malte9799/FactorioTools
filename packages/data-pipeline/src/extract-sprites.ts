@@ -149,6 +149,10 @@ function extractIconAtlas(): void {
     "blueprint",
     "blueprint-book",
     "space-platform-starter-pack",
+    // Virtual signals (letters, digits, colours, arrows, …): what a
+    // blueprint's own icons are often made of, picked in the blueprint edit
+    // dialog.
+    "virtual-signal",
   ];
 
   const entries: { id: string; file: string }[] = [];
@@ -307,10 +311,55 @@ function extractShortcutIcons(): void {
   console.log(`Shortcut icons: copied ${copied}, reused ${reused}, missing ${missing} -> ${outDir}`);
 }
 
+/** GUI button art from the dump's utility-sprites (the blueprint library
+ *  window's reassign / copy / export / trash buttons, the rename pencil …),
+ *  one PNG each at data/sprites/gui/<key with dashes>.png. Like icons, the
+ *  files carry smaller mipmaps to the right; only the leftmost size×size
+ *  square is kept. */
+const GUI_SPRITES = ["reassign", "copy", "upgrade_blueprint", "parametrise", "export_slot", "trash", "trash_white", "rename_icon"];
+
+function extractGuiSprites(): void {
+  const raw = JSON.parse(readFileSync(DUMP_PATH, "utf-8")) as Record<string, Record<string, any>>;
+  const utility = raw["utility-sprites"]?.["default"] ?? {};
+  const outDir = path.join(SITE_PUBLIC, "data/sprites/gui");
+  mkdirSync(outDir, { recursive: true });
+  let copied = 0;
+  let reused = 0;
+  let missing = 0;
+  for (const key of GUI_SPRITES) {
+    const sprite = utility[key];
+    const size: number | undefined = sprite?.size ?? sprite?.width;
+    if (!sprite || typeof sprite.filename !== "string" || typeof size !== "number") {
+      console.warn(`  missing gui sprite: ${key}`);
+      missing++;
+      continue;
+    }
+    const src = resolveModPath(sprite.filename);
+    if (!existsSync(src)) {
+      console.warn(`  missing gui sprite file: ${src}`);
+      missing++;
+      continue;
+    }
+    const dest = path.join(outDir, `${key.replace(/_/g, "-")}.png`);
+    if (cache.isFresh(src, [dest])) {
+      reused++;
+      continue;
+    }
+    const png = PNG.sync.read(readFileSync(src));
+    const cropped = new PNG({ width: size, height: size });
+    cropped.data.fill(0);
+    PNG.bitblt(png, cropped, 0, 0, Math.min(png.width, size), Math.min(png.height, size), 0, 0);
+    writeFileSync(dest, PNG.sync.write(cropped));
+    copied++;
+  }
+  console.log(`GUI sprites: copied ${copied}, reused ${reused}, missing ${missing} -> ${outDir}`);
+}
+
 extractEntitySheets();
 extractIconAtlas();
 extractItemGroupIcons();
 extractShortcutIcons();
+extractGuiSprites();
 
 // Written once, after every step has recorded what it looked at. Entries the
 // run never touched are dropped rather than accumulating forever.

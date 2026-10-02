@@ -206,17 +206,29 @@ export function buildQuickbar(host: HTMLElement, callbacks: QuickbarCallbacks): 
   panelClose.setAttribute("aria-label", "Close");
   panelClose.textContent = "✕";
   panelHeader.appendChild(panelClose);
+  // As in the game, the all-bars panel is two wells side by side — the bar
+  // numbers in one, every bar's slots in the other — not ten framed rows.
   const panelRows = document.createElement("div");
   panelRows.className = "qb-panel-rows";
+  const panelNumbers = document.createElement("div");
+  panelNumbers.className = "qb-well qb-num-col";
+  const panelSlots = document.createElement("div");
+  panelSlots.className = "qb-well qb-slot-col";
+  panelRows.append(panelNumbers, panelSlots);
   panel.append(panelHeader, panelRows);
 
   const mainRow = document.createElement("div");
   mainRow.className = "qb-bar-row is-main";
-  hotbarFrame.append(mainRow);
+  // The panel hangs off the hotbar's own frame, not the quickbar: the tool
+  // grid beside it is taller and would lift it clear of the bar.
+  hotbarFrame.append(panel, mainRow);
 
   /* ----- tools ----- */
   const toolsFrame = document.createElement("div");
   toolsFrame.className = "qb-frame qb-tools";
+  const toolGrid = document.createElement("div");
+  toolGrid.className = "qb-well qb-tool-grid";
+  toolsFrame.appendChild(toolGrid);
   const toolButtons = new Map<QuickbarTool, HTMLButtonElement>();
   for (const spec of TOOLS) {
     const button = document.createElement("button");
@@ -247,10 +259,10 @@ export function buildQuickbar(host: HTMLElement, callbacks: QuickbarCallbacks): 
     if (spec.tool === "upgrade") button.disabled = true;
     button.addEventListener("click", () => callbacks.onTool(spec.tool));
     toolButtons.set(spec.tool, button);
-    toolsFrame.appendChild(button);
+    toolGrid.appendChild(button);
   }
 
-  host.append(panel, hotbarFrame, toolsFrame);
+  host.append(hotbarFrame, toolsFrame);
 
   function persist(): void {
     writeStored(stored);
@@ -264,7 +276,7 @@ export function buildQuickbar(host: HTMLElement, callbacks: QuickbarCallbacks): 
     if (slot === 5) button.classList.add("is-group-start");
     if (item) {
       button.classList.add("is-filled");
-      button.appendChild(icon(item.name, item.name.replace(/-/g, " "), 32));
+      button.appendChild(icon(item.name, item.name.replace(/-/g, " "), 28));
       if (item.quality !== "normal") {
         const q = document.createElement("span");
         q.className = `qb-quality quality-${item.quality}`;
@@ -299,12 +311,18 @@ export function buildQuickbar(host: HTMLElement, callbacks: QuickbarCallbacks): 
     return button;
   }
 
-  function fillRow(row: HTMLElement, bar: number, numberButton: HTMLButtonElement): void {
-    row.replaceChildren(numberButton);
+  function makeSlotRow(bar: number): HTMLElement {
     const slots = document.createElement("div");
     slots.className = "qb-slots";
     for (let s = 0; s < SLOTS; s++) slots.appendChild(makeSlot(bar, s));
-    row.appendChild(slots);
+    return slots;
+  }
+
+  function well(child: HTMLElement): HTMLElement {
+    const el = document.createElement("div");
+    el.className = "qb-well";
+    el.appendChild(child);
+    return el;
   }
 
   function render(): void {
@@ -319,14 +337,13 @@ export function buildQuickbar(host: HTMLElement, callbacks: QuickbarCallbacks): 
       panel.hidden = !panel.hidden;
       render();
     });
-    fillRow(mainRow, stored.active, mainNumber);
+    mainRow.replaceChildren(well(mainNumber), well(makeSlotRow(stored.active)));
 
     if (panel.hidden) return;
-    panelRows.replaceChildren();
+    panelNumbers.replaceChildren();
+    panelSlots.replaceChildren();
     // Top to bottom: 0, 9, 8 … 1 — the tenth bar first, as in the game.
     for (let bar = BARS - 1; bar >= 0; bar--) {
-      const row = document.createElement("div");
-      row.className = "qb-bar-row";
       const number = document.createElement("button");
       number.type = "button";
       number.className = "qb-bar-num";
@@ -338,8 +355,13 @@ export function buildQuickbar(host: HTMLElement, callbacks: QuickbarCallbacks): 
         persist();
         closePanel();
       });
-      fillRow(row, bar, number);
-      panelRows.appendChild(row);
+      const slots = makeSlotRow(bar);
+      // Hovering a bar's number lights its whole row, which now lives in
+      // the other well.
+      number.addEventListener("mouseenter", () => slots.classList.add("is-hot"));
+      number.addEventListener("mouseleave", () => slots.classList.remove("is-hot"));
+      panelNumbers.appendChild(number);
+      panelSlots.appendChild(slots);
     }
   }
 
