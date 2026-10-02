@@ -844,6 +844,7 @@ function buildMenuIndex(
   itemMenuPositions: Record<string, MenuPosition>;
   recipeMenuPositions: Record<string, MenuPosition>;
   itemNames: Record<string, string>;
+  signals: RenderCatalog["signals"];
 } {
   const subgroupToGroup = new Map<string, { group: string; subgroupOrder: string }>();
   for (const sg of Object.values(raw["item-subgroup"] ?? {})) {
@@ -880,7 +881,13 @@ function buildMenuIndex(
       itemSubgroupByName.set(item.name, item.subgroup);
       itemOrderByName.set(item.name, item.order);
       itemMenuPositions[item.name] = resolvePosition(subgroupToGroup, menuGroups, item.subgroup, item.order);
-      itemNames[item.name] = locale.itemName.get(item.name) ?? item.name;
+      // A buildable item without its own [item-name] takes its entity's
+      // name, as the game does.
+      itemNames[item.name] =
+        locale.itemName.get(item.name) ??
+        (typeof item.place_result === "string" ? locale.entityName.get(item.place_result) : undefined) ??
+        locale.entityName.get(item.name) ??
+        item.name;
     }
   }
   // Fluids have their own subgroup too (usually "fluid" itself) — a
@@ -889,6 +896,27 @@ function buildMenuIndex(
     if (itemSubgroupByName.has(fluid.name)) continue;
     itemSubgroupByName.set(fluid.name, fluid.subgroup);
     itemOrderByName.set(fluid.name, fluid.order);
+  }
+
+  // Fluids and virtual signals: the non-item signals a blueprint's icons can
+  // name, each in its own Fluids / Signals tab of the icon picker.
+  const signals: NonNullable<RenderCatalog["signals"]> = {};
+  for (const fluid of Object.values(raw.fluid ?? {}) as any[]) {
+    if (fluid.hidden === true || fluid.parameter === true) continue;
+    signals[fluid.name] = {
+      type: "fluid",
+      localised: locale.fluidName.get(fluid.name) ?? fluid.name,
+      position: resolvePosition(subgroupToGroup, menuGroups, fluid.subgroup, fluid.order),
+    };
+  }
+  for (const signal of Object.values(raw["virtual-signal"] ?? {}) as any[]) {
+    // signal-unknown has no subgroup: it's the game's placeholder, not pickable.
+    if (typeof signal.subgroup !== "string" || signal.hidden === true) continue;
+    signals[signal.name] = {
+      type: "virtual",
+      localised: locale.virtualSignalName.get(signal.name) ?? signal.name,
+      position: resolvePosition(subgroupToGroup, menuGroups, signal.subgroup, signal.order),
+    };
   }
 
   const recipeMenuPositions: Record<string, MenuPosition> = {};
@@ -904,7 +932,7 @@ function buildMenuIndex(
     );
   }
 
-  return { menuGroups, menuPositions, itemMenuPositions, recipeMenuPositions, itemNames };
+  return { menuGroups, menuPositions, itemMenuPositions, recipeMenuPositions, itemNames, signals };
 }
 
 export function buildRenderCatalog(raw: Raw, locale: LocaleTables, version: string): RenderCatalog {
@@ -1044,6 +1072,6 @@ export function buildRenderCatalog(raw: Raw, locale: LocaleTables, version: stri
     add(proto, undefined);
   }
 
-  const { menuGroups, menuPositions, itemMenuPositions, recipeMenuPositions, itemNames } = buildMenuIndex(raw, locale);
-  return { version, entities, menuGroups, menuPositions, itemMenuPositions, recipeMenuPositions, itemNames };
+  const { menuGroups, menuPositions, itemMenuPositions, recipeMenuPositions, itemNames, signals } = buildMenuIndex(raw, locale);
+  return { version, entities, menuGroups, menuPositions, itemMenuPositions, recipeMenuPositions, itemNames, signals };
 }

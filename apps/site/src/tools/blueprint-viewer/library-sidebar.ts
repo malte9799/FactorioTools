@@ -4,11 +4,31 @@ import {
   listSaved,
   saveToLibrary,
   deleteFromLibrary,
+  deleteBookFromLibrary,
   duplicateInLibrary,
+  duplicateBookInLibrary,
   renameInLibrary,
+  editInLibrary,
+  readEntryMeta,
+  decodeEntry,
+  replaceContentsInLibrary,
   type SavedBlueprint,
 } from "./blueprint-library.js";
-import { html } from "./html.js";
+import { openLibraryWindow } from "./blueprint-library-window.js";
+import { blueprintIcon } from "./blueprint-icon.js";
+import type { BpIcon } from "@factoriotools/engine";
+
+/** Each saved entry's own icons, decoded out of its string once and kept
+ *  until the string changes — the list re-renders on every click. */
+const iconCache = new Map<string, { bpString: string; icons: BpIcon[] }>();
+function entryIcons(entry: SavedBlueprint): BpIcon[] {
+  const hit = iconCache.get(entry.id);
+  if (hit && hit.bpString === entry.bpString) return hit.icons;
+  const icons = readEntryMeta(entry).icons;
+  iconCache.set(entry.id, { bpString: entry.bpString, icons });
+  return icons;
+}
+import { icon } from "./legacy-view/icons.js";
 import { renderRichLabel } from "./rich-text.js";
 
 export interface LibraryCallbacks {
@@ -29,128 +49,134 @@ export interface LibraryCallbacks {
    *  handler, so a book doesn't need re-importing just to look at a
    *  different one of its blueprints. */
   onSelectCurrent(flatIndex: number): void;
+  /** The library window's reassign: arm the copy tool, and hand the boxed
+   *  selection (as a blueprint string) to `apply` once one is drawn. */
+  onReselect(apply: (bpString: string) => void): void;
+  /** Shift+click on a saved blueprint: take it into the cursor to place,
+   *  with its snap-to-grid. */
+  onPickUp(bpString: string): void;
+  /** A short confirmation or error line for the user. */
+  notify(message: string, kind?: "info" | "error"): void;
 }
 
 interface BuiltinEntry {
   id: string;
   label: string;
+  /** Item icon shown in front of the label — built-ins have no rich-text
+   *  name of their own to take one from. */
+  icon: string;
   bpString: string;
 }
 
+/** Debug fixtures, listed loose at the top of the panel the way the game's
+ *  Surfaces panel lists "Space map" above its categories. The throughput
+ *  builds are known to hit full throughput in game: what the rate
+ *  calculator should reproduce. */
 const BUILTINS: BuiltinEntry[] = [
-  { id: "builtin-rotation-test", label: "Rotation test", bpString: ROTATION_TEST_BLUEPRINT },
-  { id: "builtin-debug-lab", label: "Debug lab", bpString: DEBUG_BLUEPRINT },
+  { id: "builtin-rotation-test", label: "Rotation test", icon: "inserter", bpString: ROTATION_TEST_BLUEPRINT },
+  { id: "builtin-debug-lab", label: "Debug lab", icon: "lab", bpString: DEBUG_BLUEPRINT },
+  { id: "builtin-red-science-240", label: "Red science 240/s", icon: "assembling-machine-1", bpString: RED_SCIENCE_240_BLUEPRINT },
+  { id: "builtin-green-science-240", label: "Green science 240/s", icon: "assembling-machine-2", bpString: GREEN_SCIENCE_240_BLUEPRINT },
 ];
 
-/** Builds known to hit full throughput in game: what the rate calculator
- *  should reproduce. */
-const THROUGHPUT_TESTS: BuiltinEntry[] = [
-  { id: "builtin-red-science-240", label: "Red science 240/s", bpString: RED_SCIENCE_240_BLUEPRINT },
-  { id: "builtin-green-science-240", label: "Green science 240/s", bpString: GREEN_SCIENCE_240_BLUEPRINT },
-];
+/** Inline line-art for the row action buttons, drawn in currentColor so
+ *  the button decides the colour — the game's own trash and plus glyphs are
+ *  flat white shapes on a coloured square. */
+const TRASH_SVG = `<svg viewBox="0 0 16 16" aria-hidden="true"><path fill="currentColor" d="M6 1h4l.5 1H14v2H2V2h3.5zM3 5h10l-.8 10H3.8zm2.4 2 .3 6h1.2l-.2-6zm2 0v6h1.2V7zm2 0-.2 6h1.2l.3-6z"/></svg>`;
+const PLUS_SVG = `<svg viewBox="0 0 16 16" aria-hidden="true"><path fill="currentColor" d="M7 2h2v5h5v2H9v5H7V9H2V7h5z"/></svg>`;
+const SAVE_SVG = `<svg viewBox="0 0 16 16" aria-hidden="true"><path fill="currentColor" d="M2 2h9.5L14 4.5V14H2zm2 1.5V6h6V3.5zM4 9v3.5h8V9z"/></svg>`;
 
-/** Which categories are currently expanded — module-level so the sidebar
- *  remembers disclosure state across re-renders within a session (every
- *  mutation re-renders the whole list from scratch, see refresh() below).
- *  Debug, Throughput tests and Saved start open since they are the most used;
- *  per-book folders start closed to keep a library of many saved books
- *  scannable at a glance. */
-const expanded = new Set<string>(["debug", "throughput", "saved"]);
+/** Sections the user has folded shut — module-level so the panel remembers
+ *  disclosure state across re-renders within a session (every mutation
+ *  re-renders the whole list from scratch, see refresh() below). Stored as
+ *  the collapsed set rather than the open one so a freshly saved book shows
+ *  up expanded, like every category in the game's own panel. */
+const collapsed = new Set<string>();
 
-function toggleExpanded(key: string): void {
-  if (expanded.has(key)) expanded.delete(key);
-  else expanded.add(key);
+/** Which row is the one on screen, highlighted gold like the game's
+ *  selected surface. Keyed `builtin:<id>`, `saved:<id>` or
+ *  `current:<flatIndex>`; cleared by "New blueprint". */
+let activeKey: string | null = null;
+
+function makeIconButton(className: string, svg: string, label: string, onClick: () => void, disabled = false): HTMLButtonElement {
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = `bp-icon-button ${className}`;
+  button.innerHTML = svg;
+  button.title = label;
+  button.setAttribute("aria-label", label);
+  button.disabled = disabled;
+  button.addEventListener("click", (e) => {
+    e.stopPropagation();
+    onClick();
+  });
+  return button;
 }
 
-function makeCategory(key: string, title: string): { section: HTMLElement; body: HTMLElement } {
+interface SectionActions {
+  onDelete?: () => void;
+  onDuplicate?: () => void;
+}
+
+/** A category header and its rows. `title` can carry a blueprint book's own
+ *  label — attacker-controlled and persisted in localStorage — so it only
+ *  ever reaches the DOM through renderRichLabel's text nodes. */
+function makeSection(
+  key: string,
+  title: string,
+  options: { iconName?: string; nested?: boolean; actions?: SectionActions } = {},
+): { section: HTMLElement; body: HTMLElement } {
   const section = document.createElement("div");
-  section.className = "library-category";
+  section.className = "bp-section";
+  if (options.nested) section.classList.add("is-nested");
+
+  const headerRow = document.createElement("div");
+  headerRow.className = "bp-section-row";
 
   const header = document.createElement("button");
   header.type = "button";
-  header.className = "library-category-header";
-  const isOpen = expanded.has(key);
+  header.className = "bp-section-header";
+  const isOpen = !collapsed.has(key);
   header.classList.toggle("is-open", isOpen);
-  // `title` carries a blueprint book's own label for book categories (see
-  // the `📘 ${book.label}` call site) — attacker-controlled, and persisted in
-  // localStorage, so it must never reach innerHTML unescaped.
-  header.innerHTML = html`<span class="library-disclosure" aria-hidden="true">▸</span><span>${title}</span>`;
+  header.setAttribute("aria-expanded", String(isOpen));
+  if (options.iconName) header.appendChild(icon(options.iconName, "", 16));
+  const label = document.createElement("span");
+  label.className = "bp-section-label";
+  label.appendChild(renderRichLabel(title, 14));
+  label.title = title;
+  const disclosure = document.createElement("span");
+  disclosure.className = "bp-disclosure";
+  disclosure.setAttribute("aria-hidden", "true");
+  header.append(label, disclosure);
+  headerRow.appendChild(header);
+
+  if (options.actions?.onDelete) {
+    headerRow.appendChild(makeIconButton("is-danger", TRASH_SVG, "Delete book", options.actions.onDelete));
+  }
+  if (options.actions?.onDuplicate) {
+    headerRow.appendChild(makeIconButton("", PLUS_SVG, "Duplicate book", options.actions.onDuplicate));
+  }
 
   const body = document.createElement("div");
-  body.className = "library-category-body";
+  body.className = "bp-section-body";
   body.hidden = !isOpen;
 
   header.addEventListener("click", () => {
-    toggleExpanded(key);
-    const nowOpen = expanded.has(key);
+    if (collapsed.has(key)) collapsed.delete(key);
+    else collapsed.add(key);
+    const nowOpen = !collapsed.has(key);
     header.classList.toggle("is-open", nowOpen);
+    header.setAttribute("aria-expanded", String(nowOpen));
     body.hidden = !nowOpen;
   });
 
-  section.append(header, body);
+  section.append(headerRow, body);
   return { section, body };
-}
-
-/** Closes any open row context menu — module-level since only one can ever
- *  be open at a time (matches native right-click menu behavior: opening a
- *  new one, or clicking elsewhere, dismisses whatever was open). */
-let closeOpenMenu: (() => void) | null = null;
-
-function closeAnyOpenMenu(): void {
-  closeOpenMenu?.();
-  closeOpenMenu = null;
-}
-
-interface RowMenuAction {
-  label: string;
-  onClick(): void;
-}
-
-function showRowMenu(x: number, y: number, actions: RowMenuAction[]): void {
-  closeAnyOpenMenu();
-
-  const menu = document.createElement("div");
-  menu.className = "library-context-menu";
-  menu.style.left = `${x}px`;
-  menu.style.top = `${y}px`;
-
-  for (const action of actions) {
-    const item = document.createElement("button");
-    item.type = "button";
-    item.className = "library-context-item";
-    item.textContent = action.label;
-    item.addEventListener("click", () => {
-      closeAnyOpenMenu();
-      action.onClick();
-    });
-    menu.appendChild(item);
-  }
-
-  document.body.appendChild(menu);
-
-  const onOutside = (e: MouseEvent) => {
-    if (!menu.contains(e.target as Node)) close();
-  };
-  const onKey = (e: KeyboardEvent) => {
-    if (e.key === "Escape") close();
-  };
-  function close(): void {
-    menu.remove();
-    document.removeEventListener("mousedown", onOutside, true);
-    document.removeEventListener("keydown", onKey, true);
-  }
-  closeOpenMenu = close;
-  // Deferred so the click that opened the menu (a contextmenu event, but
-  // guard anyway) doesn't immediately trigger onOutside via bubbling.
-  setTimeout(() => {
-    document.addEventListener("mousedown", onOutside, true);
-    document.addEventListener("keydown", onKey, true);
-  }, 0);
 }
 
 /** A saved-blueprint row's rename mode: swaps the label button for a text
  *  input, committing on Enter/blur and cancelling on Escape. */
-function startRename(row: HTMLElement, labelButton: HTMLButtonElement, id: string, currentLabel: string, refresh: () => void): void {
+function startRename(labelButton: HTMLButtonElement, id: string, currentLabel: string, refresh: () => void): void {
   const input = document.createElement("input");
   input.type = "text";
   input.className = "library-rename-input";
@@ -179,272 +205,342 @@ function startRename(row: HTMLElement, labelButton: HTMLButtonElement, id: strin
   input.addEventListener("blur", commit);
 }
 
-function makeRow(
-  label: string,
-  options: {
-    onClick(): void;
-    onDelete?: () => void;
-    onContextMenu?: (e: MouseEvent) => void;
-    title?: string;
-  },
-): HTMLElement {
+interface RowOptions {
+  key: string;
+  iconName: string;
+  /** Replaces the plain item icon — a saved blueprint's art with its own
+   *  icons drawn on it. */
+  iconElement?: HTMLElement;
+  onClick(): void;
+  /** Trash button; omitted rows show it greyed out, like the game's own
+   *  disabled trash beside "Add space platform". */
+  onDelete?: () => void;
+  onDuplicate?: () => void;
+  onContextMenu?: (e: MouseEvent, labelButton: HTMLButtonElement) => void;
+  /** Shift+click instead of a plain click. */
+  onPickUp?: () => void;
+  onRename?: (labelButton: HTMLButtonElement) => void;
+}
+
+/** One list block: icon + rich-text label, with the trash/duplicate pair
+ *  docked to its right edge on hover and on the selected row. */
+function makeRow(label: string, options: RowOptions, refresh: () => void): HTMLElement {
   const row = document.createElement("div");
-  row.className = "library-row";
+  row.className = "bp-row";
+  if (options.key === activeKey) row.classList.add("is-active");
 
   const button = document.createElement("button");
   button.type = "button";
-  button.className = "library-row-label";
-  button.appendChild(renderRichLabel(label));
-  // A blueprint's own name (not the rendered icons+text) is still the most
-  // useful hover/rename-target reference when it contains rich-text tags,
-  // matching options.title's existing role of naming the row for a11y/title
-  // attribute purposes — falls back to the raw label with its `[tag]`
-  // markup still visible, same as before this rich-text rendering existed.
-  if (options.title) button.title = options.title;
-  button.addEventListener("click", options.onClick);
+  button.className = "bp-row-main";
+  button.appendChild(options.iconElement ?? icon(options.iconName, "", 16));
+  const text = document.createElement("span");
+  text.className = "bp-row-label";
+  text.appendChild(renderRichLabel(label, 14));
+  button.appendChild(text);
+  // The raw name, `[tag]` markup and all, stays the hover reference for a
+  // label whose icons replaced part of the text.
+  button.title = label;
+  button.addEventListener("click", (e) => {
+    if (e.shiftKey && options.onPickUp) {
+      options.onPickUp();
+      return;
+    }
+    activeKey = options.key;
+    options.onClick();
+    refresh();
+  });
+  if (options.onRename) {
+    const onRename = options.onRename;
+    button.addEventListener("dblclick", (e) => {
+      e.preventDefault();
+      onRename(button);
+    });
+  }
   row.appendChild(button);
 
   if (options.onContextMenu) {
-    row.addEventListener("contextmenu", options.onContextMenu);
+    const onContextMenu = options.onContextMenu;
+    row.addEventListener("contextmenu", (e) => onContextMenu(e, button));
   }
 
-  if (options.onDelete) {
-    const del = document.createElement("button");
-    del.type = "button";
-    del.className = "library-row-delete";
-    del.setAttribute("aria-label", `Delete ${label}`);
-    del.title = "Delete";
-    del.textContent = "🗑";
-    del.addEventListener("click", (e) => {
-      e.stopPropagation();
-      options.onDelete!();
-    });
-    row.appendChild(del);
+  if (options.onDelete || options.onDuplicate) {
+    const actions = document.createElement("div");
+    actions.className = "bp-row-actions";
+    actions.appendChild(makeIconButton("is-danger", TRASH_SVG, "Delete", () => options.onDelete?.(), !options.onDelete));
+    if (options.onDuplicate) actions.appendChild(makeIconButton("", PLUS_SVG, "Duplicate", options.onDuplicate));
+    row.appendChild(actions);
   }
 
   return row;
 }
 
-/** Renders the folder/leaf structure shared by both the Debug and Saved
- *  sections: entries that share a `bookId` collapse into one nested,
- *  independently-collapsible folder named after the book, while entries
- *  with no `bookId` render as plain rows directly in the category body.
- *  Only entries actually stored in the library (not the read-only built-in
- *  fixtures) get the right-click Copy/Duplicate/Rename/Delete menu. */
-function renderEntries(
-  body: HTMLElement,
-  builtins: BuiltinEntry[],
-  saved: SavedBlueprint[],
-  callbacks: LibraryCallbacks,
-  refresh: () => void,
-): void {
-  body.replaceChildren();
-
-  for (const entry of builtins) {
-    body.appendChild(makeRow(entry.label, { onClick: () => callbacks.onLoad(entry.bpString) }));
-  }
-
-  const flat = saved.filter((e) => !e.bookId);
-  const books = new Map<string, { label: string; entries: SavedBlueprint[] }>();
-  for (const entry of saved) {
-    if (!entry.bookId) continue;
-    const book = books.get(entry.bookId) ?? { label: entry.bookLabel || "Untitled book", entries: [] };
-    book.entries.push(entry);
-    books.set(entry.bookId, book);
-  }
-
-  function makeSavedRow(entry: SavedBlueprint): HTMLElement {
-    const row = makeRow(entry.label, {
+function savedRow(entry: SavedBlueprint, callbacks: LibraryCallbacks, refresh: () => void): HTMLElement {
+  const key = `saved:${entry.id}`;
+  const remove = () => {
+    deleteFromLibrary(entry.id);
+    if (activeKey === key) activeKey = null;
+    refresh();
+  };
+  const duplicate = () => {
+    duplicateInLibrary(entry.id);
+    refresh();
+  };
+  const rename = (labelButton: HTMLButtonElement) => startRename(labelButton, entry.id, entry.label, refresh);
+  return makeRow(
+    entry.label,
+    {
+      key,
+      iconName: "blueprint",
+      iconElement: blueprintIcon("blueprint", entryIcons(entry), 24),
       onClick: () => callbacks.onLoad(entry.bpString),
-      onDelete: () => {
-        deleteFromLibrary(entry.id);
-        refresh();
-      },
+      onPickUp: () => callbacks.onPickUp(entry.bpString),
+      onDelete: remove,
+      onDuplicate: duplicate,
+      onRename: rename,
       onContextMenu: (e) => {
         e.preventDefault();
-        showRowMenu(e.clientX, e.clientY, [
-          {
-            label: "Copy",
-            onClick: async () => {
-              try {
-                await navigator.clipboard.writeText(entry.bpString);
-              } catch {
-                /* clipboard unavailable — silently ignore, not worth surfacing here */
-              }
-            },
-          },
-          {
-            label: "Duplicate",
-            onClick: () => {
-              duplicateInLibrary(entry.id);
-              refresh();
-            },
-          },
-          {
-            label: "Rename",
-            onClick: () => {
-              const labelButton = row.querySelector<HTMLButtonElement>(".library-row-label");
-              if (labelButton) startRename(row, labelButton, entry.id, entry.label, refresh);
-            },
-          },
-          {
-            label: "Delete",
-            onClick: () => {
-              deleteFromLibrary(entry.id);
-              refresh();
-            },
-          },
-        ]);
+        openEntryWindow(entry.id, callbacks, refresh);
       },
-    });
-    return row;
-  }
+    },
+    refresh,
+  );
+}
 
-  for (const entry of flat) {
-    body.appendChild(makeSavedRow(entry));
-  }
-
-  for (const [bookId, book] of books) {
-    const { section, body: bookBody } = makeCategory(`book-${bookId}`, `📘 ${book.label}`);
-    for (const entry of book.entries) {
-      bookBody.appendChild(makeSavedRow(entry));
-    }
-    body.appendChild(section);
-  }
-
-  if (flat.length === 0 && books.size === 0 && builtins.length === 0) {
-    const empty = document.createElement("p");
-    empty.className = "empty library-empty";
-    empty.textContent = "Nothing here yet.";
-    body.appendChild(empty);
-  }
+/** The game's library window for one saved blueprint, read fresh from
+ *  storage so a reopen (after reassign) shows the new contents. */
+function openEntryWindow(id: string, callbacks: LibraryCallbacks, refresh: () => void): void {
+  const entry = listSaved().find((e) => e.id === id);
+  if (!entry) return;
+  openLibraryWindow({
+    meta: readEntryMeta(entry),
+    blueprint: decodeEntry(entry),
+    onSave: (meta) => {
+      try {
+        editInLibrary(id, meta);
+      } catch {
+        callbacks.notify("Couldn't save — the stored blueprint doesn't decode.", "error");
+      }
+      refresh();
+    },
+    onReselect: () => {
+      callbacks.onReselect((bpString) => {
+        try {
+          replaceContentsInLibrary(id, bpString);
+        } catch {
+          callbacks.notify("Couldn't use that selection as the blueprint's contents.", "error");
+        }
+        refresh();
+        openEntryWindow(id, callbacks, refresh);
+      });
+    },
+    onDuplicate: () => {
+      duplicateInLibrary(id);
+      refresh();
+      callbacks.notify(`Duplicated “${entry.label}”.`);
+    },
+    onExport: async () => {
+      const latest = listSaved().find((e) => e.id === id);
+      if (!latest) return false;
+      try {
+        await navigator.clipboard.writeText(latest.bpString);
+        return true;
+      } catch {
+        return false;
+      }
+    },
+    onDelete: () => {
+      deleteFromLibrary(id);
+      if (activeKey === `saved:${id}`) activeKey = null;
+      refresh();
+    },
+  });
 }
 
 /** Renders the currently-loaded (not necessarily saved) book's own folder
- *  tree into `body`: a blueprint leaf is a plain click-to-select row (no
- *  delete/context-menu — this isn't a library entry, just what's on screen
- *  right now), a sub-book is another collapsible folder nested the same way
- *  saved multi-blueprint books already render in renderEntries. `path` is
- *  the chain of ancestor labels-so-far, joined into each folder's expand/
- *  collapse key — needed because two sibling sub-books (or a sub-book and
- *  the top book) can share a label, and makeCategory's disclosure state is
- *  keyed by string. */
+ *  tree into `container`: a blueprint leaf is a plain click-to-select row
+ *  (no delete — this isn't a library entry, just what's on screen right
+ *  now), a sub-book is a nested section. `path` is the chain of ancestor
+ *  labels-so-far, joined into each folder's collapse key — needed because
+ *  two sibling sub-books can share a label. */
 function renderBookNode(
   container: HTMLElement,
   node: BlueprintTreeNode,
   path: string,
   onSelect: (flatIndex: number) => void,
+  refresh: () => void,
 ): void {
   if (node.kind === "blueprint") {
-    container.appendChild(makeRow(node.label, { onClick: () => onSelect(node.flatIndex) }));
+    container.appendChild(
+      makeRow(node.label, { key: `current:${node.flatIndex}`, iconName: "blueprint", onClick: () => onSelect(node.flatIndex) }, refresh),
+    );
     return;
   }
-  const key = `current-book-${path}`;
-  const { section, body: folderBody } = makeCategory(key, `📘 ${node.label}`);
+  const { section, body } = makeSection(`current-book-${path}`, node.label, { iconName: "blueprint-book", nested: true });
   for (const child of node.children) {
-    renderBookNode(folderBody, child, `${path}/${child.label}`, onSelect);
+    renderBookNode(body, child, `${path}/${child.label}`, onSelect, refresh);
   }
   container.appendChild(section);
 }
 
-/** Builds the "Blueprint Library" sidebar into `container`: a docked
- *  collapsible-category list (Debug / Saved) mirroring the reference
- *  Surfaces-panel look — dark rows, gold section headers, click-to-load,
- *  a per-row trash-can delete button, a right-click context menu
- *  (Copy/Duplicate/Rename/Delete), and a save form for stashing whatever's
- *  currently on the canvas under a name. Re-renders its full row list on
- *  every mutation (save/delete/duplicate/rename) rather than patching the
- *  DOM — the list is small enough that this is simpler than diffing,
- *  matching this file's sibling edit-palette.ts's own rebuild-on-change
- *  style. */
-export function buildLibrarySidebar(container: HTMLElement, callbacks: LibraryCallbacks): { refresh(): void } {
+/** Builds the "Blueprints" sidebar into `container`, laid out after the
+ *  game's Surfaces panel: debug fixtures as loose rows at the top, then a
+ *  gold-headed category per group (the book on screen, loose saved
+ *  blueprints, and one per saved book), each row a bevelled block with the
+ *  trash/duplicate pair on its right, and creation (save current, new) in a
+ *  footer at the bottom. Re-renders the whole list on every mutation rather
+ *  than patching the DOM — the list is small enough that this is simpler
+ *  than diffing. */
+export function buildLibrarySidebar(container: HTMLElement, callbacks: LibraryCallbacks): { refresh(): void; clearActive(): void } {
   container.replaceChildren();
 
-  const newButton = document.createElement("button");
-  newButton.type = "button";
-  newButton.className = "ghost library-new-button";
-  newButton.textContent = "+ New blueprint";
-  newButton.addEventListener("click", () => callbacks.onNew());
+  const list = document.createElement("div");
+  list.className = "bp-list";
+
+  const footer = document.createElement("div");
+  footer.className = "bp-footer";
 
   const saveRow = document.createElement("div");
-  saveRow.className = "library-save-row";
+  saveRow.className = "bp-save-row";
   const nameInput = document.createElement("input");
   nameInput.type = "text";
-  nameInput.placeholder = "Name…";
+  nameInput.placeholder = "Name current blueprint…";
   nameInput.className = "library-save-input";
   nameInput.setAttribute("aria-label", "Name for the blueprint to save");
-  const saveButton = document.createElement("button");
-  saveButton.type = "button";
-  saveButton.className = "ghost";
-  saveButton.textContent = "Save current";
+  const saveButton = makeIconButton("is-confirm", SAVE_SVG, "Save current blueprint", () => save());
   saveRow.append(nameInput, saveButton);
 
   const status = document.createElement("p");
-  status.className = "sub library-status";
+  status.className = "library-status";
+  status.hidden = true;
 
-  const list = document.createElement("div");
-  list.className = "library-list";
+  const newButton = document.createElement("button");
+  newButton.type = "button";
+  newButton.className = "bp-new-button";
+  newButton.textContent = "+ New blueprint";
+  newButton.addEventListener("click", () => {
+    activeKey = null;
+    callbacks.onNew();
+  });
 
-  // "Current book" sits above Debug/Saved — it's what's on screen right
-  // now, so it's the most relevant section — and starts open like Debug/
-  // Saved (see `expanded`'s own doc comment on that default). Only shown at
-  // all once a book is actually loaded; a loose blueprint or nothing yet
-  // leaves the whole section hidden rather than an always-visible empty
-  // folder.
-  const { section: currentBookSection, body: currentBookBody } = makeCategory("current-book", "Current book");
-  currentBookSection.hidden = true;
-  const { section: debugSection, body: debugBody } = makeCategory("debug", "Debug");
-  const { section: throughputSection, body: throughputBody } = makeCategory("throughput", "Throughput tests");
-  const { section: savedSection, body: savedBody } = makeCategory("saved", "Saved");
-  list.append(currentBookSection, debugSection, throughputSection, savedSection);
+  footer.append(saveRow, status, newButton);
 
   function refresh(): void {
+    // Remember the scroll position: a full rebuild otherwise jumps the list
+    // back to the top after every click.
+    const scroll = list.scrollTop;
+    list.replaceChildren();
     const saved = listSaved();
-    renderEntries(debugBody, BUILTINS, saved.filter((e) => e.category === "debug"), callbacks, refresh);
-    renderEntries(throughputBody, THROUGHPUT_TESTS, [], callbacks, refresh);
-    renderEntries(savedBody, [], saved.filter((e) => e.category !== "debug"), callbacks, refresh);
+
+    for (const entry of BUILTINS) {
+      const key = `builtin:${entry.id}`;
+      list.appendChild(
+        makeRow(
+          entry.label,
+          {
+            key,
+            iconName: entry.icon,
+            onClick: () => callbacks.onLoad(entry.bpString),
+            // A built-in can't be deleted, but duplicating one is how it
+            // becomes an editable library entry.
+            onDuplicate: () => {
+              saveToLibrary(entry.bpString, `${entry.label} copy`);
+              refresh();
+            },
+          },
+          refresh,
+        ),
+      );
+    }
+    for (const entry of saved.filter((e) => e.category === "debug" && !e.bookId)) {
+      list.appendChild(savedRow(entry, callbacks, refresh));
+    }
 
     const bookTree = callbacks.getCurrentBookTree();
-    currentBookSection.hidden = bookTree === null;
-    currentBookBody.replaceChildren();
     // buildBlueprintTree only ever returns a "book" node (or null) at the
-    // top level — a bare loose blueprint returns null instead, see its own
-    // doc comment — but the type is a union, so this narrows it explicitly.
+    // top level, but the type is a union, so this narrows it explicitly.
     if (bookTree && bookTree.kind === "book") {
-      // The top-level node is the book itself — its own children render
-      // directly into this section's body rather than nesting one more
-      // "📘 <book label>" folder inside "Current book", which would be a
-      // redundant extra click to get to what's already the only thing here.
+      const { section, body } = makeSection("current-book", "Current book", { iconName: "blueprint-book" });
       for (const child of bookTree.children) {
-        renderBookNode(currentBookBody, child, child.label, callbacks.onSelectCurrent);
+        renderBookNode(body, child, child.label, callbacks.onSelectCurrent, refresh);
       }
+      list.appendChild(section);
     }
+
+    const loose = saved.filter((e) => !e.bookId && e.category !== "debug");
+    const books = new Map<string, { label: string; entries: SavedBlueprint[] }>();
+    for (const entry of saved) {
+      if (!entry.bookId) continue;
+      const book = books.get(entry.bookId) ?? { label: entry.bookLabel || "Untitled book", entries: [] };
+      book.entries.push(entry);
+      books.set(entry.bookId, book);
+    }
+
+    const { section: savedSection, body: savedBody } = makeSection("saved", "Saved");
+    for (const entry of loose) savedBody.appendChild(savedRow(entry, callbacks, refresh));
+    if (loose.length === 0) {
+      const empty = document.createElement("p");
+      empty.className = "bp-empty";
+      empty.textContent = books.size === 0 ? "Nothing saved yet — name the current blueprint below to keep it." : "No loose blueprints.";
+      savedBody.appendChild(empty);
+    }
+    list.appendChild(savedSection);
+
+    for (const [bookId, book] of books) {
+      const { section, body } = makeSection(`book-${bookId}`, book.label, {
+        iconName: "blueprint-book",
+        actions: {
+          onDelete: () => {
+            if (book.entries.some((e) => activeKey === `saved:${e.id}`)) activeKey = null;
+            deleteBookFromLibrary(bookId);
+            refresh();
+          },
+          onDuplicate: () => {
+            duplicateBookInLibrary(bookId);
+            refresh();
+          },
+        },
+      });
+      for (const entry of book.entries) body.appendChild(savedRow(entry, callbacks, refresh));
+      list.appendChild(section);
+    }
+
+    list.scrollTop = scroll;
   }
 
-  saveButton.addEventListener("click", () => {
+  function setStatus(text: string, kind: "info" | "error"): void {
+    status.textContent = text;
+    status.dataset.kind = kind;
+    status.hidden = false;
+  }
+
+  function save(): void {
     const bpString = callbacks.getCurrentBpString();
     if (!bpString) {
-      status.textContent = "Nothing loaded to save yet.";
-      status.dataset.kind = "error";
+      setStatus("Nothing loaded to save yet.", "error");
       return;
     }
     const label = nameInput.value.trim() || "Untitled blueprint";
     try {
       saveToLibrary(bpString, label);
       nameInput.value = "";
-      status.textContent = `Saved “${label}”.`;
-      status.dataset.kind = "info";
+      setStatus(`Saved “${label}”.`, "info");
       refresh();
     } catch {
-      status.textContent = "Couldn't save — the current blueprint doesn't decode.";
-      status.dataset.kind = "error";
+      setStatus("Couldn't save — the current blueprint doesn't decode.", "error");
     }
-  });
+  }
+
   nameInput.addEventListener("keydown", (e) => {
-    if (e.key === "Enter") saveButton.click();
+    if (e.key === "Enter") save();
   });
 
-  container.append(newButton, saveRow, status, list);
+  container.append(list, footer);
   refresh();
-  return { refresh };
+  return {
+    refresh,
+    clearActive() {
+      activeKey = null;
+      refresh();
+    },
+  };
 }

@@ -98,6 +98,20 @@
   --slot-hover: #4a4948;
   --button: #575757;
   --button-hover: #6d6c6b;
+  /* List blocks and their selected state, from the game's Surfaces panel:
+     dark rows, the picked one filled warm gold with dark text. */
+  --row: #3d3c3c;
+  --row-hover: #4d4c4b;
+  --selected: #f1c886;
+  --selected-border: #9c7433;
+  --selected-text: #1d1a14;
+  --light-button: linear-gradient(180deg, #c9c9c9, #a8a8a8);
+
+  /* Fixed chrome: the nav bar's height, and the docked sidebar's width
+     open and folded — the toolbar positions itself off these. */
+  --nav-h: 51px;
+  --sidebar-w: 212px;
+  --sidebar-collapsed-w: 34px;
 
   --text: #e6e0d8;
   --text-dim: #a5a19a;
@@ -312,42 +326,182 @@ button.primary {
 
 button.primary:hover { background: #6fa34b; }
 
-#status {
+/* Status toast, just under the window toolbar. */
+.status-toast {
+  position: fixed;
+  top: calc(var(--nav-h) + 52px);
+  left: 50%;
+  z-index: 4000;
+  max-width: min(520px, calc(100vw - 32px));
   margin: 0;
-  font-family: var(--mono);
-  font-size: 12px;
-  color: var(--text-dim);
+  padding: 7px 12px;
+  transform: translateX(-50%);
+  font-family: var(--body);
+  font-size: 13px;
+  color: var(--text);
+  background: var(--frame) var(--grain);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  box-shadow: inset 0 0 0 1px var(--bevel-light), 0 6px 16px rgba(0, 0, 0, 0.45);
+  pointer-events: none;
 }
 
-#status[data-kind="error"] { color: var(--deficit); }
+.status-toast[data-kind="error"] { color: #ffd2c8; border-color: #6b211b; background: #4a2522; }
 
 /* ---------- window toolbar ---------- */
 
 /* Every floating window starts hidden so the blueprint fills the screen
    uninterrupted; this fixed strip (always visible, above every window's own
-   z-index range) is the only way back to them. */
+   z-index range) is the only way back to them. Styled as the game's tab
+   strip: one framed bar of dark bevelled blocks with an item icon each, the
+   open window's tab lit gold like the game's selected row. It sits just
+   right of the docked Blueprints sidebar, following it as it opens, folds
+   or hides. */
 #window-toolbar {
   position: fixed;
-  top: 54px;
-  left: 16px;
+  top: calc(var(--nav-h) + 6px);
+  left: 8px;
   z-index: 2000;
   display: flex;
-  gap: 6px;
-  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px;
+  max-width: calc(100vw - 16px);
+  padding: 3px;
+  background: var(--frame) var(--grain);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  box-shadow:
+    inset 0 0 0 1px var(--bevel-light),
+    0 6px 16px rgba(0, 0, 0, 0.45);
+  transition: left 0.15s ease;
 }
+
+body:has(#library-window:not([hidden])) #window-toolbar { left: calc(var(--sidebar-w) + 8px); max-width: calc(100vw - var(--sidebar-w) - 16px); }
+body:has(#library-window.is-collapsed:not([hidden])) #window-toolbar { left: calc(var(--sidebar-collapsed-w) + 8px); max-width: calc(100vw - var(--sidebar-collapsed-w) - 16px); }
 
 #window-toolbar button {
-  font-family: var(--mono);
-  font-size: 11px;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  padding: 6px 10px;
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 32px;
+  padding: 0 11px 0 6px;
+  font-family: var(--display);
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0;
+  white-space: nowrap;
+  color: var(--text);
+  background: var(--row);
+  border: 1px solid var(--border);
+  border-radius: 0;
+  box-shadow: inset 0 1px 0 var(--bevel-light), inset 0 -1px 0 var(--bevel-dark);
 }
 
+#window-toolbar button:first-child { border-radius: 2px 0 0 2px; }
+#window-toolbar .tab-caret { margin-left: -2px; font-size: 10px; opacity: 0.75; }
+
+/* Which blueprint of a loaded book is showing; only there for books. */
+#window-toolbar #bp-picker {
+  flex: none;
+  height: 32px;
+  max-width: 220px;
+  margin-left: 3px;
+  padding: 0 8px;
+  font-size: 13px;
+}
+
+/* Dropdown hanging off a toolbar tab (Import). Fixed-positioned by the
+   script so the sideways-scrolling toolbar can't clip it. */
+.toolbar-menu {
+  position: fixed;
+  z-index: 3000;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  width: 280px;
+  padding: 3px;
+  background: var(--frame) var(--grain);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  box-shadow: inset 0 0 0 1px var(--bevel-light), 0 8px 20px rgba(0, 0, 0, 0.5);
+}
+
+.toolbar-menu[hidden] { display: none; }
+
+.toolbar-menu-item {
+  text-align: left;
+  padding: 7px 10px;
+  font-family: var(--body);
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text);
+  background: var(--row);
+  border: none;
+  border-radius: 0;
+  box-shadow: inset 0 1px 0 var(--bevel-light);
+}
+
+.toolbar-menu-item:hover { color: var(--selected-text); background: var(--selected); }
+
+.toolbar-menu-link {
+  display: flex;
+  gap: 3px;
+  padding: 4px;
+  background: var(--row);
+  box-shadow: inset 0 1px 0 var(--bevel-light);
+}
+
+.toolbar-menu-link input {
+  flex: 1;
+  min-width: 0;
+  padding: 5px 7px;
+  font-family: var(--body);
+  font-size: 12px;
+  color: var(--text);
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 2px;
+  box-shadow: inset 0 1px 2px var(--bevel-dark);
+}
+
+.toolbar-menu-go { padding: 0 10px; font-size: 12px; }
+
+.toolbar-menu-hint {
+  margin: 0;
+  padding: 0 10px 6px;
+  font-size: 11px;
+  color: var(--text-dim);
+  background: var(--row);
+}
+
+.toolbar-menu-sep { height: 1px; margin: 2px 0; background: var(--border); }
+#export-share { display: contents; }
+#window-toolbar button:last-child { border-radius: 0 2px 2px 0; }
+#window-toolbar button:hover { background: var(--row-hover); }
+#window-toolbar button:active { box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.5); }
+
 #window-toolbar button.is-active {
-  background: linear-gradient(180deg, #7a9c4a, #5c7a35);
-  border-color: #2e3d1a;
-  color: #f4ffe0;
+  color: var(--selected-text);
+  background: var(--selected);
+  border-color: var(--selected-border);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.45), inset 0 -2px 0 rgba(120, 80, 20, 0.35);
+}
+
+#window-toolbar .icon {
+  flex: none;
+  background-color: transparent;
+  border: none;
+  box-shadow: none;
+}
+
+.toolbar-divider {
+  flex: none;
+  align-self: stretch;
+  width: 1px;
+  margin: 3px 4px;
+  background: var(--border);
+  box-shadow: 1px 0 0 var(--bevel-light);
 }
 
 /* ---------- docked windows ---------- */
@@ -358,70 +512,260 @@ button.primary:hover { background: #6fa34b; }
 .docked-window {
   position: fixed;
   z-index: 900;
-  transition: width 0.15s ease, left 0.15s ease;
+  transition: width 0.15s ease;
 }
 
+/* Flush against the left edge of the screen under the nav bar, the way the
+   game docks its Surfaces panel — square on the screen edges, frame and
+   shadow only on the sides facing the map. Only as tall as its content,
+   growing until it fills the screen height, then the list scrolls. */
 #library-window {
-  top: 96px;
-  left: 16px;
-  width: 260px;
-  bottom: 16px;
-  display: flex;
+  top: var(--nav-h);
+  left: 0;
+  max-height: calc(100vh - var(--nav-h));
+  max-height: calc(100dvh - var(--nav-h));
+  width: var(--sidebar-w);
   flex-direction: column;
   overflow: hidden;
+  border-radius: 0 0 3px 0;
+  border-width: 0 1px 1px 0;
+  box-shadow:
+    inset -1px -1px 0 var(--bevel-light),
+    6px 0 18px rgba(0, 0, 0, 0.45);
 }
 
-/* Collapsed state: slides down to a slim strip at the dock edge — only the
-   titlebar (with its toggle button) stays visible, matching "slide the
-   whole sidebar out" rather than hiding the window entirely (the toolbar
-   toggle already does that) or collapsing its internal category folders
-   (a separate, per-folder disclosure concern). */
-#library-window.is-collapsed {
-  width: 40px;
-  bottom: auto;
-}
+/* :not([hidden]) so the toolbar's Blueprints tab can actually hide it — a
+   bare `display: flex` would outrank the browser's [hidden] default. */
+#library-window:not([hidden]) { display: flex; }
 
+#library-window .gui-titlebar { padding: 6px 5px 4px 10px; font-size: 16px; }
+#library-window .gui-titlebar > span:first-child { flex: 1; }
+
+/* Folded: a slim tab at the screen edge with only the toggle
+   showing, so the map gets the room back without losing the way in. */
+#library-window.is-collapsed { width: var(--sidebar-collapsed-w); }
+#library-window.is-collapsed .gui-titlebar { padding: 5px 0; justify-content: center; }
 #library-window.is-collapsed .gui-body,
-#library-window.is-collapsed .gui-titlebar span:not(.library-collapse-toggle) {
-  display: none;
-}
+#library-window.is-collapsed .gui-titlebar > span:first-child { display: none; }
 
 #library-window .gui-body {
-  flex: 1;
+  flex: 0 1 auto;
   min-height: 0;
   display: flex;
   flex-direction: column;
-  padding: 10px;
-  overflow: hidden;
+  gap: 4px;
+  padding: 3px;
 }
 
 .library-collapse-toggle {
   flex: none;
-  width: 20px;
-  height: 20px;
+  width: 22px;
+  height: 22px;
   padding: 0;
   display: flex;
   align-items: center;
   justify-content: center;
   font-size: 11px;
   line-height: 1;
-  color: var(--text-dim);
-  background: var(--panel-3);
+}
+
+/* ---------- blueprints sidebar ---------- */
+/* Rows and headers are full-width bevelled blocks butted against each other
+   with a dark seam between them, as in the game's list boxes: dark rows,
+   lighter section headers in gold, the selected row filled gold. */
+
+.bp-list {
+  flex: 0 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  background: var(--panel-2);
   border: 1px solid var(--border);
-  border-radius: 3px;
-  box-shadow: inset 0 1px 0 var(--bevel-light), inset 0 -1px 0 var(--bevel-dark);
-  cursor: pointer;
+  box-shadow: inset 0 2px 4px var(--bevel-dark);
 }
 
-.library-collapse-toggle:hover { color: var(--text); border-color: var(--frame-light); }
+.bp-row,
+.bp-section-row {
+  display: flex;
+  align-items: stretch;
+  gap: 1px;
+  min-width: 0;
+  background: var(--border);
+  border-bottom: 1px solid var(--border);
+}
 
-/* ---------- blueprint library ---------- */
+.bp-row-main,
+.bp-section-header {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 28px;
+  padding: 0 8px;
+  text-align: left;
+  border: none;
+  border-radius: 0;
+}
 
-.library-new-button {
+.bp-row-main {
+  font-family: var(--body);
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text);
+  background: var(--row);
+  box-shadow: inset 0 1px 0 var(--bevel-light);
+}
+
+.bp-row-main:hover { background: var(--row-hover); }
+.bp-row-main:active { box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.5); }
+
+.bp-row.is-active .bp-row-main {
+  color: var(--selected-text);
+  background: var(--selected);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.45), inset 0 0 0 1px var(--selected-border);
+}
+
+.bp-row-main .icon,
+.bp-section-header .icon {
+  flex: none;
+  background-color: transparent;
+  border: none;
+  box-shadow: none;
+}
+
+.bp-row-label,
+.bp-section-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.bp-row-label .rich-text-icon,
+.bp-section-label .rich-text-icon { vertical-align: -3px; margin: 0 1px; }
+
+/* Trash/duplicate dock onto the right of the hovered or selected row. */
+.bp-row-actions { display: none; gap: 1px; }
+.bp-row:hover .bp-row-actions,
+.bp-row:focus-within .bp-row-actions,
+.bp-row.is-active .bp-row-actions { display: flex; }
+
+.bp-icon-button {
+  flex: none;
+  width: 28px;
+  min-height: 28px;
+  padding: 0;
+  display: grid;
+  place-items: center;
+  color: #1b1b1b;
+  background: var(--light-button);
+  border: none;
+  border-radius: 0;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.5), inset 0 -2px 0 rgba(0, 0, 0, 0.25);
+}
+
+.bp-icon-button svg { width: 15px; height: 15px; display: block; }
+.bp-icon-button:hover { background: var(--selected); }
+.bp-icon-button:active { box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.45); }
+
+.bp-icon-button.is-danger { color: #2a0d0b; background: #e3706a; }
+.bp-icon-button.is-danger:hover { background: #f08a84; }
+.bp-icon-button.is-confirm { color: #f4ffe0; background: #5a8a3c; }
+.bp-icon-button.is-confirm:hover { background: #6fa34b; }
+
+.bp-icon-button:disabled,
+.bp-icon-button:disabled:hover {
+  color: rgba(0, 0, 0, 0.35);
+  background: #6a6969;
+  box-shadow: none;
+  cursor: default;
+}
+
+.bp-section-header {
+  font-family: var(--display);
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--gold-strong);
+  background: linear-gradient(180deg, #615f5e, #545352);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.14), inset 0 -1px 0 var(--bevel-dark);
+}
+
+.bp-section-header:hover { background: linear-gradient(180deg, #6d6b6a, #5e5d5c); }
+
+/* A small chevron on the far right; points down while open. */
+.bp-disclosure {
+  flex: none;
+  width: 0;
+  height: 0;
+  border-style: solid;
+  border-width: 4px 0 4px 6px;
+  border-color: transparent transparent transparent var(--text-dim);
+  transition: transform 0.1s ease;
+}
+
+.bp-section-header.is-open .bp-disclosure { transform: rotate(90deg); }
+
+/* :not([hidden]) rather than a bare `display: flex` — section bodies toggle
+   via the `hidden` attribute, and a plain class-level `display` would
+   outrank the browser's own `[hidden]{display:none}` default. */
+.bp-section-body:not([hidden]) {
+  display: flex;
+  flex-direction: column;
+}
+
+/* A sub-book inside the current book: a quieter header, one step indented. */
+.bp-section.is-nested .bp-section-header {
+  min-height: 26px;
+  font-family: var(--body);
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text);
+  background: var(--panel-2);
+  box-shadow: inset 0 1px 0 var(--bevel-light);
+}
+
+.bp-section.is-nested .bp-section-header:hover { background: var(--row-hover); }
+.bp-section.is-nested > .bp-section-body { padding-left: 12px; background: var(--panel-2); }
+
+.bp-empty {
+  margin: 0;
+  padding: 8px 10px;
+  font-size: 12px;
+  color: var(--text-dim);
+  border-bottom: 1px solid var(--border);
+}
+
+.bp-footer {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.bp-save-row { display: flex; gap: 2px; }
+
+.bp-save-row .library-save-input { height: 28px; font-size: 12px; }
+.bp-save-row .bp-icon-button { border-radius: 2px; }
+
+/* The game's light grey push button — "+ Add space platform" in the
+   reference — with its gold hover. */
+.bp-new-button {
   width: 100%;
-  margin-bottom: 8px;
-  text-align: center;
+  min-height: 30px;
+  font-family: var(--display);
+  font-size: 13px;
+  font-weight: 600;
+  color: #1b1b1b;
+  background: var(--light-button);
+  border: 1px solid var(--border);
+  border-radius: 2px;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.5), inset 0 -2px 0 rgba(0, 0, 0, 0.25);
 }
+
+.bp-new-button:hover { background: var(--selected); }
 
 .library-save-row {
   gap: 6px;
@@ -440,177 +784,259 @@ button.primary:hover { background: #6fa34b; }
 .library-save-input {
   flex: 1;
   min-width: 0;
+  padding: 5px 8px;
+  font-size: 13px;
   color: var(--text);
   background: var(--panel-2);
   border: 1px solid var(--border);
+  border-radius: 2px;
   box-shadow: inset 0 1px 0 var(--bevel-dark);
 }
 
 .library-status {
-  margin: 0 0 8px;
-  min-height: 1em;
+  margin: 0;
+  padding: 0 2px;
+  font-size: 12px;
+  color: var(--text-dim);
 }
 
 .library-status[data-kind="error"] { color: var(--deficit); }
 
-.library-list {
-  flex: 1;
-  min-height: 0;
-  overflow-y: auto;
-  border-top: 1px solid var(--border);
-  padding-top: 6px;
-}
-
-.library-category + .library-category { margin-top: 4px; }
-
-.library-category-header {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  width: 100%;
-  padding: 7px 8px;
-  font-family: var(--display);
-  font-weight: 700;
-  font-size: 13px;
-  color: var(--gold-strong);
-  background: var(--panel-3);
-  border: none;
-  border-radius: 2px;
-  box-shadow: none;
-  text-align: left;
-}
-
-.library-category-header:hover { background: var(--frame-light); }
-
-.library-disclosure {
-  display: inline-block;
-  width: 0.8em;
-  transition: transform 0.1s ease;
-  color: var(--text-dim);
-}
-
-.library-category-header.is-open .library-disclosure { transform: rotate(90deg); }
-
-/* :not([hidden]) rather than a bare `display: flex` — folder bodies toggle
-   via the `hidden` attribute (see makeCategory's click handler), and a plain
-   class-level `display` would outrank the browser's own `[hidden]{display:
-   none}` default (equal specificity, this rule comes later), keeping a
-   "collapsed" folder's contents visible regardless of the arrow's own state.
-   Same fix as .library-save-row's own comment above for the identical bug. */
-.library-category-body:not([hidden]) {
-  display: flex;
-  flex-direction: column;
-  padding: 2px 0 2px 6px;
-}
-
-.library-category-body .library-category {
-  margin: 2px 0;
-}
-
-.library-category-body .library-category-header {
-  background: transparent;
-  font-family: var(--body);
-  font-weight: 600;
-  font-size: 12px;
-  color: var(--text);
-}
-
-.library-category-body .library-category-header:hover { background: var(--panel-3); }
-
-.library-row {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  padding: 2px 4px;
-  border-radius: 2px;
-}
-
-.library-row:hover { background: var(--panel-3); }
-
-.library-row-label {
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  text-align: left;
-  padding: 6px 6px;
-  font-size: 13px;
-  font-weight: 400;
-  color: var(--text);
-  background: transparent;
-  border: none;
-  box-shadow: none;
-  border-radius: 2px;
-}
-
 .library-rename-input {
   flex: 1;
   min-width: 0;
-  padding: 5px 6px;
+  min-height: 28px;
+  padding: 0 8px;
   font-size: 13px;
   color: var(--text);
   background: var(--panel-2);
   border: 1px solid var(--gold);
+  border-radius: 0;
   box-shadow: none;
 }
-
-/* Trash-can delete button, styled after the reference "Surfaces" panel's
-   own red delete control: a filled red square with a bright hover state,
-   only shown once a row is hovered so the list doesn't read as cluttered
-   with destructive controls at rest. */
-.library-row-delete {
-  flex: none;
-  width: 26px;
-  height: 26px;
-  padding: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 13px;
-  line-height: 1;
-  color: #f4e0e0;
-  background: #b23b3b;
-  border: 1px solid #6e1f1f;
-  border-radius: 3px;
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.15), inset 0 -1px 0 rgba(0, 0, 0, 0.35);
-  visibility: hidden;
-  cursor: pointer;
-}
-
-.library-row:hover .library-row-delete { visibility: visible; }
-.library-row-delete:hover { background: #d24a4a; border-color: #8a2828; }
-
-.library-empty { padding: 6px; }
 
 /* ---------- library row context menu ---------- */
 
-.library-context-menu {
+
+/* ---------- quickbar ---------- */
+/* The game's bottom-of-screen strip: the hotbar (bar number + ten slots)
+   and the shortcut tool grid beside it, both framed and sitting on the
+   bottom edge. The all-bars panel opens straight above the hotbar. */
+
+.quickbar {
+  /* Colours and bevels sampled from in-game screenshots of the quickbar. */
+  --qb-slot: 34px;
+  --qb-frame: #4a4949;
+  --qb-well: #393230;
   position: fixed;
-  z-index: 5000;
+  left: 50%;
+  bottom: 0;
+  z-index: 1900;
   display: flex;
-  flex-direction: column;
-  min-width: 140px;
-  padding: 4px;
-  background: var(--frame);
-  border: 1px solid var(--border);
-  border-radius: 4px;
-  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.5);
+  align-items: flex-end;
+  transform: translateX(-50%);
 }
 
-.library-context-item {
-  text-align: left;
-  padding: 7px 10px;
-  font-size: 13px;
-  font-weight: 400;
-  color: var(--text);
-  background: transparent;
+/* Flat frame: a soft light top edge, a dark outline, barely any drop
+   shadow — the game draws no glow around it. */
+.qb-frame {
+  background: var(--qb-frame);
+  border: 1px solid #262322;
+  box-shadow: inset 0 1px 0 #7d7c7b, inset 0 2px 1px rgba(255, 255, 255, 0.12), 0 0 3px rgba(0, 0, 0, 0.45);
+  padding: 5px;
+}
+
+.qb-hotbar { position: relative; border-bottom: none; }
+.qb-tools { border-bottom: none; margin-left: -1px; }
+
+/* The recessed trench every group of buttons sits in: a black top lip,
+   a brownish floor, and the frame's light edge catching just below it. */
+.qb-well {
+  display: flex;
+  gap: 2px;
+  padding: 2px 1px 1px;
+  background: var(--qb-well);
+  box-shadow:
+    inset 0 1px 0 #000,
+    inset 0 2px 1px rgba(0, 0, 0, 0.35),
+    0 1px 0 rgba(255, 255, 255, 0.22),
+    0 2px 1px rgba(255, 255, 255, 0.06);
+}
+
+.qb-bar-row {
+  display: flex;
+  align-items: stretch;
+  gap: 3px;
+}
+
+/* Light buttons (bar numbers, default-style tools): flat grey, a bright
+   top edge, a dark bottom edge, slightly shaded sides. No outline — the
+   well around them is the outline. */
+.qb-bar-num,
+.qb-tool {
+  --qb-face: #a3a3a3;
+  --qb-lit: #d0d0d0;
+  --qb-shade: #3d3d3d;
+  padding: 0;
   border: none;
-  box-shadow: none;
-  border-radius: 2px;
+  border-radius: 0;
+  background: var(--qb-face);
+  box-shadow:
+    inset 0 1px 0 var(--qb-lit),
+    inset 0 2px 1px color-mix(in srgb, var(--qb-lit) 45%, transparent),
+    inset 0 -1px 0 var(--qb-shade),
+    inset 0 -2px 1px color-mix(in srgb, var(--qb-shade) 55%, transparent),
+    inset 1px 0 1px rgba(0, 0, 0, 0.12),
+    inset -1px 0 1px rgba(0, 0, 0, 0.12);
 }
 
-.library-context-item:hover { background: var(--panel-3); color: var(--gold-strong); }
+.qb-bar-num {
+  flex: none;
+  width: var(--qb-slot);
+  height: var(--qb-slot);
+  font-family: var(--display);
+  font-size: 14px;
+  font-weight: 700;
+  color: #1b1b1b;
+}
+
+.qb-bar-num.is-open,
+.qb-bar-num.is-active { --qb-face: #f0c97f; --qb-lit: #ffe7b8; --qb-shade: #7a5a22; }
+/* Hovered grey buttons (bar numbers, default-style tools) turn the game's
+   orange, with a faint warm glow spilling onto the well around them. */
+.qb-bar-num:hover,
+.qb-tool.is-grey:hover:not(:disabled) {
+  --qb-face: #e0af54;
+  --qb-lit: #f1d49c;
+  --qb-shade: #5a3e13;
+  outline: 2px solid rgba(157, 137, 103, 0.55);
+  outline-offset: 0;
+}
+
+.qb-slots { display: flex; gap: 2px; }
+
+.qb-slot {
+  position: relative;
+  flex: none;
+  width: var(--qb-slot);
+  height: var(--qb-slot);
+  padding: 0;
+  display: grid;
+  place-items: center;
+  background: #4a4a4a;
+  border: none;
+  border-radius: 3px;
+  box-shadow:
+    inset 0 1px 0 #656464,
+    inset 0 2px 1px rgba(255, 255, 255, 0.05),
+    inset 0 -1px 0 #222,
+    inset 0 -2px 1px rgba(0, 0, 0, 0.35),
+    inset 0 0 1px rgba(0, 0, 0, 0.5);
+}
+
+.qb-slot.is-group-start { margin-left: 4px; }
+.qb-slot .icon { background-color: transparent; border: none; box-shadow: none; pointer-events: none; }
+
+/* A hovered slot, and every slot of a bar whose number is hovered, light up
+   in the game's selection yellow. */
+.qb-slot:hover,
+.qb-bar-row:has(.qb-bar-num:hover) .qb-slot,
+.qb-slots.is-hot .qb-slot {
+  background: #f2b84a;
+  box-shadow: inset 0 1px 0 #ffd98a, inset 0 -1px 0 #7a5212, inset 0 -2px 1px rgba(122, 82, 18, 0.5);
+}
+
+.qb-slot:active { box-shadow: inset 0 2px 3px rgba(0, 0, 0, 0.5); }
+
+/* The slot whose item is in the cursor. */
+.qb-slot.is-held { box-shadow: inset 0 0 0 2px var(--gold), inset 0 -2px 1px rgba(0, 0, 0, 0.35); }
+
+.qb-quality {
+  position: absolute;
+  left: 3px;
+  bottom: 3px;
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+  border: 1px solid rgba(0, 0, 0, 0.6);
+  pointer-events: none;
+}
+.qb-quality.quality-uncommon { background: #5ccf5a; }
+.qb-quality.quality-rare { background: #3d8dff; }
+.qb-quality.quality-epic { background: #b45cff; }
+.qb-quality.quality-legendary { background: #ff9d2e; }
+
+.qb-panel {
+  position: absolute;
+  left: -1px;
+  bottom: 100%;
+  border-bottom: none;
+}
+
+.qb-panel::after {
+  /* the seam between the panel and the always-visible bar below it */
+  content: "";
+  display: block;
+  height: 1px;
+  margin: 5px -5px -5px;
+  background: #262322;
+}
+
+.qb-panel-header { display: flex; justify-content: flex-end; margin-bottom: 5px; }
+.qb-panel-rows { display: flex; align-items: flex-start; gap: 3px; }
+.qb-num-col,
+.qb-slot-col { flex-direction: column; }
+
+.qb-tool-grid {
+  display: grid;
+  grid-auto-flow: column;
+  grid-template-rows: repeat(2, var(--qb-slot));
+  grid-auto-columns: var(--qb-slot);
+  gap: 2px;
+}
+
+.qb-tool {
+  width: var(--qb-slot);
+  height: var(--qb-slot);
+  display: grid;
+  place-items: center;
+}
+
+.qb-tool img { width: 84%; height: 84%; display: block; pointer-events: none; }
+/* Shortcut sprites not in the dataset yet (see quickbar.ts): a plain label. */
+.qb-tool.is-missing-sprite { font-family: var(--display); font-size: 10px; font-weight: 700; color: #1b1b1b; }
+.qb-tool.is-missing-sprite:not(.is-grey) { color: #fff; }
+.qb-tool .icon { background-color: transparent; border: none; box-shadow: none; pointer-events: none; }
+
+.qb-tool.is-red { --qb-face: #ac2c25; --qb-lit: #ce7a79; --qb-shade: #491411; }
+.qb-tool.is-green { --qb-face: #3a7921; --qb-lit: #6fa85b; --qb-shade: #1e410d; }
+.qb-tool.is-blue { --qb-face: #317195; --qb-lit: #49a1d5; --qb-shade: #11303f; }
+
+/* The global button:hover grey must not reach these. Coloured tools
+   (planners) take a translucent white wash on hover instead of orange. */
+.qb-bar-num:hover,
+.qb-tool:hover { background: var(--qb-face); }
+.qb-tool:not(.is-grey):hover:not(:disabled) {
+  background: linear-gradient(rgba(255, 255, 255, 0.18), rgba(255, 255, 255, 0.18)), var(--qb-face);
+}
+.qb-tool:active:not(:disabled) { box-shadow: inset 0 2px 3px rgba(0, 0, 0, 0.5); }
+
+/* A tool that is on (planner in hand, alt mode, a wire): pressed in, gold rim. */
+.qb-tool.is-active {
+  box-shadow: inset 0 0 0 2px var(--gold), inset 0 2px 4px rgba(0, 0, 0, 0.45);
+}
+
+/* Disabled, as the game draws it: sunk into a flat dark grey (shadow on
+   top, light at the bottom) with the glyph faded to mid-grey, whatever the
+   button's colour. */
+.qb-tool:disabled {
+  --qb-face: #575757;
+  background: var(--qb-face);
+  box-shadow: inset 0 1px 0 #222, inset 0 2px 1px rgba(0, 0, 0, 0.4), inset 0 -1px 0 #616161;
+  cursor: default;
+}
+.qb-tool:disabled img { filter: grayscale(1) brightness(0.55); }
+.qb-tool.is-grey:disabled img { filter: invert(1) brightness(0.6); }
 
 /* ---------- floating windows ---------- */
 
@@ -1477,9 +1903,6 @@ canvas.select-mode {
 
 /* ---------- floating window sizing ---------- */
 
-#intake-window { width: 420px; }
-#intake-window .intake-actions { margin-top: 12px; }
-
 #results-window { width: 440px; }
 #results-window .gui-body { max-height: calc(100vh - 100px); overflow-y: auto; }
 
@@ -2101,19 +2524,424 @@ canvas.select-mode {
   .site-nav nav::-webkit-scrollbar { display: none; }
   .site-nav nav a { flex: none; white-space: nowrap; padding: 5px 8px; font-size: 11px; letter-spacing: 0.04em; }
 
+  :root { --nav-h: 46px; --sidebar-w: min(212px, calc(100vw - 48px)); }
+
+  /* Icons only, scrolling sideways when they still don't fit. */
   #window-toolbar {
-    top: 46px;
-    left: 0;
-    right: 0;
-    padding: 0 8px 4px;
-    flex-wrap: nowrap;
     overflow-x: auto;
     scrollbar-width: none;
   }
   #window-toolbar::-webkit-scrollbar { display: none; }
-  #window-toolbar button { flex: none; padding: 6px 8px; }
+  #window-toolbar button { padding: 0 6px; }
+  #window-toolbar .tab-label { display: none; }
 
-  #library-window { top: 86px; left: 8px; bottom: 8px; width: min(260px, calc(100vw - 16px)); }
+  /* Smaller slots; the tool grid wraps above the hotbar when both don't fit. */
+  .quickbar { --qb-slot: 26px; flex-wrap: wrap-reverse; justify-content: center; width: max-content; max-width: 100vw; }
+  .qb-frame { padding: 4px; }
+  .qb-slot.is-group-start { margin-left: 3px; }
+  .qb-bar-num { font-size: 12px; }
+  .qb-tools { margin-left: 0; }
+  .qb-slot .icon { transform: scale(0.7); }
 
   .floating-window { max-width: calc(100vw - 16px); }
 }
+
+/* ---------- blueprint edit dialog ----------
+   The game's "Blueprint edit" window (colours sampled from an in-game
+   screenshot): a light inner panel, grey text fields that turn cream while
+   focused, the item art with its icons laid over it, four icon slots in a
+   sunken well, and a green arrow-ended Confirm in the footer. */
+
+
+
+
+.bp-edit-label {
+  margin: 4px 0 6px;
+  font-family: var(--display);
+  font-size: 15px;
+  font-weight: 700;
+  color: #fff;
+}
+
+.bp-edit-description {
+  width: 100%;
+  padding: 6px 7px;
+  font-family: var(--body);
+  font-size: 14px;
+  color: #1b1b1b;
+  background: #9a9a9a;
+  border: none;
+  border-radius: 2px;
+  box-shadow: inset 0 1px 0 #202020, inset 0 2px 2px rgba(0, 0, 0, 0.35), 0 1px 0 rgba(255, 255, 255, 0.12);
+}
+
+.bp-edit-description { min-height: 104px; resize: vertical; line-height: 1.35; word-break: normal; }
+
+.bp-edit-description:focus,
+.bp-lib-name-input:focus {
+  outline: none;
+  background: #f0e3c7;
+  box-shadow: inset 0 1px 0 #100e08, inset 0 2px 1px #b59f7a, 0 1px 0 rgba(255, 255, 255, 0.12);
+}
+
+.bp-edit-icon-row { display: flex; align-items: center; gap: 12px; }
+
+/* The item's own art with the chosen icons drawn into its frame. */
+.bp-edit-preview {
+  position: relative;
+  flex: none;
+  width: 64px;
+  height: 64px;
+}
+
+.bp-edit-preview .icon,
+.bp-edit-slot .icon { background-color: transparent; border: none; border-radius: 0; box-shadow: none; }
+
+
+/* Sunken well of four raised slots, as in the quickbar. */
+.bp-edit-slots {
+  display: flex;
+  gap: 2px;
+  padding: 2px 1px 1px;
+  background: #353535;
+  box-shadow: inset 0 1px 0 #000, inset 0 2px 1px rgba(0, 0, 0, 0.35), 0 1px 0 rgba(255, 255, 255, 0.18);
+}
+
+.bp-edit-slot {
+  width: 38px;
+  height: 38px;
+  padding: 0;
+  display: grid;
+  place-items: center;
+  background: #575556;
+  border: none;
+  border-radius: 3px;
+  box-shadow: inset 0 1px 0 #737172, inset 0 -1px 0 #222, inset 0 -2px 1px rgba(0, 0, 0, 0.35);
+}
+
+.bp-edit-slot:hover,
+.bp-edit-slot.is-picking {
+  background: #e0af54;
+  box-shadow: inset 0 1px 0 #f1d49c, inset 0 -1px 0 #5a3e13;
+}
+
+.bp-edit-footer {
+  display: flex;
+  align-items: stretch;
+  gap: 8px;
+  padding: 2px 4px 6px 10px;
+}
+
+.bp-edit-footer .grip {
+  flex: 1;
+  margin: 6px 0;
+  background-image: repeating-linear-gradient(
+    90deg,
+    var(--bevel-dark) 0 1px,
+    var(--bevel-light) 1px 2px,
+    transparent 2px 4px
+  );
+  opacity: 0.55;
+}
+
+.bp-edit-confirm {
+  flex: none;
+  height: 34px;
+  padding: 0 26px 0 22px;
+  font-family: var(--display);
+  font-size: 16px;
+  font-weight: 700;
+  color: #313131;
+  background: #8bc484;
+  border: none;
+  border-radius: 0;
+  clip-path: polygon(0 0, calc(100% - 10px) 0, 100% 50%, calc(100% - 10px) 100%, 0 100%);
+  box-shadow: inset 0 1px 0 #b7e0b1, inset 0 -2px 0 #5e8259;
+}
+
+.bp-edit-confirm:hover { background: #a0d699; }
+
+/* The icon picker floats beside the dialog, inside its backdrop. */
+.bp-edit-picker {
+  position: fixed;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+}
+
+/* A blueprint's art with its own icons over it (blueprint-icon.ts). */
+.bp-composed-icon {
+  position: relative;
+  flex: none;
+  display: inline-block;
+}
+
+.bp-composed-icon .icon { background-color: transparent; border: none; border-radius: 0; box-shadow: none; }
+
+.bp-composed-icon-grid {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-content: center;
+}
+
+/* ---------- blueprint library window ----------
+   The game's "Blueprint in the blueprint library" window (colours sampled
+   from an in-game screenshot): edit form on the left — a dark name strip
+   with the action buttons, then light panels for icon, description, snap
+   to grid and components — and a dark live preview on the right. */
+
+.bp-lib-window {
+  display: flex;
+  flex-direction: column;
+  width: min(760px, calc(100vw - 24px));
+  max-height: calc(100vh - 24px);
+}
+
+.bp-lib-columns {
+  display: flex;
+  gap: 10px;
+  min-height: 0;
+  padding: 2px 8px 0;
+}
+
+.bp-lib-form {
+  flex: 0 0 400px;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  background: #3b3a3b;
+  border: 1px solid #000;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06), 0 1px 0 var(--bevel-light);
+}
+
+.bp-lib-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 34px;
+  padding: 4px 6px 4px 10px;
+  border-bottom: 1px solid #000;
+}
+
+.bp-lib-name {
+  min-width: 0;
+  overflow: hidden;
+  font-family: var(--display);
+  font-size: 15px;
+  font-weight: 700;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  color: #fcedd1;
+}
+
+.bp-lib-name-input {
+  width: 100%;
+  padding: 3px 6px;
+  font-family: var(--display);
+  font-size: 14px;
+  font-weight: 700;
+  color: #1b1b1b;
+  background: #f0e3c7;
+  border: none;
+  border-radius: 2px;
+}
+
+.bp-lib-rename {
+  flex: none;
+  width: 18px;
+  height: 18px;
+  padding: 1px;
+  background: #a5a5a5;
+  border: 1px solid #000;
+  border-radius: 1px;
+}
+.bp-lib-rename img { width: 100%; height: 100%; display: block; }
+.bp-lib-rename:hover { background: #e0af54; }
+
+.bp-lib-actions { display: flex; gap: 3px; margin-left: auto; }
+
+/* Square tool buttons, the quickbar's bevel in the game's colours. */
+.bp-lib-action {
+  --face: #a5a5a5;
+  --lit: #d0d0d0;
+  --shade: #3d3d3d;
+  width: 26px;
+  height: 26px;
+  padding: 3px;
+  display: grid;
+  place-items: center;
+  background: var(--face);
+  border: 1px solid #1a1a1a;
+  border-radius: 0;
+  box-shadow: inset 0 1px 0 var(--lit), inset 0 -1px 0 var(--shade), inset 0 -2px 1px color-mix(in srgb, var(--shade) 50%, transparent);
+}
+.bp-lib-action img { width: 100%; height: 100%; display: block; pointer-events: none; }
+.bp-lib-action.is-blue { --face: #337599; --lit: #4ea3d2; --shade: #11303f; }
+.bp-lib-action.is-green { --face: #407c29; --lit: #6fa85b; --shade: #1e410d; }
+.bp-lib-action.is-red { --face: #ea7672; --lit: #f6aaa7; --shade: #6b211b; }
+.bp-lib-action:hover:not(:disabled) { background: linear-gradient(rgba(255, 255, 255, 0.18), rgba(255, 255, 255, 0.18)), var(--face); }
+.bp-lib-action.is-grey:hover:not(:disabled) { --face: #e0af54; --lit: #f1d49c; --shade: #5a3e13; background: var(--face); }
+.bp-lib-action:disabled { cursor: default; opacity: 0.45; }
+.bp-lib-action.is-armed { --face: #c4402b; outline: 2px solid #ffcc80; }
+.bp-lib-action.is-flash { outline: 2px solid #8bc484; }
+
+.bp-lib-panels {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 6px;
+}
+
+.bp-lib-panel {
+  flex: none;
+  padding: 8px 12px 12px;
+  background: #5b595b;
+  border: 1px solid #1a1a1a;
+  box-shadow: inset 0 1px 0 #777, inset 0 -1px 0 rgba(0, 0, 0, 0.35);
+}
+
+.bp-lib-panel .bp-edit-label { display: flex; align-items: center; gap: 5px; margin: 0 0 8px; }
+.bp-lib-panel .bp-edit-description { min-height: 84px; }
+
+.bp-lib-info {
+  display: inline-grid;
+  place-items: center;
+  width: 12px;
+  height: 12px;
+  font-family: Georgia, serif;
+  font-size: 9px;
+  font-weight: 700;
+  font-style: italic;
+  color: #fff;
+  background: #5b9bd5;
+  border-radius: 50%;
+  cursor: help;
+}
+
+/* Snap to grid: label column, then X/Y (or Width/Height) input pairs. */
+.bp-lib-check,
+.bp-lib-radio {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-family: var(--display);
+  font-size: 15px;
+  font-weight: 700;
+  color: #fff;
+  cursor: pointer;
+}
+.bp-lib-radio { gap: 6px; font-weight: 500; color: #e6e0d8; }
+.bp-lib-check input,
+.bp-lib-radio input { margin: 0; accent-color: #e0af54; width: 15px; height: 15px; }
+
+.bp-lib-snap-grid {
+  display: grid;
+  grid-template-columns: 1fr auto 46px auto 46px;
+  align-items: center;
+  gap: 6px 8px;
+  margin-top: 10px;
+}
+
+.bp-lib-snap-label { display: inline-flex; align-items: center; gap: 5px; font-size: 14px; color: #e6e0d8; }
+.bp-lib-snap-grid > .bp-lib-radio:last-child { grid-column: 1 / -1; }
+.bp-lib-axis { font-size: 14px; color: #e6e0d8; text-align: right; }
+
+.bp-lib-number {
+  width: 100%;
+  height: 26px;
+  padding: 0 4px;
+  font-family: var(--body);
+  font-size: 13px;
+  text-align: center;
+  color: #fff;
+  background: #4a494a;
+  border: none;
+  border-radius: 2px;
+  box-shadow: inset 0 1px 0 #202020, inset 0 2px 2px rgba(0, 0, 0, 0.35), 0 1px 0 rgba(255, 255, 255, 0.12);
+  -moz-appearance: textfield;
+}
+.bp-lib-number::-webkit-inner-spin-button,
+.bp-lib-number::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
+.bp-lib-number:focus { outline: none; color: #1b1b1b; background: #f0e3c7; }
+
+.bp-lib-snap.is-off .bp-lib-snap-grid { opacity: 0.55; }
+.bp-lib-number:disabled { color: transparent; }
+
+/* Components: a dark well of slots, item icon with its count bottom-right. */
+.bp-lib-components {
+  display: grid;
+  grid-template-columns: repeat(10, 1fr);
+  gap: 2px;
+  padding: 2px;
+  background: #2e2d2e;
+  box-shadow: inset 0 1px 0 #000, inset 0 2px 2px rgba(0, 0, 0, 0.4), 0 1px 0 rgba(255, 255, 255, 0.15);
+}
+
+.bp-lib-component {
+  position: relative;
+  aspect-ratio: 1;
+  display: grid;
+  place-items: center;
+  background: #3b3a3b;
+  border-radius: 2px;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08), inset 0 -1px 0 rgba(0, 0, 0, 0.5);
+}
+.bp-lib-component:not(.is-empty) { background: #4f4d4e; }
+.bp-lib-component .icon { background-color: transparent; border: none; box-shadow: none; }
+
+.bp-lib-count {
+  position: absolute;
+  right: 2px;
+  bottom: 0;
+  font-family: var(--display);
+  font-size: 11px;
+  font-weight: 700;
+  color: #fff;
+  text-shadow: 0 0 2px #000, 0 0 2px #000, 0 0 1px #000;
+  pointer-events: none;
+}
+
+/* Right: the preview — a dark well with its own heading strip. */
+.bp-lib-preview {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 420px;
+  background: #3b3a3b;
+  border: 1px solid #000;
+}
+
+.bp-lib-preview-head {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  min-height: 34px;
+  padding: 7px 10px;
+  border-bottom: 1px solid #000;
+  font-family: var(--display);
+  color: #fff;
+}
+.bp-lib-preview-head strong { font-size: 15px; color: #fcedd1; }
+.bp-lib-hint { font-size: 12px; color: var(--text-dim); }
+
+.bp-lib-preview-canvas { position: relative; flex: 1; min-height: 0; background: #2f2e2f; }
+.bp-lib-empty { margin: 16px; color: var(--text-dim); }
+
+.bp-lib-window .bp-edit-footer { padding: 8px 8px 8px 10px; }
+
+@media (max-width: 760px) {
+  .bp-lib-columns { flex-direction: column; overflow-y: auto; }
+  .bp-lib-form { flex-basis: auto; }
+  .bp-lib-preview { min-height: 240px; }
+}
+
+/* A quality diamond in the bottom-left corner of an icon slot. */
+.bp-edit-slot,
+.bp-composed-icon-cell { position: relative; }
+.bp-composed-icon-cell { display: block; }
+.quality-badge { position: absolute; left: 1px; bottom: 1px; pointer-events: none; }
+.bp-composed-icon-cell .quality-badge { left: 0; bottom: 0; }

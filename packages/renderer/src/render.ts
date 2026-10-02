@@ -218,7 +218,19 @@ export type InteractionMode =
       wires: WireLink[];
       anchor: { x: number; y: number };
       groupRotation: 0 | 4 | 8 | 12;
+      /** A held blueprint's snap-to-grid (see snapPasteAnchor). `entities`
+       *  are then in the blueprint's own frame: the grid cell spans
+       *  [0, size.x) × [0, size.y). */
+      snap?: PasteSnap;
     };
+
+export interface PasteSnap {
+  size: { x: number; y: number };
+  /** Cells line up with the world grid, shifted by `offset`. Otherwise
+   *  relative: the first stamp goes anywhere and later ones line up with it. */
+  absolute: boolean;
+  offset: { x: number; y: number };
+}
 
 export interface BlueprintRenderer {
   canvas: HTMLCanvasElement;
@@ -692,6 +704,59 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
   let lastPinchDistance = 0;
   let mode: InteractionMode = { kind: "idle" };
   let ghostWorldPos: { x: number; y: number } | null = null;
+  /** Where relative snap-to-grid's grid starts: the first stamp's cell
+   *  corner. Cleared whenever a different thing is put in hand. */
+  let relativeSnapOrigin: { x: number; y: number } | null = null;
+
+  /** The held blueprint's grid cell, as its top-left corner relative to the
+   *  ghost's anchor plus its size — both after the ghost's rotation. */
+  function pasteCell(): { offset: { x: number; y: number }; size: { x: number; y: number } } | null {
+    if (mode.kind !== "paste" || !mode.snap) return null;
+    const { size } = mode.snap;
+    const { anchor } = mode;
+    const steps = mode.groupRotation / 4;
+    const corners = [
+      { x: 0, y: 0 },
+      { x: size.x, y: 0 },
+      { x: 0, y: size.y },
+      { x: size.x, y: size.y },
+    ].map((c) => {
+      // Same quarter-turn as rotateAroundCenter, applied to the cell corners.
+      let rx = c.x - anchor.x;
+      let ry = c.y - anchor.y;
+      for (let i = 0; i < steps; i++) [rx, ry] = [-ry, rx];
+      return { x: rx, y: ry };
+    });
+    return {
+      offset: { x: Math.min(...corners.map((c) => c.x)), y: Math.min(...corners.map((c) => c.y)) },
+      size: steps % 2 === 1 ? { x: size.y, y: size.x } : { ...size },
+    };
+  }
+
+  function pasteCellOffset(): { x: number; y: number } {
+    return pasteCell()?.offset ?? { x: 0, y: 0 };
+  }
+
+  /** Where the paste ghost's anchor lands for a cursor at `cursor`: on a
+   *  whole tile, or — for a blueprint with snap-to-grid — wherever puts its
+   *  grid cell on the nearest grid position (the world grid, shifted by the
+   *  blueprint's offset, when absolute; the first stamp's grid when
+   *  relative). */
+  function snapPasteAnchor(cursor: { x: number; y: number }): { x: number; y: number } {
+    const cell = pasteCell();
+    if (!cell || mode.kind !== "paste" || !mode.snap) return { x: Math.round(cursor.x), y: Math.round(cursor.y) };
+    const { offset, size } = cell;
+    const origin = mode.snap.absolute ? mode.snap.offset : relativeSnapOrigin;
+    // The cell's top-left if the ghost were centred on the cursor.
+    const cand = { x: cursor.x + offset.x, y: cursor.y + offset.y };
+    const snapped = origin
+      ? {
+          x: origin.x + Math.round((cand.x - origin.x) / size.x) * size.x,
+          y: origin.y + Math.round((cand.y - origin.y) / size.y) * size.y,
+        }
+      : { x: Math.round(cand.x), y: Math.round(cand.y) };
+    return { x: snapped.x - offset.x, y: snapped.y - offset.y };
+  }
   let ghostDirection = 0;
 
   // Shared drag-box state for the three box-drag action modes (copyBox/
@@ -910,7 +975,7 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
       // single ghost's own footprint determines — only the anchor point
       // itself needs a rule, and a whole-tile snap is the simplest one that
       // behaves reasonably for every mix.
-      const snappedAnchor = { x: Math.round(ghostWorldPos.x), y: Math.round(ghostWorldPos.y) };
+      const snappedAnchor = snapPasteAnchor(ghostWorldPos);
       const { entities: copiedEntities, anchor: origAnchor, groupRotation } = mode;
       const rotationSteps = groupRotation / 4;
       pasteGhosts = copiedEntities.map((e) => {
@@ -1866,7 +1931,11 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
    *  (not copy time) decide how the app should resolve any collision. */
   function placePasteGhost(e: PointerEvent): void {
     if (mode.kind !== "paste" || !ghostWorldPos) return;
-    const snappedAnchor = { x: Math.round(ghostWorldPos.x), y: Math.round(ghostWorldPos.y) };
+    const snappedAnchor = snapPasteAnchor(ghostWorldPos);
+    // Relative snapping: the first stamp fixes the grid later ones line up with.
+    if (mode.snap && !mode.snap.absolute && !relativeSnapOrigin) {
+      relativeSnapOrigin = { x: snappedAnchor.x + pasteCellOffset().x, y: snappedAnchor.y + pasteCellOffset().y };
+    }
     const collisionMode: "block" | "skip" | "replace" = e.shiftKey && e.altKey ? "replace" : e.shiftKey ? "skip" : "block";
     pasteCallback?.(mode.entities, mode.wires, snappedAnchor, mode.anchor, mode.groupRotation, collisionMode);
   }
@@ -2338,6 +2407,7 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
       invalidate();
     },
     setInteractionMode(newMode) {
+      if (newMode.kind !== "paste" || mode.kind !== "paste" || newMode.entities !== mode.entities) relativeSnapOrigin = null;
       if (newMode.kind === "place") {
         // An explicit direction (the 'q' pipette carrying over the picked
         // entity's own facing) always wins; otherwise entering place mode,

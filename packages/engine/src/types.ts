@@ -588,6 +588,10 @@ export interface RenderCatalog {
    *  which can hold any item at all, ores and intermediates included, not
    *  just the placeable/module/recipe subsets those other tables cover. */
   itemNames: Record<string, string>;
+  /** Fluids and virtual signals by name — the non-item signals a
+   *  blueprint's icons can name. Absent in datasets generated before it was
+   *  extracted. */
+  signals?: Record<string, { type: "fluid" | "virtual"; localised: string; position: MenuPosition }>;
 }
 
 /* ---------- Blueprint string shapes (as exported by the game) ---------- */
@@ -724,9 +728,26 @@ export const WireConnectorId = {
 /** Which of the three wire kinds a connector id denotes. */
 export type WireColor = "copper" | "red" | "green";
 
+/** One of a blueprint's (or book's) up to four icons, as the game writes
+ *  them. `type` is absent for items. */
+export interface BpIcon {
+  index: number;
+  signal: { type?: "item" | "fluid" | "virtual" | "entity" | "recipe" | "space-location" | "asteroid-chunk" | "quality"; name: string; quality?: string };
+}
+
 export interface Blueprint {
   item: string;
   label?: string;
+  description?: string;
+  icons?: BpIcon[];
+  /** Snap-to-grid cell size in tiles. When set, entity positions are in the
+   *  cell's own frame (its top-left corner at 0,0). */
+  "snap-to-grid"?: BpPosition;
+  /** Absolute snapping: cells line up with the world grid (offset by
+   *  `position-relative-to-grid`). Absent/false: relative, cells line up with
+   *  wherever the first copy was placed. */
+  "absolute-snapping"?: boolean;
+  "position-relative-to-grid"?: BpPosition;
   entities?: BpEntity[];
   tiles?: { name: string; position: BpPosition }[];
   /** 2.0+ only. Absent on older blueprints and on ones with no wires. */
@@ -743,6 +764,8 @@ export interface BlueprintBookEntry {
 export interface BlueprintBook {
   item: string;
   label?: string;
+  description?: string;
+  icons?: BpIcon[];
   blueprints: BlueprintBookEntry[];
   active_index?: number;
 }

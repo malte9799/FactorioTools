@@ -149,6 +149,10 @@ function extractIconAtlas(): void {
     "blueprint",
     "blueprint-book",
     "space-platform-starter-pack",
+    // Virtual signals (letters, digits, colours, arrows, …): what a
+    // blueprint's own icons are often made of, picked in the blueprint edit
+    // dialog.
+    "virtual-signal",
   ];
 
   const entries: { id: string; file: string }[] = [];
@@ -259,9 +263,103 @@ function extractItemGroupIcons(): void {
   console.log(`Item-group icons: copied ${copied}, missing ${missing} -> ${outDir}`);
 }
 
+/** The shortcut-bar buttons' own art (undo, redo, the planners, alt mode,
+ *  the wires …), straight from every `shortcut` prototype in the dump — the
+ *  quickbar's tool grid draws these, never a stand-in. Each prototype names
+ *  its icon by `icon` (or the first layer of `icons`) with an `icon_size`;
+ *  like item icons the file may carry smaller mipmap levels to the right, so
+ *  only the leftmost icon_size square is kept. Written one PNG per shortcut
+ *  as data/sprites/shortcuts/<name>.png, plus a manifest carrying each one's
+ *  button `style` (default/red/green/blue), which colours the button behind
+ *  the white glyph in game. */
+function extractShortcutIcons(): void {
+  const raw = JSON.parse(readFileSync(DUMP_PATH, "utf-8")) as Record<string, Record<string, any>>;
+  const outDir = path.join(SITE_PUBLIC, "data/sprites/shortcuts");
+  const manifestOut = path.join(SITE_PUBLIC, "data/shortcut-icons.json");
+  mkdirSync(outDir, { recursive: true });
+
+  const manifest: Record<string, { file: string; size: number; style: string }> = {};
+  let copied = 0;
+  let missing = 0;
+  let reused = 0;
+  for (const proto of Object.values(raw["shortcut"] ?? {})) {
+    const p = proto as any;
+    const layer = typeof p.icon === "string" ? p : Array.isArray(p.icons) ? p.icons[0] : undefined;
+    if (!layer || typeof layer.icon !== "string") continue;
+    const src = resolveModPath(layer.icon);
+    if (!existsSync(src)) {
+      console.warn(`  missing shortcut icon: ${src}`);
+      missing++;
+      continue;
+    }
+    const iconSize: number = typeof layer.icon_size === "number" ? layer.icon_size : typeof p.icon_size === "number" ? p.icon_size : 64;
+    const file = `${p.name}.png`;
+    const dest = path.join(outDir, file);
+    manifest[p.name] = { file, size: iconSize, style: typeof p.style === "string" ? p.style : "default" };
+    if (cache.isFresh(src, [dest])) {
+      reused++;
+      continue;
+    }
+    const png = PNG.sync.read(readFileSync(src));
+    const cropped = new PNG({ width: iconSize, height: iconSize });
+    cropped.data.fill(0);
+    PNG.bitblt(png, cropped, 0, 0, Math.min(png.width, iconSize), Math.min(png.height, iconSize), 0, 0);
+    writeFileSync(dest, PNG.sync.write(cropped));
+    copied++;
+  }
+  writeFileSync(manifestOut, JSON.stringify(manifest, null, 2));
+  console.log(`Shortcut icons: copied ${copied}, reused ${reused}, missing ${missing} -> ${outDir}`);
+}
+
+/** GUI button art from the dump's utility-sprites (the blueprint library
+ *  window's reassign / copy / export / trash buttons, the rename pencil …),
+ *  one PNG each at data/sprites/gui/<key with dashes>.png. Like icons, the
+ *  files carry smaller mipmaps to the right; only the leftmost size×size
+ *  square is kept. */
+const GUI_SPRITES = ["reassign", "copy", "upgrade_blueprint", "parametrise", "export_slot", "trash", "trash_white", "rename_icon"];
+
+function extractGuiSprites(): void {
+  const raw = JSON.parse(readFileSync(DUMP_PATH, "utf-8")) as Record<string, Record<string, any>>;
+  const utility = raw["utility-sprites"]?.["default"] ?? {};
+  const outDir = path.join(SITE_PUBLIC, "data/sprites/gui");
+  mkdirSync(outDir, { recursive: true });
+  let copied = 0;
+  let reused = 0;
+  let missing = 0;
+  for (const key of GUI_SPRITES) {
+    const sprite = utility[key];
+    const size: number | undefined = sprite?.size ?? sprite?.width;
+    if (!sprite || typeof sprite.filename !== "string" || typeof size !== "number") {
+      console.warn(`  missing gui sprite: ${key}`);
+      missing++;
+      continue;
+    }
+    const src = resolveModPath(sprite.filename);
+    if (!existsSync(src)) {
+      console.warn(`  missing gui sprite file: ${src}`);
+      missing++;
+      continue;
+    }
+    const dest = path.join(outDir, `${key.replace(/_/g, "-")}.png`);
+    if (cache.isFresh(src, [dest])) {
+      reused++;
+      continue;
+    }
+    const png = PNG.sync.read(readFileSync(src));
+    const cropped = new PNG({ width: size, height: size });
+    cropped.data.fill(0);
+    PNG.bitblt(png, cropped, 0, 0, Math.min(png.width, size), Math.min(png.height, size), 0, 0);
+    writeFileSync(dest, PNG.sync.write(cropped));
+    copied++;
+  }
+  console.log(`GUI sprites: copied ${copied}, reused ${reused}, missing ${missing} -> ${outDir}`);
+}
+
 extractEntitySheets();
 extractIconAtlas();
 extractItemGroupIcons();
+extractShortcutIcons();
+extractGuiSprites();
 
 // Written once, after every step has recorded what it looked at. Entries the
 // run never touched are dropped rather than accumulating forever.
