@@ -1,6 +1,6 @@
 # FactorioTools
 
-### [malte9799.github.io/](https://malte9799.github.io/FactorioTools)[`FactorioTools`](https://malte9799.github.io/FactorioTools)
+### [malte9799.github.io/FactorioTools/preview/](https://malte9799.github.io/FactorioTools/preview/claude-clever-thompson-rrjzrx/)[`claude-clever-thompson-rrjzrx`](https://malte9799.github.io/FactorioTools/preview/claude-clever-thompson-rrjzrx/)
 
 A browser-based Factorio blueprint viewer and rate calculator. Paste a
 blueprint string and it renders the factory with real game sprites, then tells
