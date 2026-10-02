@@ -14,6 +14,7 @@ import { collectEntity, collectInserterPlatform, type CollectContext } from "./d
 import { paint, paintPlain, drawOutline, drawHoverHighlight, drawUndergroundLine, type PaintTally } from "./draw/paint.js";
 import { getHoverHighlightSprite, getUndergroundLinesSprite } from "./hoverHighlightSprite.js";
 import { compareDrawCommands, type DrawCommand } from "./draw/commands.js";
+import { planBake, type BakePlan } from "./draw/bake.js";
 import { drawInserter } from "./sprites/inserter.js";
 import { SpatialIndex, type IndexedBox } from "./spatialIndex.js";
 
@@ -372,6 +373,12 @@ export interface BlueprintRenderer {
     framesDrawn: number;
     /** Frames the loop skipped entirely because nothing had changed. */
     framesSkipped: number;
+    /** Whether the last frame blitted baked static layers instead of
+     *  repainting the whole scene, how many layers the current scene splits
+     *  into, and how many times layers have been (re)baked in total. */
+    baked: boolean;
+    bakedLayers: number;
+    bakeCount: number;
   };
   /** Starts recording one entry per drawn frame, for at most `seconds`.
    *  Recording is off by default and costs nothing when off: a profiling tool
@@ -581,6 +588,9 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
     animPeriod: number[];
     animPhase0: number[];
     animColumns: number[];
+    /** How to split `commands` into baked and live layers — worked out the
+     *  first time this scene is baked. */
+    bakePlan?: BakePlan;
   }
   let sceneCache: SceneCache | null = null;
 
@@ -744,23 +754,14 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
     paintTally = recording
       ? { drawn: 0, skipped: 0, sheets: 0, area: 0, compositeSwitches: 0 }
       : null;
-    const tGrid = performance.now();
     const w = canvas.width / dpr;
     const h = canvas.height / dpr;
 
+    // The background and grid are painted further down, once it is known
+    // whether they go straight onto the canvas or into the bottom bake.
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    ctx.fillStyle = "#1f1e1c";
-    ctx.fillRect(0, 0, w, h);
-
-    // World-space transform: camera center maps to viewport center, y-down
-    // matches both screen space and Factorio's own coordinate convention.
     ctx.save();
-    ctx.translate(w / 2, h / 2);
-    ctx.scale(camera.state.pixelsPerTile, camera.state.pixelsPerTile);
-    ctx.translate(-camera.state.x, -camera.state.y);
-
-    drawGrid(ctx, camera, w, h);
-    phases.grid = performance.now() - tGrid;
+    applyWorldTransform(ctx);
 
     const tCull = performance.now();
 
@@ -962,6 +963,8 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
     // just because a ghost is hovering nearby; only the ghost itself (drawn
     // separately below, against previewGrid) shows the connected preview.
     const procedural: PlacedEntity[] = [];
+    // Entities with no graphics draw as a plain outline, under everything.
+    const outlined: PlacedEntity[] = [];
     // Counted while walking the visible set: this is what tells tick()
     // whether the next frame could differ from this one.
     let animatedVisible = 0;
@@ -972,8 +975,7 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
       if (visual.inserterGraphics) {
         procedural.push(entity);
       } else if (!visual.graphics) {
-        const [fw, fh] = effectiveFootprint(visual, entity.direction);
-        drawOutline(ctx, entity.x, entity.y, fw, fh);
+        outlined.push(entity);
       }
     }
     animatedVisibleCount = animatedVisible;
@@ -1038,12 +1040,25 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
     // its own paint() call below — so skip paint()'s tinted/untinted split.
     phases.animate = performance.now() - tAnimate;
 
+    // Everything from the background up to the inserter arms either paints
+    // straight onto the canvas, or — while sprites are animating under a
+    // camera that has stopped moving — comes from baked layers with only the
+    // animated sprites painted live between them. See bakedLayersFor.
+    const showSupplyAreas = supplyAreasVisible();
+    const baked = showSupplyAreas ? null : bakedLayersFor(sceneCache, outlined, procedural, w, h);
+    lastFrameBaked = baked !== null;
+
+    const tGrid = performance.now();
+    // The base goes into the bottom bake, unless the bottom run is live.
+    if (!baked || baked.plan.runs[0]!.live) paintBase(ctx, outlined, w, h);
+    phases.grid = performance.now() - tGrid;
+
     // Supply areas are an UNDERLAY: the game shows them under the machines
     // they power, so a pole's square never hides what is standing on it.
     // Shown only while a pole is in hand — the ghost's own area plus every
     // placed pole's, which is how the game lets you see coverage gaps and
     // overlap while laying out a run.
-    if (supplyAreasVisible()) {
+    if (showSupplyAreas) {
       const areas: SupplyArea[] = [];
       for (const entity of visibleEntities) {
         const distance = visualFor(entity.name)?.supplyAreaDistance;
@@ -1057,16 +1072,25 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
     }
 
     const tPaint = performance.now();
-    paintPlain(ctx, atlas, commands, paintTally ?? undefined, !quality.shadows);
+    let armsBaked = false;
+    if (baked) {
+      const { plan, canvases } = baked;
+      let layer = 0;
+      for (const run of plan.runs) {
+        if (run.live) {
+          paintPlain(ctx, atlas, run.commands, paintTally ?? undefined, !quality.shadows);
+        } else {
+          blitBake(canvases[layer++]!);
+        }
+      }
+      armsBaked = !plan.runs[plan.runs.length - 1]!.live;
+    } else {
+      paintPlain(ctx, atlas, commands, paintTally ?? undefined, !quality.shadows);
+    }
     phases.paint = performance.now() - tPaint;
 
     const tInserters = performance.now();
-    for (const entity of procedural) {
-      const visual = visualFor(entity.name)!;
-      ctx.globalAlpha = alphaFor(entity);
-      drawInserter(ctx, atlas, entity, visual.inserterGraphics);
-    }
-    ctx.globalAlpha = 1;
+    if (!armsBaked) paintArms(ctx, procedural);
     phases.inserters = performance.now() - tInserters;
     const tOverlays = performance.now();
 
@@ -1458,6 +1482,145 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
     }
 
     return { animated, stride, period, phase0, columns: columnCount, origin, commandCount: base.length };
+  }
+
+  /** Maps world tiles onto the canvas: camera center to viewport center,
+   *  y-down, which matches both screen space and Factorio's own convention.
+   *  Expects the dpr scale to be set already. */
+  function applyWorldTransform(target: CanvasRenderingContext2D): void {
+    const w = canvas.width / dpr;
+    const h = canvas.height / dpr;
+    target.translate(w / 2, h / 2);
+    target.scale(camera.state.pixelsPerTile, camera.state.pixelsPerTile);
+    target.translate(-camera.state.x, -camera.state.y);
+  }
+
+  /** The bottom of every frame: background, grid, and the outline stand-ins
+   *  for entities that have no sprites. Called in world space. */
+  function paintBase(target: CanvasRenderingContext2D, outlined: PlacedEntity[], w: number, h: number): void {
+    target.save();
+    target.setTransform(dpr, 0, 0, dpr, 0, 0);
+    target.fillStyle = "#1f1e1c";
+    target.fillRect(0, 0, w, h);
+    target.restore();
+    drawGrid(target, camera, w, h);
+    for (const entity of outlined) {
+      const [fw, fh] = effectiveFootprint(visualFor(entity.name)!, entity.direction);
+      drawOutline(target, entity.x, entity.y, fw, fh);
+    }
+  }
+
+  /** Inserter arms always paint over the whole Y-sorted scene. */
+  function paintArms(target: CanvasRenderingContext2D, procedural: PlacedEntity[]): void {
+    for (const entity of procedural) {
+      const visual = visualFor(entity.name)!;
+      target.globalAlpha = alphaFor(entity);
+      drawInserter(target, atlas, entity, visual.inserterGraphics);
+    }
+    target.globalAlpha = 1;
+  }
+
+  /* ---------- baked layers ----------
+   *
+   * With belts on screen every frame is redrawn, and before baking every
+   * redraw repainted the whole scene — every building, shadow and pipe —
+   * just to move the belt art along one column. Baking paints the static
+   * sprites once into offscreen canvases the size of the viewport and
+   * reuses them until the scene or the camera changes; a frame then costs a
+   * couple of blits plus the animated sprites alone.
+   *
+   * The bakes are in screen space, pixel for pixel the same as painting
+   * directly, so nothing shifts or blurs between baked and live sprites.
+   * The price is that any camera move invalidates them, so a frame whose
+   * view differs from the previous frame's paints directly instead — a pan
+   * costs exactly what it did before, and baking starts the first frame
+   * the camera holds still. */
+
+  interface BakeState {
+    scene: SceneCache;
+    viewKey: string;
+    /** False when a sheet was still loading while baking: that sprite is
+     *  missing from the bake, so it is rebaked next frame rather than kept. */
+    complete: boolean;
+  }
+  let bakeState: BakeState | null = null;
+  const bakeCanvases: HTMLCanvasElement[] = [];
+  /** The previous frame's scene and view, to tell a held camera from a
+   *  moving one. */
+  let prevScene: SceneCache | null = null;
+  let prevViewKey = "";
+  let lastFrameBaked = false;
+  let bakeCount = 0;
+
+  function bakeCanvas(index: number): HTMLCanvasElement {
+    let c = bakeCanvases[index];
+    if (!c) bakeCanvases[index] = c = document.createElement("canvas");
+    if (c.width !== canvas.width || c.height !== canvas.height) {
+      c.width = canvas.width;
+      c.height = canvas.height;
+    }
+    return c;
+  }
+
+  function blitBake(source: HTMLCanvasElement): void {
+    ctx.save();
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.drawImage(source, 0, 0);
+    ctx.restore();
+  }
+
+  /** Returns the baked layers for this frame, (re)baking them first when
+   *  needed, or null when this frame should paint directly: nothing
+   *  animates (so the frame is not redrawn continuously and baking would
+   *  only add work), or the view is still moving. */
+  function bakedLayersFor(
+    scene: SceneCache,
+    outlined: PlacedEntity[],
+    procedural: PlacedEntity[],
+    w: number,
+    h: number,
+  ): { plan: BakePlan; canvases: HTMLCanvasElement[] } | null {
+    const viewKey = `${camera.state.x}|${camera.state.y}|${camera.state.pixelsPerTile}|${canvas.width}x${canvas.height}|${dpr}|${quality.shadows}`;
+    const settled = scene === prevScene && viewKey === prevViewKey;
+    prevScene = scene;
+    prevViewKey = viewKey;
+    if (scene.animated.length === 0 || !quality.animation || !settled) return null;
+
+    const plan = (scene.bakePlan ??= planBake(scene.commands, scene.animated));
+    if (plan.bakedCount === 0) return null;
+    const canvases: HTMLCanvasElement[] = [];
+    for (let i = 0; i < plan.bakedCount; i++) canvases.push(bakeCanvas(i));
+
+    if (bakeState && bakeState.scene === scene && bakeState.viewKey === viewKey && bakeState.complete) {
+      return { plan, canvases };
+    }
+
+    let complete = true;
+    let layer = 0;
+    for (let r = 0; r < plan.runs.length; r++) {
+      const run = plan.runs[r]!;
+      if (run.live) continue;
+      const target = canvases[layer]!.getContext("2d")!;
+      target.setTransform(1, 0, 0, 1, 0, 0);
+      target.clearRect(0, 0, canvas.width, canvas.height);
+      target.imageSmoothingEnabled = false;
+      target.setTransform(dpr, 0, 0, dpr, 0, 0);
+      applyWorldTransform(target);
+      if (r === 0) paintBase(target, outlined, w, h);
+      for (const c of run.commands) if (!atlas.get(c.sheet)) complete = false;
+      paintPlain(target, atlas, run.commands, undefined, !quality.shadows);
+      if (r === plan.runs.length - 1) {
+        for (const entity of procedural) {
+          const g = visualFor(entity.name)?.inserterGraphics;
+          if (g && (!atlas.get(g.platform.sheet) || !atlas.get(g.handBase.sheet) || !atlas.get(g.handOpen.sheet))) complete = false;
+        }
+        paintArms(target, procedural);
+      }
+      layer++;
+    }
+    bakeState = { scene, viewKey, complete };
+    bakeCount++;
+    return { plan, canvases };
   }
 
   /** Collects and sorts the visible scene once, recording which of the
@@ -2343,6 +2506,9 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
         sceneRebuildCount,
         framesDrawn,
         framesSkipped,
+        baked: lastFrameBaked,
+        bakedLayers: sceneCache?.bakePlan?.bakedCount ?? 0,
+        bakeCount,
       };
     },
     destroy() {
