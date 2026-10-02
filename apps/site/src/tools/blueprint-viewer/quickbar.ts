@@ -120,44 +120,68 @@ function barLabel(bar: number): string {
   return bar === BARS - 1 ? "0" : String(bar + 1);
 }
 
-/* Shortcut glyphs, drawn after the game's own shortcut-bar art: a white
-   dashed selection square with the tool's mark inside on the planner
-   colours, dark arrows on the grey undo/redo buttons. */
-const DASHED = `<rect x="4" y="4" width="24" height="24" fill="none" stroke="#fff" stroke-width="2.2" stroke-dasharray="3.2 2.4"/>`;
-const ICONS: Record<Exclude<QuickbarTool, "copper" | "green" | "red">, string> = {
-  undo: `<svg viewBox="0 0 32 32"><path d="M9 13a9 9 0 0 1 16 5h-3.6A5.6 5.6 0 0 0 11.6 15.4L15 19H6v-9z" fill="currentColor"/></svg>`,
-  redo: `<svg viewBox="0 0 32 32"><path d="M23 13a9 9 0 0 0-16 5h3.6a5.6 5.6 0 0 1 9.8-2.6L17 19h9v-9z" fill="currentColor"/></svg>`,
-  deconstruct: `<svg viewBox="0 0 32 32">${DASHED}<path d="M11 11l10 10M21 11L11 21" stroke="#fff" stroke-width="3.4" stroke-linecap="round"/></svg>`,
-  blueprint: `<svg viewBox="0 0 32 32">${DASHED}<path d="M16 10v12M10 16h12" stroke="#fff" stroke-width="3.4" stroke-linecap="round"/></svg>`,
-  upgrade: `<svg viewBox="0 0 32 32">${DASHED}<path d="M16 9l6 7h-3.6v6h-4.8v-6H10z" fill="#fff"/></svg>`,
-  book: `<svg viewBox="0 0 32 32"><path d="M8 5h15a2 2 0 0 1 2 2v20H10a2 2 0 0 1-2-2z" fill="#e8f1f8"/><path d="M10 23h15v4H10a2 2 0 0 1 0-4z" fill="#9fb9cc"/><rect x="11" y="8" width="11" height="11" fill="none" stroke="#3b6d93" stroke-width="1.6" stroke-dasharray="2 1.6"/></svg>`,
-  alt: `<svg viewBox="0 0 32 32"><rect x="3" y="9" width="26" height="14" rx="3" fill="#3a3a3a"/><text x="16" y="20.5" text-anchor="middle" font-family="Arial, sans-serif" font-weight="700" font-size="10" fill="#d6d6d6" letter-spacing="0.5">ALT</text></svg>`,
+/** Which shortcut prototype each tool shows the art of. The sprites are
+ *  the game's own, copied out of the install by the data pipeline's
+ *  extractShortcutIcons() into data/sprites/shortcuts/, listed in
+ *  data/shortcut-icons.json by prototype name. Several candidates per tool
+ *  since the names have shifted between game versions; failing all of them,
+ *  the first shortcut whose name contains `match` is used. */
+const SHORTCUTS: Record<QuickbarTool, { names: string[]; match: string }> = {
+  undo: { names: ["undo"], match: "undo" },
+  redo: { names: ["redo"], match: "redo" },
+  deconstruct: { names: ["give-deconstruction-planner", "new-deconstruction-planner"], match: "deconstruction" },
+  blueprint: { names: ["give-blueprint", "new-blueprint"], match: "blueprint" },
+  upgrade: { names: ["give-upgrade-planner", "new-upgrade-planner"], match: "upgrade" },
+  book: { names: ["give-blueprint-book", "new-blueprint-book"], match: "blueprint-book" },
+  alt: { names: ["toggle-alt-mode", "alt-mode"], match: "alt-mode" },
+  copper: { names: ["give-copper-wire", "copper-wire"], match: "copper-wire" },
+  green: { names: ["give-green-wire", "green-wire"], match: "green-wire" },
+  red: { names: ["give-red-wire", "red-wire"], match: "red-wire" },
 };
 
-const WIRE_ITEMS: Record<"copper" | "green" | "red", string> = {
-  copper: "copper-cable",
-  green: "green-wire",
-  red: "red-wire",
-};
+const SHORTCUT_MANIFEST_URL = "./data/shortcut-icons.json";
+const SHORTCUT_DIR = "./data/sprites/shortcuts/";
+
+type ShortcutManifest = Record<string, { file: string; size: number; style: string }>;
+
+let manifestPromise: Promise<ShortcutManifest> | null = null;
+function loadShortcutManifest(): Promise<ShortcutManifest> {
+  manifestPromise ??= fetch(SHORTCUT_MANIFEST_URL)
+    .then((res) => (res.ok ? (res.json() as Promise<ShortcutManifest>) : {}))
+    .catch(() => ({}));
+  return manifestPromise;
+}
+
+function resolveShortcut(manifest: ShortcutManifest, tool: QuickbarTool): ShortcutManifest[string] | undefined {
+  const spec = SHORTCUTS[tool];
+  for (const name of spec.names) if (manifest[name]) return manifest[name];
+  // "blueprint" must not grab the book's art through the substring match.
+  const name = Object.keys(manifest).find((n) => n.includes(spec.match) && (tool !== "blueprint" || !n.includes("book")));
+  return name ? manifest[name] : undefined;
+}
 
 interface ToolSpec {
   tool: QuickbarTool;
   label: string;
+  /** Button colour until the manifest's own `style` arrives (and if a
+   *  shortcut has none) — what the game puts behind each glyph. */
   tone: "grey" | "red" | "green" | "blue";
+  /** Shown on the button only when the sprite isn't in the dataset yet. */
+  short: string;
 }
 
 /** Column-major, top then bottom, as the game lays the grid out. */
 const TOOLS: ToolSpec[] = [
-  { tool: "undo", label: "Undo (Ctrl+Z)", tone: "grey" },
-  { tool: "redo", label: "Redo (Ctrl+Y)", tone: "grey" },
-  { tool: "deconstruct", label: "Deconstruction planner (Alt+D)", tone: "red" },
-  { tool: "blueprint", label: "Create blueprint (Ctrl+C)", tone: "blue" },
-  { tool: "upgrade", label: "Upgrade planner — coming next", tone: "green" },
-  { tool: "book", label: "Create blueprint book from the current blueprint", tone: "blue" },
-  { tool: "alt", label: "Alt mode (Alt)", tone: "grey" },
-  { tool: "copper", label: "Copper wire (Alt+C)", tone: "grey" },
-  { tool: "green", label: "Green wire (Alt+G)", tone: "grey" },
-  { tool: "red", label: "Red wire (Alt+R)", tone: "grey" },
+  { tool: "undo", label: "Undo (Ctrl+Z)", tone: "grey" , short: "Undo" },
+  { tool: "redo", label: "Redo (Ctrl+Y)", tone: "grey" , short: "Redo" },
+  { tool: "deconstruct", label: "Deconstruction planner (Alt+D)", tone: "red" , short: "Decon" },
+  { tool: "blueprint", label: "Create blueprint (Ctrl+C)", tone: "blue" , short: "BP" },
+  { tool: "upgrade", label: "Upgrade planner — coming next", tone: "green" , short: "Upgr" },
+  { tool: "book", label: "Create blueprint book from the current blueprint", tone: "blue" , short: "Book" },
+  { tool: "alt", label: "Alt mode (Alt)", tone: "grey" , short: "Alt" },
+  { tool: "copper", label: "Copper wire (Alt+C)", tone: "grey" , short: "Cu" },
+  { tool: "green", label: "Green wire (Alt+G)", tone: "grey" , short: "Grn" },
+  { tool: "red", label: "Red wire (Alt+R)", tone: "grey" , short: "Red" },
 ];
 
 export function buildQuickbar(host: HTMLElement, callbacks: QuickbarCallbacks): QuickbarHandle {
@@ -200,11 +224,26 @@ export function buildQuickbar(host: HTMLElement, callbacks: QuickbarCallbacks): 
     button.className = `qb-tool is-${spec.tone}`;
     button.title = spec.label;
     button.setAttribute("aria-label", spec.label);
-    if (spec.tool === "copper" || spec.tool === "green" || spec.tool === "red") {
-      button.appendChild(icon(WIRE_ITEMS[spec.tool], "", 28));
-    } else {
-      button.innerHTML = ICONS[spec.tool];
-    }
+    void loadShortcutManifest().then((manifest) => {
+      const shortcut = resolveShortcut(manifest, spec.tool);
+      if (!shortcut) {
+        // Dataset generated before shortcut sprites were extracted: a plain
+        // label, not invented art — re-run extract-sprites to get the real
+        // glyph.
+        button.classList.add("is-missing-sprite");
+        button.textContent = spec.short;
+        return;
+      }
+      const img = document.createElement("img");
+      img.src = SHORTCUT_DIR + shortcut.file;
+      img.alt = "";
+      img.draggable = false;
+      button.replaceChildren(img);
+      if (shortcut.style === "red" || shortcut.style === "green" || shortcut.style === "blue") {
+        button.classList.remove(`is-${spec.tone}`);
+        button.classList.add(`is-${shortcut.style}`);
+      }
+    });
     if (spec.tool === "upgrade") button.disabled = true;
     button.addEventListener("click", () => callbacks.onTool(spec.tool));
     toolButtons.set(spec.tool, button);

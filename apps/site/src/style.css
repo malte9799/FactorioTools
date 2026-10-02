@@ -899,7 +899,10 @@ body:has(#library-window.is-collapsed:not([hidden])) #window-toolbar { left: cal
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.4), inset 0 -2px 0 rgba(0, 0, 0, 0.3);
 }
 
-.qb-tool svg { width: 72%; height: 72%; display: block; }
+.qb-tool img { width: 80%; height: 80%; display: block; pointer-events: none; }
+/* Shortcut sprites not in the dataset yet (see quickbar.ts): a plain label. */
+.qb-tool.is-missing-sprite { font-family: var(--display); font-size: 10px; font-weight: 700; color: #1b1b1b; }
+.qb-tool.is-missing-sprite:not(.is-grey) { color: #fff; }
 .qb-tool .icon { background-color: transparent; border: none; box-shadow: none; pointer-events: none; }
 
 .qb-tool.is-grey { color: #262626; background: linear-gradient(180deg, #cbcbcb, #a9a9a9); }
@@ -2424,7 +2427,7 @@ canvas.select-mode {
   .qb-slot.is-group-start { margin-left: 3px; }
   .qb-bar-num { font-size: 13px; }
   .qb-tools { border-radius: 3px 3px 0 0; margin-left: 0; }
-  .qb-slot .icon, .qb-tool .icon { transform: scale(0.7); }
+  .qb-slot .icon { transform: scale(0.7); }
 
   .floating-window { max-width: calc(100vw - 16px); }
 }

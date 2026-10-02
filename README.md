@@ -62,6 +62,12 @@ Running the first step alone leaves the catalog claiming uncropped column
 counts against cropped images, which silently breaks about 29 entities. If you
 regenerate, regenerate all three.
 
+`extract-sprites` also copies the shortcut-bar art (every `shortcut`
+prototype: undo, redo, the planners, alt mode, the wires) into
+`public/data/sprites/shortcuts/` with `public/data/shortcut-icons.json`; the
+viewer's quickbar draws its tool buttons from these and shows plain text
+labels until they exist.
+
 Non-standard install paths are read from `FACTORIO_DATA` and `FACTORIO_DUMP`.
 
 The belt simulation reads belt speeds, underground lengths and splitter
