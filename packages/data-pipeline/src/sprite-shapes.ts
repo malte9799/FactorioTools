@@ -634,7 +634,7 @@ export function sheetsOf(graphics: EntityGraphics | undefined): string[] {
     } else if (layer.per === "module-slot") {
       for (const slot of layer.slots) {
         collect(slot.empty);
-        slot.filled.forEach(collect);
+        for (const piece of slot.filled) collect(piece.sprite);
       }
     } else {
       Object.values(layer.sprites).forEach(collect);

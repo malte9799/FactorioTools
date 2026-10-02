@@ -2047,7 +2047,7 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
           : layer.per === "heat-connection-patches"
             ? [...layer.connected, ...layer.disconnected]
             : layer.per === "module-slot"
-              ? layer.slots.flatMap((slot) => [slot.empty, ...slot.filled])
+              ? layer.slots.flatMap((slot) => [slot.empty, ...slot.filled.map((piece) => piece.sprite)])
               : Object.values(layer.sprites);
         for (const sprite of sprites) atlas.get(sprite.sheet);
       }

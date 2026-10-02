@@ -146,6 +146,24 @@ test("two beacons share the diminishing profile", () => {
   close(result.groups[0]!.effects.speed, 2 * 1.0 * 1.5 * 0.7071, "two-beacon speed bonus");
 });
 
+test("heavily beaconed machines are not capped at one craft per tick", () => {
+  // In-game reference: legendary AM3s on inserters with mixed-quality
+  // beacons, measured 92.7 / 76.1 / 53.1 / 55.1 / 50.7 per second.
+  const bp =
+    "0eNrtlutqgzAUgN/l/I6l8dbqq4xSoh66MI0u0bJS8u47VtaWtk4do4whiJAcz+X7EM0RkrzBSktVQ3wEmZbKQPxyBCN3SuTtnhIFQgzCGCySXKqdU4j0VSp0PGDw3ohc1gd6IMcdqkzoA1gGUmX4ATG37EGpBAX1GUx27YYBqlrWEruhTovDVjVFgpqqs4HhqtJQMrWi3lTQcdeLgAH1c7zQXQT28QQMNKayautKZVDX1Otrb3tJUKUuCIvGrbHo5pPZFaWpEDOnKLMm/15Vl07ZaivVnhhLCpzKXVY+A1OL9A3iZav0YYT3RtzeiGc3li5259ad7DaY3Y506012685uR7r1p7rl0ex2pNtgsttwdjvSbcju/o63Nj3vbDNYfWPzGX54rx9+5aeHdTWCdflPWNfDrFdf919gfQpVNEzF/VuqPzQ/X44A4D8AeN6rtulKtgTnEzyDPWpzYghCN/KjKFj74Ypu1n4CXzD+yg==";
+  const result = calculate(vanilla, normaliseEntities(decodeBlueprintString(bp).blueprint!));
+  const rateOf = (n: number) =>
+    result.groups.find((g) => g.entityNumbers.includes(n))!.craftsPerSecond;
+  const measured = [92.7, 76.1, 53.1, 55.1, 50.7];
+  measured.forEach((expected, i) => {
+    const actual = rateOf(i + 1);
+    assert.ok(
+      actual >= expected && actual < expected + 0.1,
+      `machine ${i + 1}: expected ~${expected}, got ${actual}`,
+    );
+  });
+});
+
 test("shared items become intermediates with a net rate", () => {
   const result = ratesOf([
     { entity_number: 1, name: "assembling-machine-2", position: { x: 0, y: 0 }, recipe: "iron-gear-wheel" },
