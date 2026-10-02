@@ -14,6 +14,8 @@ export interface ResolvedVisual {
   isMachine: boolean;
   isBeacon: boolean;
   moduleSlots: number;
+  /** Beacons only: how each module's slot art looks, keyed by module name. */
+  moduleArt?: Record<string, ModuleArt>;
   /** Alt mode draws a facing arrow for these. */
   showDirectionArrow: boolean;
   /** Fluid-box connection points, in the entity's own unrotated local frame
@@ -35,6 +37,17 @@ export interface ResolvedVisual {
   /** Poles only: copper wire reach, in tiles. */
   maxWireDistance?: number;
 }
+
+/** A module's look inside a beacon slot — its tier picks the art variation,
+ *  its tint colours the overlays (CSS rgb strings, ready for the painter). */
+export interface ModuleArt {
+  tier: number;
+  primary?: string;
+  secondary?: string;
+}
+
+const cssRgb = ([r, g, b]: [number, number, number]) =>
+  `rgb(${Math.round(r * 255)}, ${Math.round(g * 255)}, ${Math.round(b * 255)})`;
 
 const EMPTY = {
   isMachine: false,
@@ -74,8 +87,17 @@ export function buildVisualLookup(data: GameData, catalog: RenderCatalog): Map<s
       pipeConnections: m.pipeConnections,
     });
   }
+  const moduleArt: Record<string, ModuleArt> = {};
+  for (const m of Object.values(data.modules)) {
+    moduleArt[m.name] = {
+      tier: m.tier ?? 1,
+      primary: m.beaconTint && cssRgb(m.beaconTint.primary),
+      secondary: m.beaconTint && cssRgb(m.beaconTint.secondary),
+    };
+  }
   for (const b of Object.values(data.beacons)) {
     lookup.set(b.name, {
+      moduleArt,
       ...EMPTY,
       tileFootprint: b.size,
       graphics: b.graphics,

@@ -81,7 +81,7 @@ export function paintPlain(
     // Shadows are multiply-blended over large areas, the costliest thing a
     // frame paints on a weak GPU; the low render preset leaves them out.
     if (skipShadows && c.layer === Layer.Shadow) continue;
-    const img = atlas.get(c.sheet);
+    const img = c.multiply ? atlas.getTinted(c.sheet, c.multiply) : atlas.get(c.sheet);
     if (!img) {
       if (tally) tally.skipped++;
       continue;
@@ -163,7 +163,7 @@ function paintTinted(ctx: CanvasRenderingContext2D, atlas: SpriteAtlas, commands
   let alpha = 1;
   let compositeIsMultiply = false;
   for (const c of commands) {
-    const img = atlas.get(c.sheet);
+    const img = c.multiply ? atlas.getTinted(c.sheet, c.multiply) : atlas.get(c.sheet);
     if (!img) continue;
     const isShadow = c.layer === Layer.Shadow;
     if (isShadow !== compositeIsMultiply) {

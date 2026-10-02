@@ -34,6 +34,10 @@ export interface DrawCommand {
    *  Undefined (the common case) skips the extra save/rotate/restore in
    *  paint.ts entirely. */
   rotationDeg?: number;
+  /** CSS color the sprite is multiplied by (Factorio's own tint) — a beacon
+   *  module slot's beacon_tint. Unlike `tint` this recolours the art itself
+   *  and keeps its alpha; undefined paints the sheet as-is. */
+  multiply?: string;
 }
 
 /** Global paint order: layer, then screen depth, then the entity's own layer
