@@ -4,6 +4,8 @@
  *  spritesheet per entity, not a single packed atlas (unlike the icon
  *  sheet), since these are already large multi-frame sheets on their own. */
 
+import { fetchSprite } from "./spriteCache.js";
+
 /** What the draw loop receives for a sheet. An ImageBitmap in every browser
  *  that has createImageBitmap; an <img> only on the fallback path. Both are
  *  valid drawImage sources, so callers never need to tell them apart. */
@@ -116,11 +118,7 @@ export class SpriteAtlas {
           // without createImageBitmap, where the old lazy-decode behaviour
           // is still better than no sprite at all.
           if (typeof createImageBitmap === "function") {
-            fetch(url)
-              .then((res) => {
-                if (!res.ok) throw new Error(`sprite failed to load: ${url} (${res.status})`);
-                return res.blob();
-              })
+            fetchSprite(url)
               .then((blob) => createImageBitmap(blob))
               .then((bitmap) => {
                 this.images.set(modPath, bitmap);

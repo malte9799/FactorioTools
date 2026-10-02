@@ -5,6 +5,8 @@
  *  mirroring Factorio's own alt-mode: a small recipe icon centered on a
  *  crafting machine, module icons in a row beneath it. */
 
+import { fetchSprite } from "./spriteCache.js";
+
 const SHEET_URL = "./data/sprites/icons.png";
 const MANIFEST_URL = "./data/sprite-icon-manifest.json";
 
@@ -27,15 +29,25 @@ export class IconAtlas {
         .then((manifest: { icons: { id: string; x: number; y: number; w: number; h: number }[] }) => {
           this.cells = new Map(manifest.icons.map((i) => [i.id, i]));
         }),
-      new Promise<void>((resolve, reject) => {
-        const img = new Image();
-        img.onload = () => {
-          this.sheet = img;
-          resolve();
-        };
-        img.onerror = () => reject(new Error("icon sheet failed to load"));
-        img.src = SHEET_URL;
-      }),
+      // Through the persistent sprite cache (see spriteCache.ts), then
+      // handed to the <img> as an object URL.
+      fetchSprite(SHEET_URL).then(
+        (blob) =>
+          new Promise<void>((resolve, reject) => {
+            const objectUrl = URL.createObjectURL(blob);
+            const img = new Image();
+            img.onload = () => {
+              URL.revokeObjectURL(objectUrl);
+              this.sheet = img;
+              resolve();
+            };
+            img.onerror = () => {
+              URL.revokeObjectURL(objectUrl);
+              reject(new Error("icon sheet failed to load"));
+            };
+            img.src = objectUrl;
+          }),
+      ),
     ])
       .then(() => undefined)
       .catch((err) => {
