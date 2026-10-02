@@ -9,7 +9,7 @@ import { fetchSprite } from "./spriteCache.js";
 /** What the draw loop receives for a sheet. An ImageBitmap in every browser
  *  that has createImageBitmap; an <img> only on the fallback path. Both are
  *  valid drawImage sources, so callers never need to tell them apart. */
-export type SpriteSurface = ImageBitmap | HTMLImageElement;
+export type SpriteSurface = ImageBitmap | HTMLImageElement | HTMLCanvasElement;
 
 const ENTITY_SPRITE_BASE = "./data/sprites/entities/";
 
@@ -145,6 +145,40 @@ export class SpriteAtlas {
       this.loading.set(modPath, promise);
     }
     return undefined;
+  }
+
+  private tinted = new Map<string, HTMLCanvasElement>();
+
+  /** The sheet multiplied by `color` (Factorio's tint: every channel scaled,
+   *  alpha untouched) — built once per sheet+color the first time it is
+   *  asked for after the sheet itself has loaded. Only small mask sheets
+   *  (beacon module slots) are ever tinted, so caching whole sheets is
+   *  cheap. */
+  getTinted(modPath: string, color: string): SpriteSurface | undefined {
+    const key = `${modPath}|${color}`;
+    const existing = this.tinted.get(key);
+    if (existing) return existing;
+    const img = this.get(modPath);
+    if (!img) return undefined;
+    const canvas = document.createElement("canvas");
+    canvas.width = img.width;
+    canvas.height = img.height;
+    const ctx = canvas.getContext("2d")!;
+    ctx.drawImage(img, 0, 0);
+    // Per pixel rather than a "multiply" fill: canvas blending mixes the
+    // fill colour into partly transparent pixels, which pushed the
+    // semi-transparent module masks almost all the way to the raw tint.
+    const [r, g, b] = (color.match(/\d+/g) ?? ["255", "255", "255"]).map((v) => Number(v) / 255);
+    const pixels = ctx.getImageData(0, 0, canvas.width, canvas.height);
+    const d = pixels.data;
+    for (let i = 0; i < d.length; i += 4) {
+      d[i] = d[i]! * r!;
+      d[i + 1] = d[i + 1]! * g!;
+      d[i + 2] = d[i + 2]! * b!;
+    }
+    ctx.putImageData(pixels, 0, 0);
+    this.tinted.set(key, canvas);
+    return canvas;
   }
 
   /** A snapshot of what the atlas is doing right now, for the frame recorder.

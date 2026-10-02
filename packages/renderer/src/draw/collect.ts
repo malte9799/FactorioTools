@@ -101,12 +101,11 @@ interface EntityFrame {
    *  connected and disconnected art are two distinct sprites rather than an
    *  added cap over otherwise-bare art. */
   heatConnectionPatches: { index: number; offsetX: number; offsetY: number; connected: boolean }[];
-  /** Whether each of a beacon's physical module slots (index order matches
-   *  the module-slot layer's own `slots` array) actually has a module in
-   *  it — true entries draw the filled box/lights pieces, false draw the
-   *  empty socket. Derived from entity.modules' collapsed ModuleStack[] by
-   *  expanding count back out to one bool per physical slot. */
-  filledSlots: boolean[];
+  /** The module name in each of a beacon's physical module slots (index
+   *  order matches the module-slot layer's own `slots` array), undefined
+   *  past the last filled one. Derived from entity.modules' collapsed
+   *  ModuleStack[] by expanding count back out to one entry per slot. */
+  slotModules: string[];
 }
 
 function resolveFrame(entity: PlacedEntity, visual: ResolvedVisual, ctx: CollectContext): EntityFrame {
@@ -186,7 +185,7 @@ function resolveFrame(entity: PlacedEntity, visual: ResolvedVisual, ctx: Collect
     // name+quality, each with its own count) — expanding count back out
     // gives one entry per physical slot, in the same left-to-right order
     // Factorio itself fills them, matching index.ts's own expandModuleSlots.
-    filledSlots: entity.modules.flatMap((stack) => Array<boolean>(stack.count).fill(true)),
+    slotModules: entity.modules.flatMap((stack) => Array<string>(stack.count).fill(stack.name)),
   };
 
   switch (visual.graphics?.connector) {
@@ -526,16 +525,23 @@ export function collectEntity(
       return;
     }
 
-    // A beacon's module-slot art: each physical slot draws its own empty
-    // socket, or (once a module actually occupies it) the box/lights-mask/
-    // lights-glow pieces layered over it — every piece already carries its
-    // own baked-in shift, so no extra offset is needed here.
+    // A beacon's module-slot art: each physical slot draws its socket —
+    // column 0 bare, column N holding a tier-N module — and, once filled,
+    // the box/lights masks over it at column N-1, multiplied by that
+    // module's beacon_tint. Every piece carries its own baked-in shift, so
+    // no extra offset is needed here.
     if ("per" in layer && layer.per === "module-slot") {
       layer.slots.forEach((slot, i) => {
-        if (frame.filledSlots[i]) {
-          for (const sprite of slot.filled) push(out, sprite, 0, 0, entity, layer.layer, order, alpha, 0, 0, false, undefined, 0, layer.ySortBias ?? 0);
-        } else {
-          push(out, slot.empty, 0, 0, entity, layer.layer, order, alpha, 0, 0, false, undefined, 0, layer.ySortBias ?? 0);
+        const name = frame.slotModules[i];
+        const art = name === undefined ? undefined : visual.moduleArt?.[name] ?? { tier: 1 };
+        const tier = art ? Math.min(Math.max(art.tier, 1), Math.max((slot.empty.columns ?? 1) - 1, 1)) : 0;
+        push(out, slot.empty, tier, 0, entity, layer.layer, order, alpha, 0, 0, false, undefined, 0, layer.ySortBias ?? 0);
+        if (!art) return;
+        for (const piece of slot.filled) {
+          const before = out.length;
+          push(out, piece.sprite, tier - 1, 0, entity, layer.layer, order, alpha, 0, 0, false, undefined, 0, layer.ySortBias ?? 0);
+          const color = piece.tint && art[piece.tint];
+          if (color && out.length > before) out[out.length - 1]!.multiply = color;
         }
       });
       return;

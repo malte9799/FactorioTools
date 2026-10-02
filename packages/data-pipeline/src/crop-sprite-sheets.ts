@@ -76,7 +76,7 @@ const sheetPath = (sheet: string) => path.join(SHEET_DIR, path.basename(sheet));
 function spritesOfLayer(layer: any): any[] {
   if (!("per" in layer)) return [layer.sprites];
   if (layer.per === "heat-connection-patches") return [...(layer.connected ?? []), ...(layer.disconnected ?? [])];
-  if (layer.per === "module-slot") return (layer.slots ?? []).flatMap((s: any) => [s.empty, ...(s.filled ?? [])]);
+  if (layer.per === "module-slot") return (layer.slots ?? []).flatMap((s: any) => [s.empty, ...(s.filled ?? []).map((p: any) => p.sprite)]);
   return Object.values(layer.sprites ?? {});
 }
 
@@ -164,9 +164,12 @@ for (const [name, visual] of lookup) {
   for (let dir = 0; dir < 16; dir++) {
     const self = () => entity(name, 0.5, 0.5, dir);
     for (const f of FRAMES) for (const c of collect(self(), [], f)) mark(c.sheet, c.sx, c.sy);
-    for (let filled = 1; filled <= slots; filled++) {
-      const e = entity(name, 0.5, 0.5, dir, { modules: [{ name: "productivity-module", quality: "normal", count: filled }] } as any);
-      for (const c of collect(e, [], 0)) mark(c.sheet, c.sx, c.sy);
+    // Beacon slot art has one column per module tier, so fill with each.
+    for (const module of ["speed-module", "speed-module-2", "speed-module-3"]) {
+      for (let filled = 1; filled <= slots; filled++) {
+        const e = entity(name, 0.5, 0.5, dir, { modules: [{ name: module, quality: "normal", count: filled }] } as any);
+        for (const c of collect(e, [], 0)) mark(c.sheet, c.sx, c.sy);
+      }
     }
     for (const kind of NEIGHBOURS) {
       const around = [entity(kind, 3.5, 0.5, 0), entity(kind, -2.5, 0.5, 0),

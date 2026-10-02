@@ -244,15 +244,19 @@ export type GraphicsLayer = {
   | { sprites: Partial<Record<Dir4Name, Sprite>>; per: "heat-covers" }
   /** A beacon's per-slot module art — one entry per physical slot (index
    *  order matches graphics_set.module_visualisations[0].slots). `empty`
-   *  is the socket art shown when nothing's in that slot (drawn today
-   *  regardless of loadout); `filled` is the box/lights-mask/lights-glow
-   *  pieces shown once a module actually occupies it. This renderer has no
-   *  runtime-tint concept (see unwrapAll's own apply_runtime_tint skip), so
-   *  `filled` is the same untinted shape for every module — real Factorio
-   *  colors it per the module's own beacon_tint, this only shows that a
-   *  slot is occupied at all. */
-  | { slots: { empty: Sprite; filled: Sprite[] }[]; per: "module-slot" }
+   *  is the socket sheet (has_empty_slot): column 0 is the bare socket,
+   *  column N the module of tier N sitting in it. `filled` are the overlays
+   *  drawn once a module occupies the slot, one column per tier (column
+   *  N-1 for tier N), each multiplied by the module's own beacon_tint
+   *  channel — `primary` for the box, `secondary` for the lights. */
+  | { slots: { empty: Sprite; filled: ModuleSlotPiece[] }[]; per: "module-slot" }
 );
+
+/** One tintable overlay of a filled beacon module slot. */
+export interface ModuleSlotPiece {
+  sprite: Sprite;
+  tint?: "primary" | "secondary";
+}
 
 /** How an entity is drawn: a flat list of layers, drawn in array order within
  *  each Layer. One shape for every entity — a chest is a single layer, a rail
@@ -305,6 +309,11 @@ export interface ModuleProto {
   name: string;
   effects: Partial<Effects>;
   localised: string;
+  /** 1..3 — picks the beacon slot art's variation. */
+  tier?: number;
+  /** RGB 0..1 per channel, multiplied over a beacon's filled-slot overlays.
+   *  Absent for modules that can't go in a beacon (productivity, quality). */
+  beaconTint?: { primary: [number, number, number]; secondary: [number, number, number] };
 }
 
 export interface BeaconProto {

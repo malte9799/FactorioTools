@@ -29,6 +29,7 @@ import type {
   MachineKind,
   MachineProto,
   ModuleProto,
+  ModuleSlotPiece,
   ProductProto,
   ProductivityTechnology,
   QualityName,
@@ -395,7 +396,7 @@ function graphicsForMachine(proto: any): EntityGraphics | undefined {
       ? body.per === "heat-connection-patches"
         ? [...body.connected, ...body.disconnected].map((s) => s.sheet)
         : body.per === "module-slot"
-          ? body.slots.flatMap((slot) => [slot.empty, ...slot.filled]).map((s) => s.sheet)
+          ? body.slots.flatMap((slot) => [slot.empty, ...slot.filled.map((piece) => piece.sprite)]).map((s) => s.sheet)
           : Object.values(body.sprites).map((s) => s.sheet)
       : [body.sprites.sheet],
   );
@@ -427,13 +428,10 @@ function graphicsForRocketSilo(proto: any): EntityGraphics | undefined {
 /** A beacon's module sockets are their own art (module_visualisations),
  *  separate from the main body — an empty-slot base (`has_empty_slot:
  *  true`) shown when nothing's in that slot, and (once a module actually
- *  occupies it) the box/lights-mask/lights-glow pieces layered over it.
- *  Those filled pieces are tinted per the specific module's own
- *  beacon_tint — this renderer has no runtime-tint concept (see
- *  unwrapAll's own apply_runtime_tint skip) — so they draw as the same
- *  untinted shape regardless of which module is equipped; that still
- *  reads as "this slot has something in it" even without the game's own
- *  per-module color.
+ *  occupies it) the box/lights-mask pieces layered over it. Every piece
+ *  carries one variation per module tier, and the masks are white art the
+ *  renderer multiplies by the module's own beacon_tint channel named in
+ *  apply_module_tint.
  *
  *  A small positive ySortBias keeps every piece above beacon-bottom.png
  *  even though they share its Layer.LowerObject tier: slot 2's own shift
@@ -443,12 +441,12 @@ function graphicsForRocketSilo(proto: any): EntityGraphics | undefined {
 function beaconModuleSlotGraphics(proto: any): GraphicsLayer[] {
   const style = proto.graphics_set?.module_visualisations?.[0];
   const rawSlots: any[] = style?.slots ?? [];
-  const slots: { empty: Sprite; filled: Sprite[] }[] = [];
+  const slots: { empty: Sprite; filled: ModuleSlotPiece[] }[] = [];
   for (const slot of rawSlots) {
     const emptyPiece = slot.find((p: any) => p.has_empty_slot === true);
     const empty = emptyPiece && toSprite(emptyPiece.pictures);
     if (!empty) continue; // no empty-slot base means this slot's own art is unusable either way
-    const filled: Sprite[] = [];
+    const filled: ModuleSlotPiece[] = [];
     for (const piece of slot) {
       if (piece.has_empty_slot === true) continue;
       // beacon-module-lights-N.png (draw_as_light: true) is an additive
@@ -462,7 +460,8 @@ function beaconModuleSlotGraphics(proto: any): GraphicsLayer[] {
       // filter applied explicitly.
       if (piece.pictures?.draw_as_light || piece.pictures?.draw_as_glow || piece.pictures?.blend_mode === "additive") continue;
       const sprite = toSprite(piece.pictures);
-      if (sprite) filled.push(sprite);
+      const tint = piece.apply_module_tint === "primary" || piece.apply_module_tint === "secondary" ? piece.apply_module_tint : undefined;
+      if (sprite) filled.push(tint ? { sprite, tint } : { sprite });
     }
     slots.push({ empty, filled });
   }
@@ -661,10 +660,16 @@ function mapModules(raw: Raw, locale: LocaleTables): Record<string, ModuleProto>
       const v = eff[key];
       if (typeof v === "number" && v !== 0) effects[key] = v;
     }
+    const rgb = (c: any): [number, number, number] | undefined =>
+      Array.isArray(c) ? [c[0] ?? 0, c[1] ?? 0, c[2] ?? 0] : c ? [c.r ?? 0, c.g ?? 0, c.b ?? 0] : undefined;
+    const primary = rgb(proto.beacon_tint?.primary);
+    const secondary = rgb(proto.beacon_tint?.secondary);
     modules[proto.name] = {
       name: proto.name,
       effects,
       localised: locale.itemName.get(proto.name) ?? proto.name,
+      tier: proto.tier,
+      ...(primary && secondary ? { beaconTint: { primary, secondary } } : {}),
     };
   }
   return modules;
