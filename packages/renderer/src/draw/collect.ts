@@ -3,7 +3,7 @@ import type { ResolvedVisual } from "../entityLookup.js";
 import { dir4Name, dir8Name, toCardinal, opposite, splitterLaneCells, step, Dir, type Cardinal, type NeighbourGrid } from "../neighbours/grid.js";
 import { classifyPipe } from "../neighbours/pipe.js";
 import { classifyWall } from "../neighbours/wall.js";
-import { classifyBeltCell, undergroundSideLoaded, type BeltCap } from "../neighbours/beltGraph.js";
+import { classifyBeltCell, undergroundSideLoad, type BeltCap } from "../neighbours/beltGraph.js";
 import { classifyPlatform, type PlatformBox } from "../neighbours/platform.js";
 import type { FluidNetwork } from "../neighbours/fluid.js";
 import type { HeatNetwork } from "../neighbours/heat.js";
@@ -57,10 +57,11 @@ interface EntityFrame {
   platformShapes: string[];
   animation: number;
   undergroundIn: boolean;
-  /** True when a belt-like entity feeds this underground's mouth from the
-   *  side rather than straight on — swaps in the direction_*_side_loading
-   *  sprite, which the plain mouth art doesn't otherwise account for. */
-  sideLoaded: boolean;
+  /** Which side (if any) a belt-like entity feeds this underground from —
+   *  see undergroundSideLoad: a back feed hides the back_patch, a front
+   *  feed swaps in the direction_*_side_loading body and hides the
+   *  front_patch. */
+  sideLoad: { back: boolean; front: boolean };
   /** Which cardinal half of an underground/loader's belt-lane frame to keep
    *  (the sprite is a full 2-tile belt frame, built to overlap into a
    *  neighbour the way a plain belt's own frame does — an underground has
@@ -121,7 +122,7 @@ function resolveFrame(entity: PlacedEntity, visual: ResolvedVisual, ctx: Collect
     platformShapes: [],
     animation: ctx.animationFrame,
     undergroundIn: entity.undergroundType !== "output",
-    sideLoaded: false,
+    sideLoad: { back: false, front: false },
     // A cover sprite draws one full tile further out than the connection
     // point itself, in the direction the connection faces — confirmed
     // against the reference renderer's own pipe-cover logic
@@ -226,17 +227,15 @@ function resolveFrame(entity: PlacedEntity, visual: ResolvedVisual, ctx: Collect
         // the sheet's East row, so every underground/loader rendered its
         // lane facing east regardless of the entity's real facing.
         //
-        // An exit half stores its direction pointing back at the entrance
-        // (see the opposite() correction below, applied to frame.direction
-        // for the structure column) — the lane's own row needs that exact
-        // same correction, or an exit's chevrons would visually point
-        // backward into the entrance instead of onward, away from it.
-        const laneDirection = entity.undergroundType === "output" ? opposite(toCardinal(entity.direction)) : entity.direction;
-        const laneFacing = toCardinal(laneDirection);
-        const shape = classifyBeltCell(x, y, laneDirection, ctx.grid, ctx.isBeltLike, true);
+        // Both halves store the direction items travel (as a 2.0 blueprint
+        // does — see packages/sim/src/network.ts), so the lane runs along
+        // entity.direction as-is; only the structure column (below) flips
+        // for an exit.
+        const laneFacing = toCardinal(entity.direction);
+        const shape = classifyBeltCell(x, y, entity.direction, ctx.grid, ctx.isBeltLike, true);
         frame.connectionIndex = shape.row;
         frame.caps = shape.caps.filter((cap) => cap.kind === (frame.undergroundIn ? "start" : "end"));
-        frame.sideLoaded = undergroundSideLoaded(x, y, entity.direction, ctx.grid, ctx.isBeltLike);
+        frame.sideLoad = undergroundSideLoad(x, y, entity.direction, ctx.grid, ctx.isBeltLike);
         // An entrance's belt still visibly runs on the surface BEHIND it
         // (opposite its facing) before diving into the tunnel ahead; an
         // exit's picks back up AHEAD of it (its own facing), having just
@@ -258,8 +257,10 @@ function resolveFrame(entity: PlacedEntity, visual: ResolvedVisual, ctx: Collect
     }
   }
 
-  // An underground's exit half stores its direction pointing back at the
-  // entrance, so its sprite column comes from the opposite facing.
+  // An underground's exit half stores its travel direction, but its
+  // structure sheet's column is indexed by the way its hood faces — back
+  // toward the entrance — so it comes from the opposite facing (the
+  // reference editor flips exits the same way).
   if (entity.undergroundType === "output") {
     frame.direction = Math.round(opposite(toCardinal(entity.direction)) / 4) % 4;
   }
@@ -275,7 +276,7 @@ function axisIndex(axis: GraphicsLayer["column"], frame: EntityFrame): number {
     case "connection": return frame.connectionIndex;
     case "underground-end": {
       const sideLoadIndex = frame.undergroundIn ? axis.inSideLoadIndex : axis.outSideLoadIndex;
-      if (frame.sideLoaded && sideLoadIndex !== undefined) return sideLoadIndex;
+      if (frame.sideLoad.front && sideLoadIndex !== undefined) return sideLoadIndex;
       return frame.undergroundIn ? axis.inIndex : axis.outIndex;
     }
     case "direction256": {
@@ -548,6 +549,13 @@ export function collectEntity(
     }
 
     const sprite = spriteFor(layer, entity, frame);
+    // An underground's structure patches are separate layers, told apart
+    // only by their sheet's file name — each one is dropped where a side
+    // feed runs across it (see undergroundSideLoad).
+    if (sprite && entity.undergroundType !== undefined) {
+      if (frame.sideLoad.back && sprite.sheet.endsWith("-back-patch.png")) return;
+      if (frame.sideLoad.front && sprite.sheet.endsWith("-front-patch.png")) return;
+    }
     if (!sprite) return;
     let column = axisIndex(layer.column, frame);
     const row = axisIndex(layer.row, frame);
@@ -568,7 +576,15 @@ export function collectEntity(
     // half-crop's own midpoint lands by default — recentring only for a
     // loader keeps an underground-belt's already-correct placement alone.
     const laneRecenter = isUndergroundLane && entity.name.includes("loader") ? 0.5 : 0;
-    push(out, sprite, column, row, entity, layer.layer, order, alpha, 0, 0, false, isUndergroundLane ? frame.laneKeepSide : undefined, laneRecenter, layer.ySortBias ?? 0);
+    // A belt side-loading an underground (see undergroundSideLoad) overlaps
+    // its lane and must paint over it, rails included — but plain belts sit
+    // on the lower belt layer, below the lane. Drop the lane to the belt
+    // layer: a south feed's row already sorts after it, a north feed's row
+    // needs the lane sorted just ahead of it.
+    const underSideFeed = isUndergroundLane && (frame.sideLoad.back || frame.sideLoad.front);
+    const laneLayer = underSideFeed ? Layer.LowerObject : layer.layer;
+    const laneBias = (layer.ySortBias ?? 0) + (isUndergroundLane && frame.sideLoad.back ? -1 - CAP_PRIORITY_EPSILON : 0);
+    push(out, sprite, column, row, entity, laneLayer, order, alpha, 0, 0, false, isUndergroundLane ? frame.laneKeepSide : undefined, laneRecenter, laneBias);
 
     // Belt caps share the body's grid but sit a tile off toward the
     // neighbour they cover. A splitter's two belt-lane layers each carry

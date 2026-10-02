@@ -2,17 +2,17 @@ import type { GameData, PlacedEntity, QualityName, RenderCatalog, WireColor, Wir
 import { Camera } from "./camera.js";
 import { getSharedSpriteAtlas } from "./spriteAtlas.js";
 import { getSharedIconAtlas } from "./iconAtlas.js";
-import { activeFluidConnections, buildVisualLookup, effectiveFootprint, hasAnimatedLayer, isPoleLike, isTwoDirectionOnly, isUndergroundLike, makeConnectorPredicates, rotateAroundCenter, rotationStep, type ResolvedVisual } from "./entityLookup.js";
+import { activeFluidConnections, autoUnderground, buildVisualLookup, effectiveFootprint, hasAnimatedLayer, isPoleLike, isTwoDirectionOnly, isUndergroundLike, makeConnectorPredicates, rotateAroundCenter, rotationStep, undergroundPartner, type ResolvedVisual } from "./entityLookup.js";
 import { drawAltModeOverlay, drawQualityBadge } from "./entityDraw.js";
-import { buildGrid, NeighbourGrid } from "./neighbours/grid.js";
+import { buildGrid, NeighbourGrid, step, toCardinal } from "./neighbours/grid.js";
 import { buildFluidNetwork, FluidNetwork } from "./neighbours/fluid.js";
 import { buildHeatNetwork, HeatNetwork } from "./neighbours/heat.js";
 import type { PlatformBox } from "./neighbours/platform.js";
 import { buildWireNetwork, resolveWires, terminalFor, type ResolvedWire, type WireNetwork } from "./neighbours/wires.js";
 import { drawSupplyAreas, drawWires, type SupplyArea } from "./draw/wireDraw.js";
 import { collectEntity, collectInserterPlatform, type CollectContext } from "./draw/collect.js";
-import { paint, paintPlain, drawOutline, drawHoverHighlight, type PaintTally } from "./draw/paint.js";
-import { getHoverHighlightSprite } from "./hoverHighlightSprite.js";
+import { paint, paintPlain, drawOutline, drawHoverHighlight, drawUndergroundLine, type PaintTally } from "./draw/paint.js";
+import { getHoverHighlightSprite, getUndergroundLinesSprite } from "./hoverHighlightSprite.js";
 import { compareDrawCommands, type DrawCommand } from "./draw/commands.js";
 import { drawInserter } from "./sprites/inserter.js";
 import { SpatialIndex, type IndexedBox } from "./spatialIndex.js";
@@ -562,6 +562,7 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
   let ghostPreviewGrid: NeighbourGrid | null = null;
   let ghostPreviewFluid: FluidNetwork | null = null;
   let ghostPreviewHeat: HeatNetwork | null = null;
+  let ghostUnderground: { undergroundType: "input" | "output"; direction: number } | undefined;
   let entitiesVersion = 0;
   let highlightVersion = 0;
 
@@ -778,28 +779,33 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
       if (ghostVisual) {
         const [gfw, gfh] = effectiveFootprint(ghostVisual, ghostDirection);
         const snapped = { x: snapAxis(ghostWorldPos.x, gfw), y: snapAxis(ghostWorldPos.y, gfh) };
+        const previewKey = `${entitiesVersion}|${mode.entityName}|${snapped.x},${snapped.y}|${ghostDirection}`;
+        const previewStale = previewKey !== ghostPreviewKey;
+        if (previewStale) {
+          ghostUnderground = isUndergroundLike(mode.entityName)
+            ? autoUnderground(entities, mode.entityName, snapped.x, snapped.y, ghostDirection, data.undergroundBelts?.[mode.entityName]?.maxDistance ?? 0)
+            : undefined;
+        }
         ghost = {
           entityNumber: -1,
           name: mode.entityName,
           x: snapped.x,
           y: snapped.y,
-          direction: ghostDirection,
+          // A paired exit is stored with its travel direction, the
+          // reverse of how it's held (see autoUnderground).
+          direction: ghostUnderground?.direction ?? ghostDirection,
           quality: mode.quality ?? "normal",
           modules: [],
           filterItems: [],
           // Every underground-belt/loader tier MUST carry a real
           // undergroundType — collect.ts's resolveFrame branches on it being
           // defined at all to pick the entrance/exit structure art over
-          // plain belt row/cap art. A freshly-placed one (and this ghost,
-          // previewing exactly that) is always the entrance/input half; you
-          // only get an output half by placing a second one that pairs with
-          // an existing entrance, which the game (and placeEntity, in
-          // index.ts) handles by editing an already-placed entity's own
-          // type, not by constructing a fresh one as "output".
-          undergroundType: isUndergroundLike(mode.entityName) ? "input" : undefined,
+          // plain belt row/cap art. Previews the same auto-pairing
+          // placeEntity (index.ts) applies: an entrance in range behind it
+          // makes this ghost its exit.
+          undergroundType: ghostUnderground?.undergroundType,
         };
-        const previewKey = `${entitiesVersion}|${mode.entityName}|${snapped.x},${snapped.y}|${ghostDirection}`;
-        if (previewKey !== ghostPreviewKey) {
+        if (previewStale) {
           ghostPreviewKey = previewKey;
           const withGhost = [...entities, ghost];
           ghostPreviewGrid = connectors.isBeltLike(mode.entityName) ? buildGrid(withGhost) : null;
@@ -1076,15 +1082,38 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
       }
     }
 
-    if (hoveredEntityNumber !== undefined) {
+    // An underground under the cursor — hovered, or the ghost about to be
+    // built — also shows its paired other half (green brackets) and the
+    // tunnel between them, the way the game does.
+    const drawUndergroundPair = (target: PlacedEntity, corner: HTMLImageElement) => {
+      if (target.undergroundType === undefined) return;
+      const partner = undergroundPartner(entities, target, data.undergroundBelts?.[target.name]?.maxDistance ?? 0);
+      if (!partner) return;
+      const lines = getUndergroundLinesSprite();
+      if (lines) {
+        const facing = toCardinal(target.direction);
+        const { dx, dy } = step(facing);
+        const gap = Math.abs(partner.x - target.x) + Math.abs(partner.y - target.y);
+        const sign = target.undergroundType === "output" ? -1 : 1;
+        for (let k = 1; k < gap; k++) {
+          drawUndergroundLine(ctx, lines, target.x + dx * k * sign, target.y + dy * k * sign, facing);
+        }
+      }
+      drawHoverHighlight(ctx, corner, partner.x, partner.y, 1, 1, "pair");
+    };
+
+    const corner = getHoverHighlightSprite();
+    if (hoveredEntityNumber !== undefined && corner) {
       const hovered = entityById.get(hoveredEntityNumber);
       const visual = hovered && visualFor(hovered.name);
-      const corner = getHoverHighlightSprite();
-      if (hovered && visual && corner) {
+      if (hovered && visual) {
         const [fw, fh] = effectiveFootprint(visual, hovered.direction);
+        drawUndergroundPair(hovered, corner);
         drawHoverHighlight(ctx, corner, hovered.x, hovered.y, fw, fh);
       }
     }
+    // The ghost itself gets no yellow brackets — only its would-be pair.
+    if (ghost && corner) drawUndergroundPair(ghost, corner);
 
     // Marquee rectangle while a box-drag action (copyBox/cutBox/deleteBox)
     // is in progress — tinted per mode so the color itself hints at what
@@ -1301,8 +1330,10 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
 
   function animProfileFor(entity: PlacedEntity, visual: ResolvedVisual, baseCtx: CollectContext): AnimProfile {
     // Direction matters: the same entity facing two ways can lay its frames out
-    // differently, and turbo belts offset alternate tiles by parity.
-    const key = `${entity.name}|${entity.direction}|${Math.abs(Math.round(entity.x) + Math.round(entity.y)) % 2}`;
+    // differently, and turbo belts offset alternate tiles by parity. So does an
+    // underground's end: entrance and exit keep opposite halves of the belt
+    // frame, so their lane's frame origin differs by half a frame.
+    const key = `${entity.name}|${entity.direction}|${Math.abs(Math.round(entity.x) + Math.round(entity.y)) % 2}|${entity.undergroundType ?? ""}`;
     const cached = animProfiles.get(key);
     if (cached) return cached;
 

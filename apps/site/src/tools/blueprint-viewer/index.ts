@@ -22,7 +22,7 @@ import {
   remapSelectionForPaste,
 } from "@factoriotools/engine";
 import type { CalculationResult, Timescale, Blueprint, BlueprintTreeNode, PlacedEntity, QualityName, MachineGroup, ModuleStack, ThroughputContext, BottleneckSubgroup, WireColor, WireLink } from "@factoriotools/engine";
-import { mountRenderer, isPoleLike, isTwoDirectionOnly, rotationStep, effectiveFootprint, rotateAroundCenter, summariseRecording, slowestFrames, worstPhase, autoConnectPole, canWire, dropWiresFor, toggleWire, type BlueprintRenderer, type HighlightRole } from "@factoriotools/renderer";
+import { mountRenderer, isPoleLike, isUndergroundLike, autoUnderground, undergroundPartner, isTwoDirectionOnly, rotationStep, effectiveFootprint, rotateAroundCenter, summariseRecording, slowestFrames, worstPhase, autoConnectPole, canWire, dropWiresFor, toggleWire, type BlueprintRenderer, type HighlightRole } from "@factoriotools/renderer";
 import { buildRecipeCard, renderResults, type ViewOptions } from "./legacy-view/panels.js";
 import { icon } from "./legacy-view/icons.js";
 import { makeFloatingWindow } from "../../window-manager.js";
@@ -1376,6 +1376,12 @@ export function mountBlueprintViewer(root: HTMLElement): () => void {
    *  still adds a new entity rather than silently replacing something
    *  incompatible — only a same-name, different-quality rebuild counts as
    *  an upgrade. */
+  /** How far an underground-belt tier can tunnel (0 for loaders, which
+   *  never pair). */
+  function undergroundMaxDistance(name: string): number {
+    return getData().undergroundBelts?.[name]?.maxDistance ?? 0;
+  }
+
   function placeEntity(worldX: number, worldY: number, name: string, direction: number, quality: QualityName) {
     const existing = entities.find((e) => e.name === name && e.x === worldX && e.y === worldY);
     if (existing) {
@@ -1407,16 +1413,25 @@ export function mountBlueprintViewer(root: HTMLElement): () => void {
       setStatus("Can't build here — something else already occupies that space.", "error");
       return;
     }
+    // Auto-paired like the game (and render.ts's ghost): held facing back
+    // at an entrance in range, this becomes its exit.
+    const underground = isUndergroundLike(name)
+      ? autoUnderground(entities, name, worldX, worldY, direction, undergroundMaxDistance(name))
+      : undefined;
     applyEdit(() => {
       const newEntity: PlacedEntity = {
         entityNumber: nextEntityNumber++,
         name,
         x: worldX,
         y: worldY,
-        direction,
+        direction: underground?.direction ?? direction,
         quality,
         modules: [],
         filterItems: [],
+        // collect.ts needs undergroundType defined to draw an
+        // underground/loader as one (half-cropped lane, own-end cap only)
+        // rather than as a plain belt.
+        undergroundType: underground?.undergroundType,
       };
       entities = [...entities, newEntity];
       // A pole dropped beside a powered one joins the network on the spot,
@@ -1573,6 +1588,21 @@ export function mountBlueprintViewer(root: HTMLElement): () => void {
    *  (Shift+R) instead of the default clockwise (r). */
   function rotateEntity(target: PlacedEntity, reverse = false) {
     if (isPoleLike(target.name)) return;
+    if (target.undergroundType !== undefined) {
+      // Like the game, R on an underground swaps entrance and exit instead
+      // of turning it: the hood stays put and the flow reverses, so the
+      // stored travel direction flips too. Its paired other half (if any)
+      // flips with it, keeping the pair intact — one undo step for both.
+      const partner = undergroundPartner(entities, target, undergroundMaxDistance(target.name));
+      applyEdit(() => {
+        for (const e of partner ? [target, partner] : [target]) {
+          e.undergroundType = e.undergroundType === "output" ? "input" : "output";
+          e.direction = (e.direction + 8) % 16;
+        }
+        entities = [...entities];
+      });
+      return;
+    }
     if (isTwoDirectionOnly(target.name)) {
       // Only two facings exist at all (north=0, east=4) — R just toggles
       // between them, `reverse` is a no-op.
