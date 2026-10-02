@@ -1095,7 +1095,9 @@ export function mountBlueprintViewer(root: HTMLElement): () => void {
     // Two machines of the same group render the identical card, so key on what
     // the card actually shows rather than on the entity: moving along a row of
     // identical assemblers then costs no rebuild and no measurement at all.
-    const contentKey = `${group.machineName}|${group.recipeLabel}|${group.machineLabel}|${group.count}|${group.quality}|${group.moduleLabel}|${options.timescale}|${options.multiplier}|${options.scaleFactor}`;
+    // group.key covers beacon count and effects too — machines that differ
+    // only in beacon coverage are separate groups with different rates.
+    const contentKey = `${group.key}|${group.count}|${options.timescale}|${options.multiplier}|${options.scaleFactor}`;
     if (contentKey !== tooltipContentKey) {
       tooltipContentKey = contentKey;
       const card = buildRecipeCard(group, getData(), options);
