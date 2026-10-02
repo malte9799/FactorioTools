@@ -11,6 +11,8 @@ import { RateOverlay } from "../../rate-overlay/controller.js";
 import { clockText, renderLayerList, renderPortList, RESEARCH_HTML, simSummaryHtml, wireLayerList, wirePortList, wireResearch } from "../../rate-overlay/panels.js";
 import { DEFAULTS, PALETTES, type LabSettings } from "../../rate-overlay/settings.js";
 import { getCurrentBlueprint } from "../../current-blueprint.js";
+import { currentQuality, onQualityChange } from "../../render-presets.js";
+import { GRAPHICS_WINDOW_HTML, wireGraphicsPanel } from "../../graphics-panel.js";
 
 const TEMPLATE = `
   <div id="lab-stage" class="schematic-frame"></div>
@@ -20,7 +22,10 @@ const TEMPLATE = `
     <button type="button" data-toggle="lab-style">Style</button>
     <button type="button" data-toggle="lab-sim">Simulation</button>
     <button type="button" data-toggle="lab-ports">Ports</button>
+    <button type="button" data-toggle="lab-graphics">Graphics</button>
   </div>
+
+  <div id="lab-graphics" class="gui-window floating-window lab-window" hidden>${GRAPHICS_WINDOW_HTML}</div>
 
   <div id="lab-layers" class="gui-window floating-window lab-window" hidden>
     <div class="gui-titlebar"><span>Layers</span><span class="grip" aria-hidden="true"></span></div>
@@ -106,6 +111,7 @@ export function mountOverlayLab(root: HTMLElement): () => void {
     "lab-style": makeFloatingWindow($("#lab-style"), { x: right, y: 96, width: 340 }),
     "lab-sim": makeFloatingWindow($("#lab-sim"), { x: 16, y: Math.max(96, window.innerHeight - 330), width: 320 }),
     "lab-ports": makeFloatingWindow($("#lab-ports"), { x: 340, y: 96, width: 380 }),
+    "lab-graphics": makeFloatingWindow($("#lab-graphics"), { x: right, y: 96, width: 340 }),
   };
   const portsOpen = () => !windows["lab-ports"]!.el.hidden;
   for (const w of Object.values(windows)) w.hide();
@@ -142,12 +148,9 @@ export function mountOverlayLab(root: HTMLElement): () => void {
     const v = overlay.settings.style[key] as number;
     return `<div class="lab-slider"><input type="range" id="lab-s-${key}" data-style="${key}" min="${min}" max="${max}" step="${step}" value="${v}"><span class="lab-slider-value" data-value-for="${key}">${fmt(v)}</span></div>`;
   }
-  function toggle(key: keyof LabSettings["style"], label: string) {
-    return `<label class="lab-check"><input type="checkbox" data-style="${key}" ${overlay.settings.style[key] ? "checked" : ""}> ${label}</label>`;
-  }
+
   const FORMATS: Partial<Record<keyof LabSettings["style"], (v: number) => string>> = {
-    dimAmount: (v) => `${Math.round(v * 100)}%`,
-    laneWidth: (v) => `${v.toFixed(2)} tile`,
+      laneWidth: (v) => `${v.toFixed(2)} tile`,
     ringThickness: (v) => `${v.toFixed(2)} tile`,
     labelScale: (v) => `${v.toFixed(2)}×`,
     detailZoom: (v) => `${Math.round(v)} px/tile`,
@@ -160,30 +163,7 @@ export function mountOverlayLab(root: HTMLElement): () => void {
         { value: "colorblind", label: "Colour-blind" },
         { value: "muted", label: "Muted" },
       ]) + `<div class="lab-swatches">${swatches()}</div>`),
-      group("Build dimming", slider("dimAmount", 0, 0.85, 0.05, FORMATS.dimAmount!)),
-      group("Lanes", segmented("laneStyle", [
-        { value: "strips", label: "Strips" },
-        { value: "edges", label: "Edges" },
-        { value: "tint", label: "Tile tint" },
-      ]) + slider("laneWidth", 0.04, 0.3, 0.01, FORMATS.laneWidth!) + toggle("laneHideIdle", "Hide empty lanes")),
-      group("Machines", segmented("ringStyle", [
-        { value: "ring", label: "Ring" },
-        { value: "light", label: "Light" },
-        { value: "bar", label: "Bar" },
-        { value: "fill", label: "Fill" },
-      ]) + segmented("ringLabel", [
-        { value: "always", label: "Label always" },
-        { value: "hover", label: "On hover" },
-        { value: "never", label: "Never" },
-      ]) + slider("ringThickness", 0.06, 0.4, 0.02, FORMATS.ringThickness!)),
-      group("Rendered items", segmented("armStyle", [
-        { value: "carry", label: "Carried item" },
-        { value: "arc", label: "Swing arc" },
-        { value: "dot", label: "Busy dot" },
-      ]) + segmented("itemStyle", [
-        { value: "icons", label: "Item icons" },
-        { value: "dots", label: "Dots" },
-      ])),
+      group("Sizes", `<span class="lab-field-label">Lane width</span>` + slider("laneWidth", 0.04, 0.3, 0.01, FORMATS.laneWidth!) + `<span class="lab-field-label">Machine ring and bar</span>` + slider("ringThickness", 0.06, 0.4, 0.02, FORMATS.ringThickness!)),
       group("Rates", segmented("rateUnit", [
         { value: "s", label: "Per second" },
         { value: "min", label: "Per minute" },
@@ -206,6 +186,7 @@ export function mountOverlayLab(root: HTMLElement): () => void {
     (overlay.settings.style as Record<string, unknown>)[key] = btn.dataset.value;
     persist();
     renderStyle();
+    renderLayerList($("#lab-layer-list"), overlay.settings); // chip colours follow the palette
   }, { signal });
   styleBody.addEventListener("input", (e) => {
     const input = e.target as HTMLInputElement;
@@ -267,11 +248,13 @@ export function mountOverlayLab(root: HTMLElement): () => void {
   $("#lab-restart").addEventListener("click", () => overlay.rebuild(), { signal });
   wireResearch($("#lab-research"), overlay, signal);
   wirePortList($("#lab-port-list"), overlay, signal);
+  wireGraphicsPanel($(".graphics-panel"), signal);
+  const stopQuality = onQualityChange((q) => renderer?.setQuality(q));
 
   void (async () => {
     await loadData();
     if (destroyed) return;
-    renderer = mountRenderer(stage, getData(), getRenderCatalog());
+    renderer = mountRenderer(stage, getData(), getRenderCatalog(), currentQuality());
     overlay.attach(renderer);
     overlay.setEnabled(true);
     $("#lab-loading").hidden = true;
@@ -284,6 +267,7 @@ export function mountOverlayLab(root: HTMLElement): () => void {
   return () => {
     destroyed = true;
     controller.abort();
+    stopQuality();
     overlay.destroy();
     renderer?.destroy();
     for (const w of Object.values(windows)) w.destroy();

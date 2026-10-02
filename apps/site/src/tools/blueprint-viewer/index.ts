@@ -34,6 +34,8 @@ import { buildLibrarySidebar } from "./library-sidebar.js";
 import { saveToLibrary } from "./blueprint-library.js";
 import { RateOverlay } from "../../rate-overlay/controller.js";
 import { setCurrentBlueprint, VIEWER_AUTOSAVE_KEY } from "../../current-blueprint.js";
+import { currentQuality, onQualityChange } from "../../render-presets.js";
+import { GRAPHICS_WINDOW_HTML, wireGraphicsPanel } from "../../graphics-panel.js";
 import { clockText, rateUnitHtml, renderLayerList, renderPortList, RESEARCH_HTML, simSummaryHtml, wireLayerList, wirePortList, wireRateUnit, wireResearch } from "../../rate-overlay/panels.js";
 
 const TEMPLATE = `
@@ -195,6 +197,8 @@ const TEMPLATE = `
     </div>
   </div>
 
+  <div id="graphics-window" class="gui-window floating-window lab-window" hidden>${GRAPHICS_WINDOW_HTML}</div>
+
   <div id="about-window" class="gui-window floating-window" hidden>
     <div class="gui-titlebar">
       <span>About</span>
@@ -262,6 +266,7 @@ const TEMPLATE = `
     <button type="button" data-toggle="intake-window">Blueprint Viewer</button>
     <button type="button" data-toggle="rate-window">Rate Calculator</button>
     <button type="button" data-toggle="palette-window">Build</button>
+    <button type="button" data-toggle="graphics-window">Graphics</button>
     <button type="button" data-toggle="about-window">About</button>
     <button type="button" id="alt-mode-toggle" title="Show recipes and modules (Alt)">Alt mode</button>
     <button type="button" data-toggle="debug-window" title="Performance stats (F8)">Debug</button>
@@ -414,6 +419,7 @@ export function mountBlueprintViewer(root: HTMLElement): () => void {
   const intakeWindow = makeFloatingWindow($("#intake-window"), { x: 16, y: 66 });
   const resultsWindow = makeFloatingWindow(resultsWindowEl, { x: Math.max(16, window.innerWidth - 460), y: 66 });
   const aboutWindow = makeFloatingWindow($("#about-window"), { x: 16, y: window.innerHeight - 120 });
+  const graphicsWindow = makeFloatingWindow($("#graphics-window"), { x: Math.max(8, window.innerWidth - 356), y: 96, width: 340 });
 
   // The Rate Calculator: a live simulation drawn over the build itself.
   // Its window being open is what switches the overlay on; the classic
@@ -493,6 +499,7 @@ export function mountBlueprintViewer(root: HTMLElement): () => void {
     "intake-window": intakeWindow,
     "results-window": resultsWindow,
     "rate-window": rateWindow,
+    "graphics-window": graphicsWindow,
     "about-window": aboutWindow,
     "palette-window": paletteWindow,
     "debug-window": debugWindow,
@@ -970,7 +977,10 @@ export function mountBlueprintViewer(root: HTMLElement): () => void {
   let scaleTarget: { itemName: string; rate: number; timescale: Timescale } | null = null;
   let latestBottlenecks: Map<string, BottleneckSubgroup[]> = new Map();
 
-  let renderer: BlueprintRenderer = mountRenderer(canvas, getData(), getRenderCatalog());
+  let renderer: BlueprintRenderer = mountRenderer(canvas, getData(), getRenderCatalog(), currentQuality());
+  // The Graphics window's preset applies to whichever renderer is current.
+  const stopQuality = onQualityChange((q) => renderer.setQuality(q));
+  wireGraphicsPanel($(".graphics-panel"), signal);
   renderer.onHover(onSchematicHover);
   rateOverlay.attach(renderer);
   // Rebuilt alongside every renderer remount (loadData() resolving with the
@@ -2482,12 +2492,15 @@ export function mountBlueprintViewer(root: HTMLElement): () => void {
   let libraryCollapsed = false;
   const libraryWindowElForCollapse = $<HTMLDivElement>("#library-window");
   const libraryCollapseToggle = $<HTMLButtonElement>("#library-collapse-toggle");
-  libraryCollapseToggle.addEventListener("click", () => {
-    libraryCollapsed = !libraryCollapsed;
+  function setLibraryCollapsed(collapsed: boolean) {
+    libraryCollapsed = collapsed;
     libraryWindowElForCollapse.classList.toggle("is-collapsed", libraryCollapsed);
     libraryCollapseToggle.textContent = libraryCollapsed ? "▸" : "◂";
     libraryCollapseToggle.title = libraryCollapsed ? "Expand sidebar" : "Collapse sidebar";
-  }, { signal });
+  }
+  libraryCollapseToggle.addEventListener("click", () => setLibraryCollapsed(!libraryCollapsed), { signal });
+  // On a phone the open sidebar would cover most of the map: start folded.
+  if (matchMedia("(max-width: 640px)").matches) setLibraryCollapsed(true);
 
   $("#import").addEventListener("click", async () => {
     try {
@@ -2991,7 +3004,7 @@ export function mountBlueprintViewer(root: HTMLElement): () => void {
     // fallback's empty catalog needs rebuilding once the real data is in —
     // otherwise every entity would stay stuck rendering as outline boxes.
     renderer.destroy();
-    renderer = mountRenderer(canvas, getData(), getRenderCatalog());
+    renderer = mountRenderer(canvas, getData(), getRenderCatalog(), currentQuality());
     renderer.onHover(onSchematicHover);
     rateOverlay.attach(renderer);
     renderer.setAltMode(altModeOn);
@@ -3121,7 +3134,9 @@ export function mountBlueprintViewer(root: HTMLElement): () => void {
   return () => {
     controller.abort();
     rateOverlay.destroy();
+    stopQuality();
     renderer.destroy();
+    graphicsWindow.destroy();
     rateWindowRaw.destroy();
     intakeWindow.destroy();
     resultsWindow.destroy();

@@ -1,8 +1,18 @@
 name: Deploy to GitHub Pages
 
+# Publishes the gh-pages branch that pages-build.yml fills: the default
+# branch's site at the root, every other branch at preview/<branch>/.
+#
+# It runs on workflow_run rather than on the push itself because a
+# workflow_run job runs in the default branch's context, which the
+# github-pages environment allows to deploy, whichever branch was pushed.
+# (Like every workflow_run, this only takes effect once it's on the
+# default branch.)
+
 on:
-  push:
-    branches: [main]
+  workflow_run:
+    workflows: ["Build site"]
+    types: [completed]
   workflow_dispatch:
 
 permissions:
@@ -12,29 +22,41 @@ permissions:
 
 concurrency:
   group: pages
+  # Every run publishes the whole gh-pages branch as it is, so a newer run
+  # makes an older one redundant.
   cancel-in-progress: true
 
 jobs:
-  build:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: "22"
-          cache: npm
-      - run: npm ci
-      - run: npm run build
-      - uses: actions/upload-pages-artifact@v3
-        with:
-          path: apps/site/dist
-
   deploy:
-    needs: build
+    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-latest
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: gh-pages
+
+      - name: List the previews
+        run: |
+          mkdir -p preview
+          {
+            echo '<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">'
+            echo '<title>Previews · FactorioTools</title>'
+            echo '<style>body{margin:0;padding:24px 16px;background:#1f1e1c;color:#e6e0d8;font:15px/1.5 system-ui,sans-serif}main{max-width:640px;margin:auto}a{color:#ffcc80}li{margin:6px 0}</style>'
+            echo '<main><h1>Branch previews</h1><p><a href="../">Main site</a></p><ul>'
+            for dir in preview/*/; do
+              [ -d "$dir" ] || continue
+              name=$(basename "$dir")
+              echo "<li><a href=\"./$name/\">$name</a></li>"
+            done
+            echo '</ul></main>'
+          } > preview/index.html
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: .
+
       - id: deployment
         uses: actions/deploy-pages@v4

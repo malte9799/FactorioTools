@@ -1,0 +1,49 @@
+name: Build site
+
+# Builds the site for every pushed branch and files it in the gh-pages
+# branch, which only stores what Pages serves: main at the root, every
+# other branch under preview/<branch>/. Deleting a branch removes its
+# preview. Publishing is pages.yml's job, which runs after this one.
+
+on:
+  push:
+    branches-ignore: [gh-pages]
+  delete:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    if: github.event_name != 'delete'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+
+      - run: npm ci
+      - run: npm run build
+
+      - name: Store the build in gh-pages
+        env:
+          BRANCH: ${{ github.ref_name }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          GH_TOKEN: ${{ github.token }}
+        run: bash .github/scripts/pages-store.sh add "$BRANCH" "$DEFAULT_BRANCH" apps/site/dist
+
+  remove-preview:
+    if: github.event_name == 'delete' && github.event.ref_type == 'branch'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Drop the branch's preview from gh-pages
+        env:
+          BRANCH: ${{ github.event.ref }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          GH_TOKEN: ${{ github.token }}
+        run: bash .github/scripts/pages-store.sh remove "$BRANCH" "$DEFAULT_BRANCH"

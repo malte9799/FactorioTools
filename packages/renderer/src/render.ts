@@ -238,6 +238,10 @@ export interface BlueprintRenderer {
   /** Toggles Factorio's own Alt-mode look: recipe icons on crafting
    *  machines, module icons on machines/beacons that have any equipped. */
   setAltMode(enabled: boolean): void;
+  /** Changes the render quality while running (resolution, animation,
+   *  shadows, frame cap). */
+  setQuality(quality: RenderQuality): void;
+  getQuality(): RenderQuality;
   /** Quarter-turns the ghost's facing while in 'place' mode (no-op
    *  otherwise) — what the 'r'/Shift+R keyboard shortcut calls, mirroring
    *  Factorio's own "rotate what you're holding" convention. Uses the
@@ -409,7 +413,26 @@ const GHOST_INVALID_TINT = "#e53935";
 /** Mounts a self-contained Canvas2D blueprint renderer into `container`,
  *  wiring up Factorio-feel pan/zoom (see camera.ts) and hover hit-testing
  *  (spatialIndex.ts) without any external rendering library. */
-export function mountRenderer(container: HTMLElement, data: GameData, catalog: RenderCatalog): BlueprintRenderer {
+/** How much work the renderer may spend per frame. A phone gets a cheaper
+ *  set than a desktop; the app picks one (see the site's render presets)
+ *  and can change it while running. */
+export interface RenderQuality {
+  /** Upper bound on the canvas's pixels per CSS pixel. A 3× phone screen
+   *  drawn at 1× paints a ninth of the pixels. */
+  maxPixelRatio: number;
+  /** Belts and other animated sprites move. Off, they hold still and a
+   *  static view is never redrawn. */
+  animation: boolean;
+  /** Ground shadows under buildings. */
+  shadows: boolean;
+  /** Most frames drawn per second, while something is moving. */
+  maxFps: number;
+}
+
+export const FULL_QUALITY: RenderQuality = { maxPixelRatio: Infinity, animation: true, shadows: true, maxFps: 60 };
+
+export function mountRenderer(container: HTMLElement, data: GameData, catalog: RenderCatalog, initialQuality: RenderQuality = FULL_QUALITY): BlueprintRenderer {
+  let quality: RenderQuality = { ...initialQuality };
   const canvas = document.createElement("canvas");
   canvas.style.display = "block";
   canvas.style.width = "100%";
@@ -473,8 +496,11 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
   let hoveredEntityNumber: number | undefined;
   let altMode = false;
   let animationFrame = 0;
-  let dpr = window.devicePixelRatio || 1;
+  const pixelRatio = () => Math.min(window.devicePixelRatio || 1, quality.maxPixelRatio);
+  let dpr = pixelRatio();
   let rafHandle = 0;
+  /** When the last frame was drawn, for the maxFps cap. */
+  let lastDrawAt = 0;
   /** Set whenever something that affects the picture changes; cleared once
    *  the frame is drawn. Without it draw() ran unconditionally 60 times a
    *  second — a full spatial query, classification and sort pass — even on a
@@ -686,7 +712,7 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
 
   function resize(): void {
     const rect = container.getBoundingClientRect();
-    dpr = window.devicePixelRatio || 1;
+    dpr = pixelRatio();
     canvas.width = Math.max(1, Math.round(rect.width * dpr));
     canvas.height = Math.max(1, Math.round(rect.height * dpr));
     // Setting canvas.width/height also clears the canvas, so the frame must
@@ -1025,7 +1051,7 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
     }
 
     const tPaint = performance.now();
-    paintPlain(ctx, atlas, commands, paintTally ?? undefined);
+    paintPlain(ctx, atlas, commands, paintTally ?? undefined, !quality.shadows);
     phases.paint = performance.now() - tPaint;
 
     const tInserters = performance.now();
@@ -1570,12 +1596,20 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
     // Advance the belt clock only while something on screen actually reads
     // it. On a scene with no animated entity visible this leaves the frame
     // clean, and nothing is redrawn until the user does something.
-    if (!animationFrozen && animatedVisibleCount > 0) {
-      animationFrame = (animationFrame + 1) % 1_000_000;
+    // The frame cap only holds back drawing: a skipped frame stays dirty
+    // and is drawn on the next tick that's allowed to. The belt clock moves
+    // by the 60 Hz frames that passed since the last drawn frame (at most a
+    // few, so coming back from idle doesn't jump), so belts keep their speed
+    // at 30 fps and just move in bigger steps.
+    const mayDraw = now - lastDrawAt >= 1000 / quality.maxFps - 2;
+    if (mayDraw && quality.animation && !animationFrozen && animatedVisibleCount > 0) {
+      const steps = lastDrawAt === 0 ? 1 : Math.min(4, Math.max(1, Math.round((now - lastDrawAt) / (1000 / 60))));
+      animationFrame = (animationFrame + steps) % 1_000_000;
       needsRedraw = true;
     }
     applyKeyboardPan(16); // pans through the camera, which invalidates itself
-    if (needsRedraw) {
+    if (needsRedraw && mayDraw) {
+      lastDrawAt = now;
       drawAndAccount();
       needsRedraw = false;
     } else {
@@ -2097,6 +2131,13 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
     },
     getAnimationFrame() {
       return animationFrame;
+    },
+    setQuality(next) {
+      quality = { ...next };
+      resize(); // picks up the new pixel ratio and redraws
+    },
+    getQuality() {
+      return { ...quality };
     },
     setAltMode(enabled) {
       altMode = enabled;

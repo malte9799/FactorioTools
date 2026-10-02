@@ -87,6 +87,7 @@ export class RateOverlay {
   private last = 0;
   private acc = 0;
   private lastUi = 0;
+  private lastDraw = 0;
 
   constructor(
     private readonly stage: HTMLElement,
@@ -355,8 +356,13 @@ export class RateOverlay {
       this.acc -= n;
       f.step(n);
     }
-    if (f && this.renderer) {
-      const dpr = window.devicePixelRatio || 1;
+    // Same limits as the renderer underneath: its render preset caps the
+    // pixel ratio and the frame rate, and the overlay follows suit.
+    const quality = this.renderer?.getQuality();
+    const mayDraw = !quality || now - this.lastDraw >= 1000 / quality.maxFps - 2;
+    if (f && this.renderer && mayDraw) {
+      this.lastDraw = now;
+      const dpr = Math.min(window.devicePixelRatio || 1, quality?.maxPixelRatio ?? Infinity);
       const w = this.stage.clientWidth;
       const h = this.stage.clientHeight;
       if (this.canvas.width !== Math.round(w * dpr) || this.canvas.height !== Math.round(h * dpr)) {

@@ -71,12 +71,16 @@ export function paintPlain(
   atlas: SpriteAtlas,
   commands: DrawCommand[],
   tally?: PaintTally,
+  skipShadows = false,
 ): void {
   commands.sort(compareDrawCommands);
   let alpha = 1;
   let compositeIsMultiply = false;
   const sheets = tally ? new Set<string>() : null;
   for (const c of commands) {
+    // Shadows are multiply-blended over large areas, the costliest thing a
+    // frame paints on a weak GPU; the low render preset leaves them out.
+    if (skipShadows && c.layer === Layer.Shadow) continue;
     const img = c.multiply ? atlas.getTinted(c.sheet, c.multiply) : atlas.get(c.sheet);
     if (!img) {
       if (tally) tally.skipped++;

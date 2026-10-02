@@ -4,7 +4,7 @@ import type { Camera, IconAtlas } from "@factoriotools/renderer";
 import { DX, DY, lanePoint, type BeltNode, type Lane, type LaneSegment, type Port } from "@factoriotools/sim";
 import { machineStatus, type Box, type InserterSim, type LabFactory, type MachineSim, type MachineStatus } from "./factory.js";
 import type { Issue } from "./issues.js";
-import { formatRate, PALETTES, type LabSettings, type Palette } from "./settings.js";
+import { formatRate, PALETTES, type LabSettings, type LaneState, type Palette } from "./settings.js";
 
 export type HoverTarget =
   | { kind: "box"; box: Box }
@@ -39,7 +39,6 @@ export interface PortTabRect {
   h: number;
 }
 
-type LaneState = "flow" | "held" | "empty" | "short";
 
 const STATUS_WORD: Record<MachineStatus, string> = {
   working: "WORKING",
@@ -136,6 +135,7 @@ export function drawOverlay(fr: OverlayFrame): PortTabRect[] {
           if (s.kind === "tunnel") {
             if (S.laneStyle !== "strips") continue;
             const { state, load } = laneState(f, node, lane, starvedNodes);
+            if (!S.laneStates[state]) continue;
             ctx.strokeStyle = laneColor(state, load);
             ctx.lineWidth = Math.max(0.03, S.laneWidth * 0.35);
             ctx.setLineDash([0.18, 0.14]);
@@ -147,18 +147,18 @@ export function drawOverlay(fr: OverlayFrame): PortTabRect[] {
             continue;
           }
           const { state, load } = laneState(f, node, lane, starvedNodes);
-          if (S.laneHideIdle && state === "empty") continue;
-          const pts = segmentPoints(geo, s);
           if (S.laneStyle === "tint") {
             if (lane === 1) continue;
             const other = laneState(f, node, 1, starvedNodes);
             const rank = (x: LaneState) => ["short", "held", "flow", "empty"].indexOf(x);
             const pick = rank(other.state) < rank(state) ? other : { state, load };
-            if (S.laneHideIdle && pick.state === "empty") continue;
+            if (!S.laneStates[pick.state]) continue;
             ctx.fillStyle = laneColor(pick.state, pick.load).replace(/[\d.]+\)$/, (a) => `${Math.min(0.45, parseFloat(a))})`);
             ctx.fillRect(node.x + 0.06, node.y + 0.06, 0.88, 0.88);
             continue;
           }
+          if (!S.laneStates[state]) continue;
+          const pts = segmentPoints(geo, s);
           let offset = 0;
           if (S.laneStyle === "edges") offset = lane === 0 ? 0.17 : -0.17;
           ctx.strokeStyle = laneColor(state, load);
@@ -276,6 +276,7 @@ export function drawOverlay(fr: OverlayFrame): PortTabRect[] {
       const cy = m.entity.y;
       if (!visible(cx, cy, 4)) continue;
       const status = machineStatus(m);
+      if (!S.statuses[status]) continue;
       const col = statusColor(pal, status);
       const bw = m.box.right - m.box.left;
       const bh = m.box.bottom - m.box.top;
