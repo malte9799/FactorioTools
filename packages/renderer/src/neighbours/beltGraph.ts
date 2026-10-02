@@ -217,25 +217,28 @@ export function classifyBeltCell(
   return { row, caps };
 }
 
-/** True when a belt-like entity feeds this underground's mouth from the
- *  side (perpendicular to its own facing) rather than straight on — the
- *  underground swaps to its direction_*_side_loading sprite when this is
- *  true, since the plain mouth art would otherwise show a gap where the
- *  feed visually cuts across it. Vanilla's side-loading sheet only actually
- *  has art for an East/West-facing underground (confirmed by cropping the
- *  sheet — the North/South columns are blank); the reference renderer
- *  gates on exactly this, and this matches it rather than picking a
- *  variant with nothing to show. */
-export function undergroundSideLoaded(
+/** Which side of an East/West-facing underground a belt-like entity feeds
+ *  into from — `back` from the north, `front` from the south, matching the
+ *  reference renderer's own draw_underground_belt. Each swaps out the art
+ *  that would otherwise show a gap where the feed cuts across it: a back
+ *  feed only drops the structure's back_patch, a front feed swaps the body
+ *  to its direction_*_side_loading sprite and drops the front_patch.
+ *  Vanilla's side-loading art only exists for East/West facings (the
+ *  North/South columns of the sheet are blank), so a North/South-facing
+ *  underground is never side loaded. */
+export function undergroundSideLoad(
   x: number,
   y: number,
   direction: number,
   grid: NeighbourGrid,
   isBeltLike: (name: string) => boolean,
-): boolean {
+): { back: boolean; front: boolean } {
   const facing = toCardinal(direction);
-  if (facing !== Dir.East && facing !== Dir.West) return false;
-  return feedsFrom(x, y, leftOf(facing), grid, isBeltLike) || feedsFrom(x, y, rightOf(facing), grid, isBeltLike);
+  if (facing !== Dir.East && facing !== Dir.West) return { back: false, front: false };
+  return {
+    back: feedsFrom(x, y, Dir.North, grid, isBeltLike),
+    front: feedsFrom(x, y, Dir.South, grid, isBeltLike),
+  };
 }
 
 export { STRAIGHT as STRAIGHT_ROW };

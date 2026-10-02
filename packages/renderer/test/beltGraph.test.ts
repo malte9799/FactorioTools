@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { buildGrid, Dir } from "../src/neighbours/grid.js";
-import { classifyBeltCell, undergroundSideLoaded, STRAIGHT_ROW } from "../src/neighbours/beltGraph.js";
+import { classifyBeltCell, undergroundSideLoad, STRAIGHT_ROW } from "../src/neighbours/beltGraph.js";
 import type { PlacedEntity } from "@factoriotools/engine";
 
 let passed = 0;
@@ -142,23 +142,24 @@ test("side loading only applies to east/west-facing undergrounds", () => {
   // classifier must not report it there even with a real side feed.
   const ugNorth = belt(0, 0, Dir.North, "underground-belt", "input");
   const feedEast = belt(1, 0, Dir.West);
-  assert.equal(
-    undergroundSideLoaded(0, 0, Dir.North, buildGrid([ugNorth, feedEast]), isBeltLike),
-    false,
+  assert.deepEqual(
+    undergroundSideLoad(0, 0, Dir.North, buildGrid([ugNorth, feedEast]), isBeltLike),
+    { back: false, front: false },
   );
+});
 
+test("a feed from the north is a back side load, from the south a front one", () => {
   const ugEast = belt(0, 0, Dir.East, "underground-belt", "input");
   const feedNorth = belt(0, -1, Dir.South);
-  assert.equal(
-    undergroundSideLoaded(0, 0, Dir.East, buildGrid([ugEast, feedNorth]), isBeltLike),
-    true,
-  );
+  const feedSouth = belt(0, 1, Dir.North);
+  assert.deepEqual(undergroundSideLoad(0, 0, Dir.East, buildGrid([ugEast, feedNorth]), isBeltLike), { back: true, front: false });
+  assert.deepEqual(undergroundSideLoad(0, 0, Dir.East, buildGrid([ugEast, feedSouth]), isBeltLike), { back: false, front: true });
 });
 
 test("an east-facing underground with no side feed is not side loaded", () => {
   const ug = belt(0, 0, Dir.East, "underground-belt", "input");
   const behind = belt(-1, 0, Dir.East);
-  assert.equal(undergroundSideLoaded(0, 0, Dir.East, buildGrid([ug, behind]), isBeltLike), false);
+  assert.deepEqual(undergroundSideLoad(0, 0, Dir.East, buildGrid([ug, behind]), isBeltLike), { back: false, front: false });
 });
 
 /* ---------- all four facings behave consistently ---------- */

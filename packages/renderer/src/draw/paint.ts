@@ -212,28 +212,40 @@ export function drawOutline(
   ctx.restore();
 }
 
-/** How large the corner sprite reads on screen, in world tiles — sized to
- *  read as a bracket around a 1x1 machine without a 6x6 building's corners
- *  drifting apart into four disconnected commas. */
-const HOVER_CORNER_SIZE = 0.75;
+/** Which row of cursor-boxes.png to draw from — utility-sprites.lua's
+ *  cursor_box.regular (yellow) and cursor_box.copy (green, what the game
+ *  shows on a hovered underground's paired other half). */
+export type CursorBoxStyle = "regular" | "pair";
+const CURSOR_BOX_ROW: Record<CursorBoxStyle, number> = { regular: 0, pair: 192 };
+
+/** cursor_box's size tiers from utility-sprites.lua: the first tier whose
+ *  max_side_length fits the entity's larger side wins, so a bigger building
+ *  gets longer, thicker brackets. Anything past the last tier uses it. */
+const CURSOR_BOX_TIERS: { maxSide: number; x: number }[] = [
+  { maxSide: 0.4, x: 256 },
+  { maxSide: 0.7, x: 192 },
+  { maxSide: 1.05, x: 128 },
+  { maxSide: 3.5, x: 64 },
+  { maxSide: Infinity, x: 0 },
+];
 
 /** Stamps Factorio's own cursor-box corner art at each corner of an
- *  entity's footprint: the source cell is the sheet's single top-left
- *  bracket (already yellow), cloned and rotated 0/90/180/270deg the same
- *  way the reference renderer's createCorners() builds a full box from one
- *  corner sprite, rather than a spritesheet that already contains all
- *  four. Source art is plain yellow for now; a colour parameter can be
- *  added later (e.g. via paintTinted's source-atop wash technique) once
- *  something other than the default hover colour is needed. */
+ *  entity's footprint. Each 64px cell is the top-left bracket only, drawn
+ *  at the game's scale 0.5 (one tile) with its origin on the corner and
+ *  rotated 0/90/180/270deg for the other three — the same way the
+ *  reference renderer's createCorners() builds a full box from one corner
+ *  sprite. */
 export function drawHoverHighlight(
   ctx: CanvasRenderingContext2D,
-  corner: HTMLImageElement,
+  sheet: HTMLImageElement,
   x: number,
   y: number,
   w: number,
   h: number,
+  style: CursorBoxStyle = "regular",
 ): void {
-  const size = HOVER_CORNER_SIZE;
+  const tier = CURSOR_BOX_TIERS.find((t) => Math.max(w, h) <= t.maxSide)!;
+  const sy = CURSOR_BOX_ROW[style];
   const left = x - w / 2;
   const top = y - h / 2;
   const right = x + w / 2;
@@ -251,8 +263,20 @@ export function drawHoverHighlight(
     ctx.save();
     ctx.translate(c.cx, c.cy);
     ctx.rotate((c.rotationDeg * Math.PI) / 180);
-    ctx.drawImage(corner, 0, 0, corner.width, corner.height, 0, 0, size, size);
+    ctx.drawImage(sheet, tier.x, sy, 64, 64, 0, 0, 1, 1);
     ctx.restore();
   }
+  ctx.restore();
+}
+
+/** One tile of the underground_sprite tunnel line (underground-lines.png's
+ *  x=64 cell: dashed side rails plus an arrow) centred on (x, y) and turned
+ *  to point along `travel`, a 16-way direction (the cell's own arrow
+ *  points north). */
+export function drawUndergroundLine(ctx: CanvasRenderingContext2D, sheet: HTMLImageElement, x: number, y: number, travel: number): void {
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.rotate((travel / 16) * 2 * Math.PI);
+  ctx.drawImage(sheet, 64, 0, 64, 64, -0.5, -0.5, 1, 1);
   ctx.restore();
 }

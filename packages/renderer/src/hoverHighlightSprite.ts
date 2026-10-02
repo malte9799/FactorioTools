@@ -1,28 +1,31 @@
-/** Loads Factorio's own cursor-box corner art (the rounded yellow bracket
- *  the game itself draws around whatever's under the cursor) so the hover
- *  overlay can stamp it at each corner of the hovered entity's footprint
- *  instead of a plain stroked rectangle. One 64x64 cell, cropped ahead of
- *  time from `core/graphics/cursor-boxes.png`'s top-left ("regular", full
- *  size) sprite — see [[apps/site/public/data/sprites/ui/cursor-box-corner.png]]. */
+/** Loads Factorio's own UI overlay sheets, copied as-is from the game's
+ *  core/graphics: cursor-boxes.png (the rounded corner brackets the game
+ *  draws around whatever's under the cursor, one row per colour, one column
+ *  per size tier) and arrows/underground-lines.png (the dashed tunnel line
+ *  drawn between a hovered underground and its pair). */
 
-const SHEET_URL = "./data/sprites/ui/cursor-box-corner.png";
+const CURSOR_BOXES_URL = "./data/sprites/ui/cursor-boxes.png";
+const UNDERGROUND_LINES_URL = "./data/sprites/ui/underground-lines.png";
 
-let sheet: HTMLImageElement | undefined;
-let loadStarted = false;
+const sheets = new Map<string, HTMLImageElement | null>();
 
 /** Synchronous, for the draw loop — returns undefined until the sheet has
  *  loaded; triggers the load on first call otherwise, mirroring
  *  SpriteAtlas.get()'s "ask now, draw later" pattern. */
-export function getHoverHighlightSprite(): HTMLImageElement | undefined {
-  if (sheet) return sheet;
-  if (!loadStarted) {
-    loadStarted = true;
-    const img = new Image();
-    img.onload = () => {
-      sheet = img;
-    };
-    img.onerror = () => console.warn(`hover highlight sprite failed to load: ${SHEET_URL}`);
-    img.src = SHEET_URL;
-  }
+function getSheet(url: string): HTMLImageElement | undefined {
+  if (sheets.has(url)) return sheets.get(url) ?? undefined;
+  sheets.set(url, null);
+  const img = new Image();
+  img.onload = () => sheets.set(url, img);
+  img.onerror = () => console.warn(`UI sprite failed to load: ${url}`);
+  img.src = url;
   return undefined;
+}
+
+export function getHoverHighlightSprite(): HTMLImageElement | undefined {
+  return getSheet(CURSOR_BOXES_URL);
+}
+
+export function getUndergroundLinesSprite(): HTMLImageElement | undefined {
+  return getSheet(UNDERGROUND_LINES_URL);
 }

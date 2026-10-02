@@ -50,6 +50,7 @@ import {
   buildVisualLookup,
   makeConnectorPredicates,
   activeFluidConnections,
+  isUndergroundLike,
 } from "@factoriotools/renderer/src/entityLookup.js";
 import { buildGrid } from "@factoriotools/renderer/src/neighbours/grid.js";
 import { buildFluidNetwork } from "@factoriotools/renderer/src/neighbours/fluid.js";
@@ -161,13 +162,16 @@ const NEIGHBOURS = ["pipe", "heat-pipe", "transport-belt", "fast-transport-belt"
 for (const [name, visual] of lookup) {
   if (!(visual as any).graphics) continue;
   const slots = (visual as any).moduleSlots ?? 0;
-  for (let dir = 0; dir < 16; dir++) {
-    const self = () => entity(name, 0.5, 0.5, dir);
+  // An underground/loader only draws as one with a real undergroundType
+  // (see isUndergroundLike) — try both halves.
+  const types = isUndergroundLike(name) ? (["input", "output"] as const) : [undefined];
+  for (let dir = 0; dir < 16; dir++) for (const undergroundType of types) {
+    const self = () => entity(name, 0.5, 0.5, dir, { undergroundType });
     for (const f of FRAMES) for (const c of collect(self(), [], f)) mark(c.sheet, c.sx, c.sy);
     // Beacon slot art has one column per module tier, so fill with each.
     for (const module of ["speed-module", "speed-module-2", "speed-module-3"]) {
       for (let filled = 1; filled <= slots; filled++) {
-        const e = entity(name, 0.5, 0.5, dir, { modules: [{ name: module, quality: "normal", count: filled }] } as any);
+        const e = entity(name, 0.5, 0.5, dir, { undergroundType, modules: [{ name: module, quality: "normal", count: filled }] } as any);
         for (const c of collect(e, [], 0)) mark(c.sheet, c.sx, c.sy);
       }
     }
@@ -176,10 +180,16 @@ for (const [name, visual] of lookup) {
                       entity(kind, 0.5, 3.5, 0), entity(kind, 0.5, -2.5, 0)];
       for (const n of around) for (const c of collect(self(), [n], 0)) mark(c.sheet, c.sx, c.sy);
       for (const c of collect(self(), around, 0)) mark(c.sheet, c.sx, c.sy);
+      // Directly adjacent and facing in, one side at a time — an
+      // underground fed from the side swaps to its side-loading rows,
+      // which the far-off neighbours above never trigger.
+      const feeding = [entity(kind, 1.5, 0.5, 12), entity(kind, -0.5, 0.5, 4),
+                       entity(kind, 0.5, 1.5, 0), entity(kind, 0.5, -0.5, 8)];
+      for (const n of feeding) for (const c of collect(self(), [n], 0)) mark(c.sheet, c.sx, c.sy);
     }
     // Walls, pipes and belts change art when they chain into their own kind.
-    const same = [entity(name, 3.5, 0.5, dir), entity(name, -2.5, 0.5, dir),
-                  entity(name, 0.5, 3.5, dir), entity(name, 0.5, -2.5, dir)];
+    const same = [entity(name, 3.5, 0.5, dir, { undergroundType }), entity(name, -2.5, 0.5, dir, { undergroundType }),
+                  entity(name, 0.5, 3.5, dir, { undergroundType }), entity(name, 0.5, -2.5, dir, { undergroundType })];
     for (const c of collect(self(), same, 0)) mark(c.sheet, c.sx, c.sy);
   }
 }

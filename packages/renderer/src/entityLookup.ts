@@ -1,5 +1,5 @@
 import type { EntityGraphics, GameData, HeatConnectionPoint, InserterGraphics, PipeConnectionPoint, PlacedEntity, RenderCatalog, WireAttachPoints } from "@factoriotools/engine";
-import { toCardinal, Dir } from "./neighbours/grid.js";
+import { toCardinal, opposite, step, Dir } from "./neighbours/grid.js";
 
 /** One lookup over both GameData (entities with rates) and the RenderCatalog
  *  (visual-only ones) — the renderer doesn't care which side a name came
@@ -193,6 +193,66 @@ export function effectiveFootprint(visual: ResolvedVisual, direction: number): [
  *  entrance/exit structure. */
 export function isUndergroundLike(name: string): boolean {
   return name.endsWith("underground-belt") || name.includes("loader");
+}
+
+/** The first same-name underground travelling the same way within
+ *  maxDistance tiles of (x, y), walking with travel (`forward`) or against
+ *  it. Same rule as the belt sim's own pairing (packages/sim/src/network.ts):
+ *  ones travelling any other way are passed over. Both ends of a pair store
+ *  the travel direction, as a 2.0 blueprint does. */
+function undergroundAlong(
+  entities: readonly PlacedEntity[],
+  name: string,
+  x: number,
+  y: number,
+  direction: number,
+  forward: boolean,
+  maxDistance: number,
+): PlacedEntity | undefined {
+  const facing = toCardinal(direction);
+  const { dx, dy } = step(forward ? facing : opposite(facing));
+  const byTile = new Map<string, PlacedEntity>();
+  for (const e of entities) if (e.name === name) byTile.set(`${Math.floor(e.x)},${Math.floor(e.y)}`, e);
+  for (let k = 1; k <= maxDistance; k++) {
+    const e = byTile.get(`${Math.floor(x) + dx * k},${Math.floor(y) + dy * k}`);
+    if (e && toCardinal(e.direction) === facing) return e;
+  }
+  return undefined;
+}
+
+/** What a newly-built underground becomes when placed held at
+ *  `direction`, auto-paired the way the game does it: held facing back at
+ *  an entrance in range (the entrance travelling the opposite way, toward
+ *  it), it becomes that entrance's exit — stored with the travel direction,
+ *  like the entrance. Otherwise it's an entrance travelling `direction`.
+ *  Same pairing rule as the reference editor's own
+ *  PaintEntityContainer.updateUndergroundBeltRotation. */
+export function autoUnderground(
+  entities: readonly PlacedEntity[],
+  name: string,
+  x: number,
+  y: number,
+  direction: number,
+  maxDistance: number,
+): { undergroundType: "input" | "output"; direction: number } {
+  const travel = (direction + 8) % 16;
+  const entrance = undergroundAlong(entities, name, x, y, travel, false, maxDistance);
+  return entrance?.undergroundType === "input"
+    ? { undergroundType: "output", direction: travel }
+    : { undergroundType: "input", direction };
+}
+
+/** The other half of `target`'s underground pair, if it has one in range —
+ *  an entrance looks ahead for its exit, an exit looks back for its
+ *  entrance. */
+export function undergroundPartner(
+  entities: readonly PlacedEntity[],
+  target: PlacedEntity,
+  maxDistance: number,
+): PlacedEntity | undefined {
+  const isIn = target.undergroundType !== "output";
+  const other = undergroundAlong(entities, target.name, target.x, target.y, target.direction, isIn, maxDistance);
+  return other && (other.undergroundType === "output") === isIn ? other : undefined;
 }
 
 /** True for every electric-pole tier (small/medium/big-electric-pole,
