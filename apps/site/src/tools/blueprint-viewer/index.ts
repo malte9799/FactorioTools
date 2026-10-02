@@ -31,6 +31,8 @@ import { appendQualityOptions, QUALITY_TIERS } from "./quality-options.js";
 import { buildPropertiesPanel, buildRecipeMenu, buildModuleMenu, buildFilterItemMenu } from "./edit-properties.js";
 import type { GridMenuHandle } from "./grid-menu.js";
 import { buildLibrarySidebar } from "./library-sidebar.js";
+import { buildQuickbar, type QuickbarHandle, type QuickbarItem } from "./quickbar.js";
+import { buildGridMenu } from "./grid-menu.js";
 import { saveToLibrary } from "./blueprint-library.js";
 import { RateOverlay } from "../../rate-overlay/controller.js";
 import { setCurrentBlueprint, VIEWER_AUTOSAVE_KEY } from "../../current-blueprint.js";
@@ -260,13 +262,24 @@ const TEMPLATE = `
     </div>
   </div>
 
+  <div id="quickbar" role="toolbar" aria-label="Quickbar"></div>
+
+  <div id="hotbar-pick-window" class="gui-window floating-window menu-window" hidden>
+    <div class="gui-titlebar">
+      <span>Set quickbar slot</span>
+      <span class="grip" aria-hidden="true"></span>
+    </div>
+    <div class="gui-body">
+      <div id="hotbar-pick-body"></div>
+    </div>
+  </div>
+
   <div id="window-toolbar" role="toolbar" aria-label="Windows">
     <button type="button" data-toggle="library-window" data-icon="blueprint-book" title="Blueprints"><span class="tab-label">Blueprints</span></button>
     <button type="button" data-toggle="intake-window" data-icon="blueprint" title="Import and export"><span class="tab-label">Import</span></button>
     <button type="button" data-toggle="rate-window" data-icon="arithmetic-combinator" title="Rate Calculator"><span class="tab-label">Rates</span></button>
     <button type="button" data-toggle="palette-window" data-icon="assembling-machine-1" title="Build"><span class="tab-label">Build</span></button>
     <span class="toolbar-divider" aria-hidden="true"></span>
-    <button type="button" id="alt-mode-toggle" data-icon="selector-combinator" title="Show recipes and modules (Alt)"><span class="tab-label">Alt mode</span></button>
     <button type="button" data-toggle="graphics-window" data-icon="small-lamp" title="Graphics"><span class="tab-label">Graphics</span></button>
     <button type="button" data-toggle="debug-window" data-icon="radar" title="Performance stats (F8)"><span class="tab-label">Debug</span></button>
     <button type="button" data-toggle="about-window" data-icon="programmable-speaker" title="About"><span class="tab-label">About</span></button>
@@ -481,6 +494,16 @@ export function mountBlueprintViewer(root: HTMLElement): () => void {
     y: 66,
     onClose: () => enterMenuState("machine-info"),
   });
+  const hotbarPickWindow = makeFloatingWindow($("#hotbar-pick-window"), {
+    x: Math.max(16, window.innerWidth - 900),
+    y: 66,
+    onClose: () => enterMenuState("default"),
+  });
+  /** Built once the editor functions it drives exist (see buildQuickbar's
+   *  call below); every syncQuickbar() before then is a no-op. */
+  let quickbar: QuickbarHandle | undefined;
+  /** Which quickbar slot the open "Set quickbar slot" picker fills. */
+  let hotbarTarget = { bar: 0, slot: 0 };
   const filterWindow = makeFloatingWindow($("#filter-window"), {
     x: Math.max(16, window.innerWidth - 900),
     y: 66,
@@ -509,6 +532,7 @@ export function mountBlueprintViewer(root: HTMLElement): () => void {
   recipeWindow.hide();
   moduleWindow.hide();
   filterWindow.hide();
+  hotbarPickWindow.hide();
   // The library starts open (unlike the others) — it's the entry point for
   // picking a blueprint to work on, matching the reference Surfaces panel
   // being a persistent, always-visible sidebar rather than a popup.
@@ -1022,13 +1046,25 @@ export function mountBlueprintViewer(root: HTMLElement): () => void {
   // by being re-applied to the fresh instance rather than living on the
   // renderer itself.
   let altModeOn = false;
-  const altModeButton = $<HTMLButtonElement>("#alt-mode-toggle");
   function setAltMode(enabled: boolean) {
     altModeOn = enabled;
     renderer.setAltMode(altModeOn);
-    altModeButton.classList.toggle("is-active", altModeOn);
+    syncQuickbar();
   }
-  altModeButton.addEventListener("click", () => setAltMode(!altModeOn), { signal });
+
+  /** Mirrors the editor state onto the quickbar: undo/redo availability,
+   *  which tool toggles are on, and which slot's item is in the cursor.
+   *  Called from every place that changes one of those. */
+  function syncQuickbar(): void {
+    quickbar?.sync({
+      canUndo: undoStack.length > 0,
+      canRedo: redoStack.length > 0,
+      boxMode: boxModeKind === "copyBox" || boxModeKind === "deleteBox" ? boxModeKind : null,
+      altMode: altModeOn,
+      wire: wireColorInHand,
+      held: paletteSelection ? { name: paletteSelection, quality: paletteQuality } : null,
+    });
+  }
 
   /** True while one of the three box-drag action modes (copyBox/cutBox/
    *  deleteBox) is active — Cmd+C/Cmd+X/Alt+D each set this via setMode
@@ -1037,6 +1073,9 @@ export function mountBlueprintViewer(root: HTMLElement): () => void {
    *  framing (real Factorio doesn't toolbar-button its own cut/copy/delete
    *  shortcuts either). */
   let boxModeOn = false;
+  /** Which of the three box tools boxModeOn means — the quickbar lights the
+   *  matching planner button. */
+  let boxModeKind: "copyBox" | "cutBox" | "deleteBox" | null = null;
   /** True while a copy/cut's multi-entity ghost is armed on the cursor
    *  ('paste' mode) — set by copyBoxToClipboardAndGhost, cleared by setMode
    *  (any call puts the renderer into a mode other than 'paste'). Tracked
@@ -1261,6 +1300,7 @@ export function mountBlueprintViewer(root: HTMLElement): () => void {
     rateOverlay.load(entities);
     recalculate();
     persistEntities();
+    syncQuickbar();
   }
 
   /** Clears the canvas to an empty blueprint — the Library sidebar's "+ New
@@ -1284,6 +1324,7 @@ export function mountBlueprintViewer(root: HTMLElement): () => void {
     deselect();
     renderer.loadBlueprint(entities, wires);
     recalculate();
+    syncQuickbar();
     picker.replaceChildren();
     picker.hidden = true;
     input.value = "";
@@ -1360,6 +1401,7 @@ export function mountBlueprintViewer(root: HTMLElement): () => void {
     recalculate();
     renderPropertiesPanel();
     persistEntities();
+    syncQuickbar();
   }
 
   function undo(): void {
@@ -1377,6 +1419,7 @@ export function mountBlueprintViewer(root: HTMLElement): () => void {
     recalculate();
     renderPropertiesPanel();
     persistEntities();
+    syncQuickbar();
   }
 
   function redo(): void {
@@ -1392,6 +1435,7 @@ export function mountBlueprintViewer(root: HTMLElement): () => void {
     recalculate();
     renderPropertiesPanel();
     persistEntities();
+    syncQuickbar();
   }
 
   function deselect() {
@@ -1726,7 +1770,9 @@ export function mountBlueprintViewer(root: HTMLElement): () => void {
     // boxModeOn's own comment), just the cursor styling and the Escape
     // guard's own flag.
     boxModeOn = newMode === "copyBox" || newMode === "cutBox" || newMode === "deleteBox";
+    boxModeKind = newMode === "copyBox" || newMode === "cutBox" || newMode === "deleteBox" ? newMode : null;
     canvas.classList.toggle("select-mode", boxModeOn);
+    syncQuickbar();
   }
 
   /** Wired onto whichever BlueprintRenderer instance is currently mounted —
@@ -1912,7 +1958,7 @@ export function mountBlueprintViewer(root: HTMLElement): () => void {
    * function is what stops the four windows from being shown/hidden
    * ad-hoc from a dozen call sites and drifting into impossible
    * combinations. */
-  type MenuState = "default" | "build" | "machine-info" | "recipe" | "module" | "filter";
+  type MenuState = "default" | "build" | "hotbar" | "machine-info" | "recipe" | "module" | "filter";
   let menuState: MenuState = "default";
   /** The open menu's handle, for 'E' to confirm/cancel through. Undefined in
    *  the two states that aren't a grid menu (default, machine-info). */
@@ -1950,13 +1996,14 @@ export function mountBlueprintViewer(root: HTMLElement): () => void {
     // selection (an undo can drop the selected entity out from under an
     // open GUI), so they collapse to the canvas rather than leaving an
     // empty window behind.
-    if (next !== "default" && next !== "build" && !selectedEntity) next = "default";
+    if (next !== "default" && next !== "build" && next !== "hotbar" && !selectedEntity) next = "default";
     menuState = next;
     activeMenu = undefined;
     paletteWindow.hide();
     recipeWindow.hide();
     moduleWindow.hide();
     filterWindow.hide();
+    hotbarPickWindow.hide();
     // The properties window is the machine-info state itself, so it closes
     // for every other state — including while a picker it launched is open,
     // keeping one menu on screen at a time.
@@ -1968,6 +2015,9 @@ export function mountBlueprintViewer(root: HTMLElement): () => void {
         return;
       case "build":
         openMenuWindow(paletteWindow, buildPaletteMenu());
+        return;
+      case "hotbar":
+        openMenuWindow(hotbarPickWindow, buildHotbarPickMenu());
         return;
       case "machine-info":
         renderPropertiesPanel();
@@ -1990,6 +2040,7 @@ export function mountBlueprintViewer(root: HTMLElement): () => void {
   function exitCurrentMenuState(): void {
     switch (menuState) {
       case "build":
+      case "hotbar":
       case "machine-info":
         enterMenuState("default");
         return;
@@ -2021,6 +2072,23 @@ export function mountBlueprintViewer(root: HTMLElement): () => void {
       },
       () => enterMenuState("default"),
     );
+  }
+
+  /** The "Set quickbar slot" picker: the build menu's own entity list, its
+   *  confirm filling the slot that opened it instead of the cursor. */
+  function buildHotbarPickMenu(): GridMenuHandle {
+    return buildGridMenu($<HTMLDivElement>("#hotbar-pick-body"), {
+      entries: placeableEntries(getData(), getRenderCatalog()),
+      groups: getRenderCatalog().menuGroups,
+      filterLabel: "Filter placeable entities",
+      showQuality: true,
+      initialQuality: "normal",
+      onConfirm: ({ name, quality }) => {
+        quickbar?.setSlot(hotbarTarget.bar, hotbarTarget.slot, { name, quality });
+        enterMenuState("default");
+      },
+      onCancel: () => enterMenuState("default"),
+    });
   }
 
   function buildRecipeMenuForSelection(): GridMenuHandle {
@@ -2494,11 +2562,7 @@ export function mountBlueprintViewer(root: HTMLElement): () => void {
       input.value = bpString;
       void guardedLoad(bpString);
     },
-    getCurrentBpString() {
-      if (!entities.length) return null;
-      const template = blueprints[0] ?? { item: "blueprint" as const, label: undefined, version: undefined };
-      return encodeBlueprintString({ blueprint: toBlueprint(entities, template, wires) });
-    },
+    getCurrentBpString: () => currentBpString(),
     onNew: guardedStartNew,
     getCurrentBookTree: () => currentBookTree,
     // Same as the picker dropdown's own change handler just below — a
@@ -2507,6 +2571,114 @@ export function mountBlueprintViewer(root: HTMLElement): () => void {
     // never had one either and this is the same gesture from the sidebar.
     onSelectCurrent: (flatIndex) => selectBlueprint(flatIndex),
   });
+
+  /** The blueprint on screen as a string, or null with nothing placed —
+   *  what the library saves. */
+  function currentBpString(): string | null {
+    if (!entities.length) return null;
+    const template = blueprints[0] ?? { item: "blueprint" as const, label: undefined, version: undefined };
+    return encodeBlueprintString({ blueprint: toBlueprint(entities, template, wires) });
+  }
+
+  /** Takes a quickbar item into the cursor as a ghost, as a Build-menu pick
+   *  would. */
+  function pickQuickbarItem(item: QuickbarItem): void {
+    if (!placeableEntries(getData(), getRenderCatalog()).some((e) => e.name === item.name)) {
+      setStatus(`${item.name} can't be placed with the current game data.`, "error");
+      return;
+    }
+    deselect();
+    setMode({ place: item.name, quality: item.quality });
+    updateCursorIcon(lastPointerPos.x, lastPointerPos.y);
+  }
+
+  /** The wire shortcuts' take/put-away toggle, shared with Alt+C/R/G. */
+  function toggleWireInHand(color: WireColor): void {
+    if (wireColorInHand === color) {
+      setMode("idle");
+      setStatus("Put the wire away.");
+      return;
+    }
+    setMode({ wire: color });
+    deselect();
+    updateCursorIcon(lastPointerPos.x, lastPointerPos.y);
+    setStatus(`Holding a ${color} wire — click two entities to connect or disconnect them.`);
+  }
+
+  quickbar = buildQuickbar($<HTMLDivElement>("#quickbar"), {
+    onPickItem: pickQuickbarItem,
+    onAssignSlot(bar, slot) {
+      hotbarTarget = { bar, slot };
+      enterMenuState("hotbar");
+    },
+    onTool(tool) {
+      switch (tool) {
+        case "undo":
+          undo();
+          return;
+        case "redo":
+          redo();
+          return;
+        case "deconstruct":
+          if (boxModeKind === "deleteBox") {
+            setMode("idle");
+            return;
+          }
+          setMode("deleteBox");
+          setStatus("Delete tool — drag a box to delete what's inside.");
+          return;
+        case "blueprint":
+          if (boxModeKind === "copyBox") {
+            setMode("idle");
+            return;
+          }
+          setMode("copyBox");
+          setStatus("Copy tool — drag a box to copy it onto the cursor.");
+          return;
+        case "upgrade":
+          return;
+        case "book": {
+          const bpString = currentBpString();
+          if (!bpString) {
+            setStatus("Nothing on the canvas to put in a book yet.", "error");
+            return;
+          }
+          try {
+            saveToLibrary(bpString, "New blueprint book", undefined, { asBook: true });
+            librarySidebar.refresh();
+            libraryWindow.show();
+            setStatus("Created a blueprint book with the current blueprint in the library.");
+          } catch {
+            setStatus("Couldn't create the book — the current blueprint doesn't decode.", "error");
+          }
+          return;
+        }
+        case "alt":
+          setAltMode(!altModeOn);
+          return;
+        case "copper":
+        case "green":
+        case "red":
+          toggleWireInHand(tool);
+          return;
+      }
+    },
+  });
+  syncQuickbar();
+
+  // 1–9 and 0 take the active quickbar's slots into the cursor, as in the
+  // game. e.code so the number row works whatever the layout's shift state.
+  window.addEventListener("keydown", (e) => {
+    if (e.metaKey || e.ctrlKey || e.altKey || e.shiftKey) return;
+    const match = /^Digit([0-9])$/.exec(e.code);
+    if (!match) return;
+    if (document.activeElement instanceof HTMLInputElement || document.activeElement instanceof HTMLTextAreaElement) return;
+    const digit = Number(match[1]);
+    if (quickbar?.pickSlot(digit === 0 ? 9 : digit - 1)) e.preventDefault();
+  }, { signal });
+  window.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && quickbar?.closePanel()) e.preventDefault();
+  }, { signal });
 
   // Titlebar button slides the whole docked sidebar out to a slim collapsed
   // strip (not a category-collapse — that's the per-folder disclosure
@@ -2693,18 +2865,9 @@ export function mountBlueprintViewer(root: HTMLElement): () => void {
     usedAltAsModifier = true;
     // Pressing the same colour again puts the wire away, so one shortcut
     // both takes and drops it — matching how 'q' toggles on a pipette.
-    if (wireColorInHand === color) {
-      setMode("idle");
-      setStatus("Put the wire away.");
-      return;
-    }
-    setMode({ wire: color });
-    deselect();
     // Taken by keyboard, so no pointer move will follow to draw the cursor
-    // icon — paint it at the pointer's last known position right away, the
-    // same way the 'q' pipette does for an entity ghost.
-    updateCursorIcon(lastPointerPos.x, lastPointerPos.y);
-    setStatus(`Holding a ${color} wire — click two entities to connect or disconnect them.`);
+    // icon — toggleWireInHand paints it at the pointer's last known position.
+    toggleWireInHand(color);
   }, { signal });
 
   // Shift+Alt+scroll while a ghost is in hand cycles its quality tier
@@ -3168,6 +3331,8 @@ export function mountBlueprintViewer(root: HTMLElement): () => void {
     propertiesWindow.destroy();
     recipeWindow.destroy();
     moduleWindow.destroy();
+    hotbarPickWindow.destroy();
+    quickbar?.destroy();
     debugWindow.destroy();
     clearInterval(debugPollHandle);
     cursorIcon.remove();

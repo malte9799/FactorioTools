@@ -83,20 +83,22 @@ function encodeLeaf(leaf: Blueprint): string {
  *  flattened into one entry per leaf sharing a fresh `bookId`, so the
  *  sidebar can render it as one collapsible folder named `label` containing
  *  each leaf's own label. */
-export function saveToLibrary(bpString: string, label: string, category?: "debug"): SavedBlueprint[] {
+export function saveToLibrary(bpString: string, label: string, category?: "debug", options: { asBook?: boolean } = {}): SavedBlueprint[] {
   const envelope = decodeBlueprintString(bpString);
   const leaves = collectBlueprints(envelope);
   if (leaves.length === 0) throw new BlueprintError("That decoded fine but contains no blueprints.");
 
   const entries = readAll();
   const now = Date.now();
-  const isBook = leaves.length > 1;
+  // `asBook` makes even a single blueprint a one-entry book folder — the
+  // quickbar's "create blueprint book" shortcut.
+  const isBook = leaves.length > 1 || options.asBook === true;
   const bookId = isBook ? `book-${now}-${Math.random().toString(36).slice(2, 8)}` : undefined;
 
   for (const leaf of leaves) {
     entries.push({
       id: `bp-${now}-${Math.random().toString(36).slice(2, 8)}`,
-      label: isBook ? leaf.label || "Untitled blueprint" : label,
+      label: isBook && leaves.length > 1 ? leaf.label || "Untitled blueprint" : isBook ? leaf.label || "Blueprint" : label,
       bpString: encodeLeaf(leaf),
       category,
       bookId,

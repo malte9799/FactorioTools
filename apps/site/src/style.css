@@ -753,6 +753,170 @@ body:has(#library-window.is-collapsed:not([hidden])) #window-toolbar { left: cal
 .library-context-item:hover { color: var(--selected-text); background: var(--selected); }
 .library-context-item.is-danger:hover { color: #2a0d0b; background: #e3706a; }
 
+/* ---------- quickbar ---------- */
+/* The game's bottom-of-screen strip: the hotbar (bar number + ten slots)
+   and the shortcut tool grid beside it, both framed and sitting on the
+   bottom edge. The all-bars panel opens straight above the hotbar. */
+
+.quickbar {
+  --qb-slot: 40px;
+  position: fixed;
+  left: 50%;
+  bottom: 0;
+  z-index: 1900;
+  display: flex;
+  align-items: flex-end;
+  transform: translateX(-50%);
+}
+
+.qb-frame {
+  background: var(--frame) var(--grain);
+  border: 1px solid var(--border);
+  box-shadow: inset 0 0 0 1px var(--bevel-light), 0 -4px 14px rgba(0, 0, 0, 0.4);
+  padding: 6px;
+}
+
+.qb-hotbar { border-radius: 3px 0 0 0; border-bottom: none; }
+.qb-tools { border-radius: 3px 3px 0 0; border-bottom: none; margin-left: -1px; }
+
+.qb-bar-row {
+  display: flex;
+  align-items: stretch;
+  gap: 6px;
+}
+
+.qb-bar-num {
+  flex: none;
+  width: calc(var(--qb-slot) + 6px);
+  min-height: calc(var(--qb-slot) + 6px);
+  padding: 0;
+  font-family: var(--display);
+  font-size: 16px;
+  font-weight: 700;
+  color: #1b1b1b;
+  background: var(--light-button);
+  border: 1px solid var(--border);
+  border-radius: 2px;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.5), inset 0 -2px 0 rgba(0, 0, 0, 0.25);
+}
+
+.qb-bar-num.is-open,
+.qb-bar-num.is-active { background: linear-gradient(180deg, #f7e2b4, #ecc987); }
+.qb-bar-num:hover { background: linear-gradient(180deg, #f2c46c, #e0a53f); }
+
+.qb-slots {
+  display: flex;
+  gap: 2px;
+  padding: 2px;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  box-shadow: inset 0 2px 3px var(--bevel-dark);
+}
+
+.qb-slot {
+  position: relative;
+  flex: none;
+  width: var(--qb-slot);
+  height: var(--qb-slot);
+  padding: 0;
+  display: grid;
+  place-items: center;
+  background: #424141;
+  border: 1px solid #1f1f1f;
+  border-radius: 3px;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.07), inset 0 -2px 3px rgba(0, 0, 0, 0.35);
+}
+
+.qb-slot.is-group-start { margin-left: 6px; }
+.qb-slot .icon { background-color: transparent; border: none; box-shadow: none; pointer-events: none; }
+
+/* A hovered slot, and every slot of a bar whose number is hovered, light up
+   in the game's selection yellow. */
+.qb-slot:hover,
+.qb-bar-row:has(.qb-bar-num:hover) .qb-slot {
+  background: linear-gradient(180deg, #ffcf55, #f2ac2c);
+  border-color: #8a5d12;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.45), 0 0 6px rgba(255, 190, 60, 0.45);
+}
+
+.qb-slot:active { box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.5); }
+
+/* The slot whose item is in the cursor. */
+.qb-slot.is-held { border-color: var(--gold); box-shadow: inset 0 0 0 2px rgba(255, 204, 128, 0.7); }
+
+.qb-quality {
+  position: absolute;
+  left: 3px;
+  bottom: 3px;
+  width: 9px;
+  height: 9px;
+  border-radius: 2px;
+  border: 1px solid rgba(0, 0, 0, 0.6);
+  pointer-events: none;
+}
+.qb-quality.quality-uncommon { background: #5ccf5a; }
+.qb-quality.quality-rare { background: #3d8dff; }
+.qb-quality.quality-epic { background: #b45cff; }
+.qb-quality.quality-legendary { background: #ff9d2e; }
+
+.qb-panel {
+  position: absolute;
+  left: 0;
+  bottom: 100%;
+  border-radius: 3px 3px 0 0;
+  border-bottom: none;
+  box-shadow: inset 0 0 0 1px var(--bevel-light), 0 -6px 20px rgba(0, 0, 0, 0.5);
+}
+
+.qb-panel::after {
+  /* the seam between the panel and the always-visible bar below it */
+  content: "";
+  display: block;
+  height: 1px;
+  margin: 6px -6px -6px;
+  background: var(--border);
+}
+
+.qb-panel-header { display: flex; justify-content: flex-end; margin-bottom: 6px; }
+.qb-panel-rows { display: flex; flex-direction: column; gap: 4px; }
+
+.qb-tools {
+  display: grid;
+  grid-auto-flow: column;
+  grid-template-rows: repeat(2, var(--qb-slot));
+  grid-auto-columns: var(--qb-slot);
+  gap: 3px;
+}
+
+.qb-tool {
+  width: var(--qb-slot);
+  height: var(--qb-slot);
+  padding: 0;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--border);
+  border-radius: 2px;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.4), inset 0 -2px 0 rgba(0, 0, 0, 0.3);
+}
+
+.qb-tool svg { width: 72%; height: 72%; display: block; }
+.qb-tool .icon { background-color: transparent; border: none; box-shadow: none; pointer-events: none; }
+
+.qb-tool.is-grey { color: #262626; background: linear-gradient(180deg, #cbcbcb, #a9a9a9); }
+.qb-tool.is-red { background: linear-gradient(180deg, #d0463d, #b1322a); }
+.qb-tool.is-green { background: linear-gradient(180deg, #4c9a33, #387d24); }
+.qb-tool.is-blue { background: linear-gradient(180deg, #3a7fb2, #2c6694); }
+
+.qb-tool:hover:not(:disabled) { filter: brightness(1.12); }
+.qb-tool:active:not(:disabled) { box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.5); }
+
+/* A tool that is on (planner in hand, alt mode, a wire): pressed in, gold rim. */
+.qb-tool.is-active {
+  box-shadow: inset 0 0 0 2px var(--gold), inset 0 2px 5px rgba(0, 0, 0, 0.45), 0 0 6px rgba(255, 204, 128, 0.5);
+}
+
+.qb-tool:disabled { filter: grayscale(0.6) brightness(0.65); cursor: default; }
+
 /* ---------- floating windows ---------- */
 
 .floating-window {
@@ -2252,6 +2416,15 @@ canvas.select-mode {
   #window-toolbar::-webkit-scrollbar { display: none; }
   #window-toolbar button { padding: 0 6px; }
   #window-toolbar .tab-label { display: none; }
+
+  /* Smaller slots; the tool grid wraps above the hotbar when both don't fit. */
+  .quickbar { --qb-slot: 26px; flex-wrap: wrap-reverse; justify-content: center; width: max-content; max-width: 100vw; }
+  .qb-frame { padding: 4px; }
+  .qb-bar-row { gap: 4px; }
+  .qb-slot.is-group-start { margin-left: 3px; }
+  .qb-bar-num { font-size: 13px; }
+  .qb-tools { border-radius: 3px 3px 0 0; margin-left: 0; }
+  .qb-slot .icon, .qb-tool .icon { transform: scale(0.7); }
 
   .floating-window { max-width: calc(100vw - 16px); }
 }
