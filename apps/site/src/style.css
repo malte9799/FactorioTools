@@ -98,6 +98,20 @@
   --slot-hover: #4a4948;
   --button: #575757;
   --button-hover: #6d6c6b;
+  /* List blocks and their selected state, from the game's Surfaces panel:
+     dark rows, the picked one filled warm gold with dark text. */
+  --row: #3d3c3c;
+  --row-hover: #4d4c4b;
+  --selected: #f1c886;
+  --selected-border: #9c7433;
+  --selected-text: #1d1a14;
+  --light-button: linear-gradient(180deg, #c9c9c9, #a8a8a8);
+
+  /* Fixed chrome: the nav bar's height, and the docked sidebar's width
+     open and folded — the toolbar positions itself off these. */
+  --nav-h: 51px;
+  --sidebar-w: 248px;
+  --sidebar-collapsed-w: 38px;
 
   --text: #e6e0d8;
   --text-dim: #a5a19a;
@@ -325,29 +339,78 @@ button.primary:hover { background: #6fa34b; }
 
 /* Every floating window starts hidden so the blueprint fills the screen
    uninterrupted; this fixed strip (always visible, above every window's own
-   z-index range) is the only way back to them. */
+   z-index range) is the only way back to them. Styled as the game's tab
+   strip: one framed bar of dark bevelled blocks with an item icon each, the
+   open window's tab lit gold like the game's selected row. It sits just
+   right of the docked Blueprints sidebar, following it as it opens, folds
+   or hides. */
 #window-toolbar {
   position: fixed;
-  top: 54px;
-  left: 16px;
+  top: calc(var(--nav-h) + 6px);
+  left: 8px;
   z-index: 2000;
   display: flex;
-  gap: 6px;
-  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px;
+  max-width: calc(100vw - 16px);
+  padding: 3px;
+  background: var(--frame) var(--grain);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  box-shadow:
+    inset 0 0 0 1px var(--bevel-light),
+    0 6px 16px rgba(0, 0, 0, 0.45);
+  transition: left 0.15s ease;
 }
+
+body:has(#library-window:not([hidden])) #window-toolbar { left: calc(var(--sidebar-w) + 8px); max-width: calc(100vw - var(--sidebar-w) - 16px); }
+body:has(#library-window.is-collapsed:not([hidden])) #window-toolbar { left: calc(var(--sidebar-collapsed-w) + 8px); max-width: calc(100vw - var(--sidebar-collapsed-w) - 16px); }
 
 #window-toolbar button {
-  font-family: var(--mono);
-  font-size: 11px;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  padding: 6px 10px;
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 32px;
+  padding: 0 11px 0 6px;
+  font-family: var(--display);
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0;
+  white-space: nowrap;
+  color: var(--text);
+  background: var(--row);
+  border: 1px solid var(--border);
+  border-radius: 0;
+  box-shadow: inset 0 1px 0 var(--bevel-light), inset 0 -1px 0 var(--bevel-dark);
 }
 
+#window-toolbar button:first-child { border-radius: 2px 0 0 2px; }
+#window-toolbar button:last-child { border-radius: 0 2px 2px 0; }
+#window-toolbar button:hover { background: var(--row-hover); }
+#window-toolbar button:active { box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.5); }
+
 #window-toolbar button.is-active {
-  background: linear-gradient(180deg, #7a9c4a, #5c7a35);
-  border-color: #2e3d1a;
-  color: #f4ffe0;
+  color: var(--selected-text);
+  background: var(--selected);
+  border-color: var(--selected-border);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.45), inset 0 -2px 0 rgba(120, 80, 20, 0.35);
+}
+
+#window-toolbar .icon {
+  flex: none;
+  background-color: transparent;
+  border: none;
+  box-shadow: none;
+}
+
+.toolbar-divider {
+  flex: none;
+  align-self: stretch;
+  width: 1px;
+  margin: 3px 4px;
+  background: var(--border);
+  box-shadow: 1px 0 0 var(--bevel-light);
 }
 
 /* ---------- docked windows ---------- */
@@ -358,70 +421,255 @@ button.primary:hover { background: #6fa34b; }
 .docked-window {
   position: fixed;
   z-index: 900;
-  transition: width 0.15s ease, left 0.15s ease;
+  transition: width 0.15s ease;
 }
 
+/* Flush against the left edge of the screen from under the nav bar to the
+   bottom, the way the game docks its Surfaces panel — square on the screen
+   edges, frame and shadow only on the side facing the map. */
 #library-window {
-  top: 96px;
-  left: 16px;
-  width: 260px;
-  bottom: 16px;
+  top: var(--nav-h);
+  left: 0;
+  bottom: 0;
+  width: var(--sidebar-w);
   display: flex;
   flex-direction: column;
   overflow: hidden;
+  border-radius: 0;
+  border-width: 0 1px 0 0;
+  box-shadow:
+    inset -1px 0 0 var(--bevel-light),
+    6px 0 18px rgba(0, 0, 0, 0.45);
 }
 
-/* Collapsed state: slides down to a slim strip at the dock edge — only the
-   titlebar (with its toggle button) stays visible, matching "slide the
-   whole sidebar out" rather than hiding the window entirely (the toolbar
-   toggle already does that) or collapsing its internal category folders
-   (a separate, per-folder disclosure concern). */
-#library-window.is-collapsed {
-  width: 40px;
-  bottom: auto;
-}
+#library-window .gui-titlebar { padding: 8px 6px 6px 12px; }
+#library-window .gui-titlebar > span:first-child { flex: 1; }
 
+/* Folded: a slim full-height strip at the screen edge with only the toggle
+   showing, so the map gets the room back without losing the way in. */
+#library-window.is-collapsed { width: var(--sidebar-collapsed-w); }
+#library-window.is-collapsed .gui-titlebar { padding: 8px 0; justify-content: center; }
 #library-window.is-collapsed .gui-body,
-#library-window.is-collapsed .gui-titlebar span:not(.library-collapse-toggle) {
-  display: none;
-}
+#library-window.is-collapsed .gui-titlebar > span:first-child { display: none; }
 
 #library-window .gui-body {
   flex: 1;
   min-height: 0;
   display: flex;
   flex-direction: column;
-  padding: 10px;
-  overflow: hidden;
+  gap: 4px;
+  padding: 3px;
 }
 
 .library-collapse-toggle {
   flex: none;
-  width: 20px;
-  height: 20px;
+  width: 24px;
+  height: 24px;
   padding: 0;
   display: flex;
   align-items: center;
   justify-content: center;
   font-size: 11px;
   line-height: 1;
-  color: var(--text-dim);
-  background: var(--panel-3);
+}
+
+/* ---------- blueprints sidebar ---------- */
+/* Rows and headers are full-width bevelled blocks butted against each other
+   with a dark seam between them, as in the game's list boxes: dark rows,
+   lighter section headers in gold, the selected row filled gold. */
+
+.bp-list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  background: var(--panel-2);
   border: 1px solid var(--border);
-  border-radius: 3px;
-  box-shadow: inset 0 1px 0 var(--bevel-light), inset 0 -1px 0 var(--bevel-dark);
-  cursor: pointer;
+  box-shadow: inset 0 2px 4px var(--bevel-dark);
 }
 
-.library-collapse-toggle:hover { color: var(--text); border-color: var(--frame-light); }
+.bp-row,
+.bp-section-row {
+  display: flex;
+  align-items: stretch;
+  gap: 1px;
+  min-width: 0;
+  background: var(--border);
+  border-bottom: 1px solid var(--border);
+}
 
-/* ---------- blueprint library ---------- */
+.bp-row-main,
+.bp-section-header {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 34px;
+  padding: 0 10px;
+  text-align: left;
+  border: none;
+  border-radius: 0;
+}
 
-.library-new-button {
+.bp-row-main {
+  font-family: var(--body);
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--text);
+  background: var(--row);
+  box-shadow: inset 0 1px 0 var(--bevel-light);
+}
+
+.bp-row-main:hover { background: var(--row-hover); }
+.bp-row-main:active { box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.5); }
+
+.bp-row.is-active .bp-row-main {
+  color: var(--selected-text);
+  background: var(--selected);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.45), inset 0 0 0 1px var(--selected-border);
+}
+
+.bp-row-main .icon,
+.bp-section-header .icon {
+  flex: none;
+  background-color: transparent;
+  border: none;
+  box-shadow: none;
+}
+
+.bp-row-label,
+.bp-section-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.bp-row-label .rich-text-icon,
+.bp-section-label .rich-text-icon { vertical-align: -4px; margin: 0 1px; }
+
+/* Trash/duplicate dock onto the right of the hovered or selected row. */
+.bp-row-actions { display: none; gap: 1px; }
+.bp-row:hover .bp-row-actions,
+.bp-row:focus-within .bp-row-actions,
+.bp-row.is-active .bp-row-actions { display: flex; }
+
+.bp-icon-button {
+  flex: none;
+  width: 34px;
+  min-height: 34px;
+  padding: 0;
+  display: grid;
+  place-items: center;
+  color: #1b1b1b;
+  background: var(--light-button);
+  border: none;
+  border-radius: 0;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.5), inset 0 -2px 0 rgba(0, 0, 0, 0.25);
+}
+
+.bp-icon-button svg { width: 18px; height: 18px; display: block; }
+.bp-icon-button:hover { background: var(--selected); }
+.bp-icon-button:active { box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.45); }
+
+.bp-icon-button.is-danger { color: #2a0d0b; background: #e3706a; }
+.bp-icon-button.is-danger:hover { background: #f08a84; }
+.bp-icon-button.is-confirm { color: #f4ffe0; background: #5a8a3c; }
+.bp-icon-button.is-confirm:hover { background: #6fa34b; }
+
+.bp-icon-button:disabled,
+.bp-icon-button:disabled:hover {
+  color: rgba(0, 0, 0, 0.35);
+  background: #6a6969;
+  box-shadow: none;
+  cursor: default;
+}
+
+.bp-section-header {
+  font-family: var(--display);
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--gold-strong);
+  background: linear-gradient(180deg, #615f5e, #545352);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.14), inset 0 -1px 0 var(--bevel-dark);
+}
+
+.bp-section-header:hover { background: linear-gradient(180deg, #6d6b6a, #5e5d5c); }
+
+/* A small chevron on the far right; points down while open. */
+.bp-disclosure {
+  flex: none;
+  width: 0;
+  height: 0;
+  border-style: solid;
+  border-width: 4px 0 4px 6px;
+  border-color: transparent transparent transparent var(--text-dim);
+  transition: transform 0.1s ease;
+}
+
+.bp-section-header.is-open .bp-disclosure { transform: rotate(90deg); }
+
+/* :not([hidden]) rather than a bare `display: flex` — section bodies toggle
+   via the `hidden` attribute, and a plain class-level `display` would
+   outrank the browser's own `[hidden]{display:none}` default. */
+.bp-section-body:not([hidden]) {
+  display: flex;
+  flex-direction: column;
+}
+
+/* A sub-book inside the current book: a quieter header, one step indented. */
+.bp-section.is-nested .bp-section-header {
+  min-height: 30px;
+  font-family: var(--body);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+  background: var(--panel-2);
+  box-shadow: inset 0 1px 0 var(--bevel-light);
+}
+
+.bp-section.is-nested .bp-section-header:hover { background: var(--row-hover); }
+.bp-section.is-nested > .bp-section-body { padding-left: 12px; background: var(--panel-2); }
+
+.bp-empty {
+  margin: 0;
+  padding: 8px 10px;
+  font-size: 12px;
+  color: var(--text-dim);
+  border-bottom: 1px solid var(--border);
+}
+
+.bp-footer {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.bp-save-row { display: flex; gap: 2px; }
+
+.bp-save-row .library-save-input { height: 34px; }
+.bp-save-row .bp-icon-button { border-radius: 2px; }
+
+/* The game's light grey push button — "+ Add space platform" in the
+   reference — with its gold hover. */
+.bp-new-button {
   width: 100%;
-  margin-bottom: 8px;
-  text-align: center;
+  min-height: 36px;
+  font-family: var(--display);
+  font-size: 14px;
+  font-weight: 600;
+  color: #1b1b1b;
+  background: var(--light-button);
+  border: 1px solid var(--border);
+  border-radius: 2px;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.5), inset 0 -2px 0 rgba(0, 0, 0, 0.25);
 }
+
+.bp-new-button:hover { background: var(--selected); }
 
 .library-save-row {
   gap: 6px;
@@ -440,148 +688,36 @@ button.primary:hover { background: #6fa34b; }
 .library-save-input {
   flex: 1;
   min-width: 0;
+  padding: 5px 8px;
+  font-size: 13px;
   color: var(--text);
   background: var(--panel-2);
   border: 1px solid var(--border);
+  border-radius: 2px;
   box-shadow: inset 0 1px 0 var(--bevel-dark);
 }
 
 .library-status {
-  margin: 0 0 8px;
-  min-height: 1em;
+  margin: 0;
+  padding: 0 2px;
+  font-size: 12px;
+  color: var(--text-dim);
 }
 
 .library-status[data-kind="error"] { color: var(--deficit); }
 
-.library-list {
-  flex: 1;
-  min-height: 0;
-  overflow-y: auto;
-  border-top: 1px solid var(--border);
-  padding-top: 6px;
-}
-
-.library-category + .library-category { margin-top: 4px; }
-
-.library-category-header {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  width: 100%;
-  padding: 7px 8px;
-  font-family: var(--display);
-  font-weight: 700;
-  font-size: 13px;
-  color: var(--gold-strong);
-  background: var(--panel-3);
-  border: none;
-  border-radius: 2px;
-  box-shadow: none;
-  text-align: left;
-}
-
-.library-category-header:hover { background: var(--frame-light); }
-
-.library-disclosure {
-  display: inline-block;
-  width: 0.8em;
-  transition: transform 0.1s ease;
-  color: var(--text-dim);
-}
-
-.library-category-header.is-open .library-disclosure { transform: rotate(90deg); }
-
-/* :not([hidden]) rather than a bare `display: flex` — folder bodies toggle
-   via the `hidden` attribute (see makeCategory's click handler), and a plain
-   class-level `display` would outrank the browser's own `[hidden]{display:
-   none}` default (equal specificity, this rule comes later), keeping a
-   "collapsed" folder's contents visible regardless of the arrow's own state.
-   Same fix as .library-save-row's own comment above for the identical bug. */
-.library-category-body:not([hidden]) {
-  display: flex;
-  flex-direction: column;
-  padding: 2px 0 2px 6px;
-}
-
-.library-category-body .library-category {
-  margin: 2px 0;
-}
-
-.library-category-body .library-category-header {
-  background: transparent;
-  font-family: var(--body);
-  font-weight: 600;
-  font-size: 12px;
-  color: var(--text);
-}
-
-.library-category-body .library-category-header:hover { background: var(--panel-3); }
-
-.library-row {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  padding: 2px 4px;
-  border-radius: 2px;
-}
-
-.library-row:hover { background: var(--panel-3); }
-
-.library-row-label {
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  text-align: left;
-  padding: 6px 6px;
-  font-size: 13px;
-  font-weight: 400;
-  color: var(--text);
-  background: transparent;
-  border: none;
-  box-shadow: none;
-  border-radius: 2px;
-}
-
 .library-rename-input {
   flex: 1;
   min-width: 0;
-  padding: 5px 6px;
-  font-size: 13px;
+  min-height: 34px;
+  padding: 0 10px;
+  font-size: 14px;
   color: var(--text);
   background: var(--panel-2);
   border: 1px solid var(--gold);
+  border-radius: 0;
   box-shadow: none;
 }
-
-/* Trash-can delete button, styled after the reference "Surfaces" panel's
-   own red delete control: a filled red square with a bright hover state,
-   only shown once a row is hovered so the list doesn't read as cluttered
-   with destructive controls at rest. */
-.library-row-delete {
-  flex: none;
-  width: 26px;
-  height: 26px;
-  padding: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 13px;
-  line-height: 1;
-  color: #f4e0e0;
-  background: #b23b3b;
-  border: 1px solid #6e1f1f;
-  border-radius: 3px;
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.15), inset 0 -1px 0 rgba(0, 0, 0, 0.35);
-  visibility: hidden;
-  cursor: pointer;
-}
-
-.library-row:hover .library-row-delete { visibility: visible; }
-.library-row-delete:hover { background: #d24a4a; border-color: #8a2828; }
-
-.library-empty { padding: 6px; }
 
 /* ---------- library row context menu ---------- */
 
@@ -590,27 +726,30 @@ button.primary:hover { background: #6fa34b; }
   z-index: 5000;
   display: flex;
   flex-direction: column;
-  min-width: 140px;
-  padding: 4px;
-  background: var(--frame);
+  gap: 1px;
+  min-width: 150px;
+  padding: 3px;
+  background: var(--frame) var(--grain);
   border: 1px solid var(--border);
-  border-radius: 4px;
-  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.5);
+  border-radius: 3px;
+  box-shadow: inset 0 0 0 1px var(--bevel-light), 0 8px 20px rgba(0, 0, 0, 0.5);
 }
 
 .library-context-item {
   text-align: left;
   padding: 7px 10px;
+  font-family: var(--body);
   font-size: 13px;
-  font-weight: 400;
+  font-weight: 500;
   color: var(--text);
-  background: transparent;
+  background: var(--row);
   border: none;
-  box-shadow: none;
-  border-radius: 2px;
+  border-radius: 0;
+  box-shadow: inset 0 1px 0 var(--bevel-light);
 }
 
-.library-context-item:hover { background: var(--panel-3); color: var(--gold-strong); }
+.library-context-item:hover { color: var(--selected-text); background: var(--selected); }
+.library-context-item.is-danger:hover { color: #2a0d0b; background: #e3706a; }
 
 /* ---------- floating windows ---------- */
 
@@ -2101,19 +2240,16 @@ canvas.select-mode {
   .site-nav nav::-webkit-scrollbar { display: none; }
   .site-nav nav a { flex: none; white-space: nowrap; padding: 5px 8px; font-size: 11px; letter-spacing: 0.04em; }
 
+  :root { --nav-h: 46px; --sidebar-w: min(248px, calc(100vw - 48px)); }
+
+  /* Icons only, scrolling sideways when they still don't fit. */
   #window-toolbar {
-    top: 46px;
-    left: 0;
-    right: 0;
-    padding: 0 8px 4px;
-    flex-wrap: nowrap;
     overflow-x: auto;
     scrollbar-width: none;
   }
   #window-toolbar::-webkit-scrollbar { display: none; }
-  #window-toolbar button { flex: none; padding: 6px 8px; }
-
-  #library-window { top: 86px; left: 8px; bottom: 8px; width: min(260px, calc(100vw - 16px)); }
+  #window-toolbar button { padding: 0 6px; }
+  #window-toolbar .tab-label { display: none; }
 
   .floating-window { max-width: calc(100vw - 16px); }
 }

@@ -134,3 +134,33 @@ export function renameInLibrary(id: string, label: string): SavedBlueprint[] {
   writeAll(entries);
   return entries;
 }
+
+/** Removes every entry of a saved book — the trash button on a book's own
+ *  section header in the sidebar. */
+export function deleteBookFromLibrary(bookId: string): SavedBlueprint[] {
+  const entries = readAll().filter((e) => e.bookId !== bookId);
+  writeAll(entries);
+  return entries;
+}
+
+/** Copies every entry of a saved book under a fresh `bookId`, the book's
+ *  label getting the same " copy" suffix duplicateInLibrary gives a single
+ *  blueprint. */
+export function duplicateBookInLibrary(bookId: string): SavedBlueprint[] {
+  const entries = readAll();
+  const members = entries.filter((e) => e.bookId === bookId);
+  if (members.length === 0) return entries;
+  const now = Date.now();
+  const newBookId = `book-${now}-${Math.random().toString(36).slice(2, 8)}`;
+  for (const member of members) {
+    entries.push({
+      ...member,
+      id: `bp-${now}-${Math.random().toString(36).slice(2, 8)}`,
+      bookId: newBookId,
+      bookLabel: `${member.bookLabel || "Untitled book"} copy`,
+      savedAt: now,
+    });
+  }
+  writeAll(entries);
+  return entries;
+}

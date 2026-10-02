@@ -67,9 +67,8 @@ const TEMPLATE = `
 
   <div id="library-window" class="gui-window docked-window" hidden>
     <div class="gui-titlebar">
-      <span>Blueprint Library</span>
-      <span class="grip" aria-hidden="true"></span>
-      <button type="button" id="library-collapse-toggle" class="library-collapse-toggle" title="Collapse sidebar">◂</button>
+      <span>Blueprints</span>
+      <button type="button" id="library-collapse-toggle" class="library-collapse-toggle" title="Collapse sidebar" aria-label="Collapse sidebar">◂</button>
     </div>
     <div class="gui-body" id="library-body"></div>
   </div>
@@ -261,15 +260,16 @@ const TEMPLATE = `
     </div>
   </div>
 
-  <div id="window-toolbar">
-    <button type="button" data-toggle="library-window">Library</button>
-    <button type="button" data-toggle="intake-window">Blueprint Viewer</button>
-    <button type="button" data-toggle="rate-window">Rate Calculator</button>
-    <button type="button" data-toggle="palette-window">Build</button>
-    <button type="button" data-toggle="graphics-window">Graphics</button>
-    <button type="button" data-toggle="about-window">About</button>
-    <button type="button" id="alt-mode-toggle" title="Show recipes and modules (Alt)">Alt mode</button>
-    <button type="button" data-toggle="debug-window" title="Performance stats (F8)">Debug</button>
+  <div id="window-toolbar" role="toolbar" aria-label="Windows">
+    <button type="button" data-toggle="library-window" data-icon="blueprint-book" title="Blueprints"><span class="tab-label">Blueprints</span></button>
+    <button type="button" data-toggle="intake-window" data-icon="blueprint" title="Import and export"><span class="tab-label">Import</span></button>
+    <button type="button" data-toggle="rate-window" data-icon="arithmetic-combinator" title="Rate Calculator"><span class="tab-label">Rates</span></button>
+    <button type="button" data-toggle="palette-window" data-icon="assembling-machine-1" title="Build"><span class="tab-label">Build</span></button>
+    <span class="toolbar-divider" aria-hidden="true"></span>
+    <button type="button" id="alt-mode-toggle" data-icon="selector-combinator" title="Show recipes and modules (Alt)"><span class="tab-label">Alt mode</span></button>
+    <button type="button" data-toggle="graphics-window" data-icon="small-lamp" title="Graphics"><span class="tab-label">Graphics</span></button>
+    <button type="button" data-toggle="debug-window" data-icon="radar" title="Performance stats (F8)"><span class="tab-label">Debug</span></button>
+    <button type="button" data-toggle="about-window" data-icon="programmable-speaker" title="About"><span class="tab-label">About</span></button>
   </div>
 
   <div id="debug-window" class="gui-window floating-window" hidden>
@@ -570,6 +570,29 @@ export function mountBlueprintViewer(root: HTMLElement): () => void {
       if (target) toggleWindow(target);
     }, { signal });
   }
+
+  // Toolbar tabs: a game item icon in front of each label, and the tab lit
+  // gold while its window is open. Watching each window's `hidden` attribute
+  // rather than hooking every show/hide covers the paths that bypass the
+  // toolbar too — a titlebar close button, Escape, the Build menu state.
+  for (const button of root.querySelectorAll<HTMLButtonElement>("#window-toolbar [data-icon]")) {
+    button.prepend(icon(button.dataset.icon!, "", 20));
+  }
+  const toolbarObserver = new MutationObserver(syncToolbarTabs);
+  function syncToolbarTabs(): void {
+    for (const button of root.querySelectorAll<HTMLButtonElement>("#window-toolbar [data-toggle]")) {
+      const target = root.querySelector<HTMLElement>(`#${button.dataset.toggle}`);
+      const open = !!target && !target.hidden;
+      button.classList.toggle("is-active", open);
+      button.setAttribute("aria-pressed", String(open));
+    }
+  }
+  for (const button of root.querySelectorAll<HTMLButtonElement>("#window-toolbar [data-toggle]")) {
+    const target = root.querySelector<HTMLElement>(`#${button.dataset.toggle}`);
+    if (target) toolbarObserver.observe(target, { attributes: true, attributeFilter: ["hidden"] });
+  }
+  syncToolbarTabs();
+  signal.addEventListener("abort", () => toolbarObserver.disconnect());
 
   // F8 toggles the Debug panel — an out-of-the-way key nothing else in
   // this app claims, matching the convention several game engines/browser
