@@ -15,6 +15,9 @@
       directly (tooltip transform, floating windows). Fonts are self-hosted,
       so no third-party origin is allowed at all any more.
       img-src needs data: for the sprite/icon canvases.
+      connect-src names the two blueprint sites the Import menu reads links
+      from (factorioprints.com's Firebase database, fprints.xyz's Supabase
+      API) — see tools/blueprint-viewer/blueprint-links.ts. Nothing else.
 
       frame-ancestors is deliberately absent: browsers ignore it in a <meta>
       element (it only works as a real HTTP header) and including it just
@@ -28,7 +31,7 @@
                style-src 'self' 'unsafe-inline';
                font-src 'self';
                img-src 'self' data: blob:;
-               connect-src 'self';
+               connect-src 'self' https://facorio-blueprints.firebaseio.com https://tutpmokznoxsgodpklag.supabase.co;
                worker-src 'self' blob:;
                base-uri 'none';
                object-src 'none';
@@ -45,8 +48,8 @@
          in flight alongside the CSS instead of after it. -->
     <link rel="preload" href="./fonts/ibm-plex-sans-400.woff2" as="font" type="font/woff2" crossorigin />
     <link rel="preload" href="./fonts/chakra-petch-600.woff2" as="font" type="font/woff2" crossorigin />
-    <script type="module" crossorigin src="./assets/index-leBIIXkz.js"></script>
-    <link rel="stylesheet" crossorigin href="./assets/index-CEqjd3BR.css">
+    <script type="module" crossorigin src="./assets/index-BB6uLyTG.js"></script>
+    <link rel="stylesheet" crossorigin href="./assets/index-BDKVUiyH.css">
   </head>
   <body>
     <div id="nav-root"></div>
