@@ -3,11 +3,12 @@
  *  its own windows; the markup and behaviour live here once. */
 import type { LaneFeed } from "@factoriotools/sim";
 import { escapeHtml } from "../tools/blueprint-editor/html.js";
+import { CELL, getIconPosition, getSheetSize, onIconsReady, SHEET_URL } from "../tools/blueprint-editor/legacy-view/icons.js";
 import type { RateOverlay } from "./controller.js";
 import { machineStatus, type MachineStatus, type PortInfo, type Research } from "./factory.js";
 import { itemLabel } from "./issues.js";
 import { statusColor } from "./overlay.js";
-import { PALETTES, type LabSettings, type LaneState, type Palette, type RateUnit } from "./settings.js";
+import { formatRate, PALETTES, type LabSettings, type LaneState, type Palette, type RateUnit } from "./settings.js";
 
 type Layer = keyof LabSettings["layers"];
 
@@ -168,17 +169,75 @@ export function clockText(overlay: RateOverlay): string {
   return `${Math.floor(secs / 60)}:${String(secs % 60).padStart(2, "0")}`;
 }
 
-export function simSummaryHtml(overlay: RateOverlay): string {
+/* ---------- overview ---------- */
+
+// Start loading the icon sheet's manifest; the overview is redrawn a few
+// times a second, so icons simply appear once it's in.
+onIconsReady(() => {});
+
+function iconHtml(name: string, size = 18): string {
+  const pos = getIconPosition(name);
+  if (!pos) return `<span class="icon rate-flow-icon" style="--icon-size:${size}px"></span>`;
+  const { width, height } = getSheetSize();
+  const k = size / CELL;
+  return `<span class="icon rate-flow-icon" style="--icon-size:${size}px;background-image:url(${SHEET_URL});background-position:${-pos.x * k}px ${-pos.y * k}px;background-size:${width * k}px ${height * k}px"></span>`;
+}
+
+const MAX_FLOW_ROWS = 5;
+
+/** The Rate Calculator's headline: how efficiently the machines run and
+ *  why not more, then what the blueprint takes in and puts out. */
+export function overviewHtml(overlay: RateOverlay): string {
   const f = overlay.factory;
   if (!f) return `<span class="lab-empty">Nothing to simulate yet.</span>`;
+  if (overlay.warming) return `<span class="lab-empty">Warming up the simulation…</span>`;
+  const s = overlay.settings.style;
+  const pal = PALETTES[s.palette];
+  const rate = (perSecond: number) => formatRate(perSecond, s.rateUnit);
+  const label = (n: string) => escapeHtml(itemLabel(f.data, n));
+
+  let eff = "";
+  if (f.machines.length) {
+    const e = f.efficiency();
+    const pct = Math.round(e.uptime * 100);
+    const col = e.uptime >= 0.9 ? pal.ok : e.uptime >= 0.6 ? pal.warn : pal.bad;
+    const worst = (Object.entries(e.lost) as [keyof typeof e.lost, number][]).sort((a, b) => b[1] - a[1])[0]!;
+    const why =
+      e.uptime >= 0.95 || worst[1] < 0.02 ? "Running at full speed."
+      : worst[0] === "starved" ? `Mostly starved${e.short ? `: short on ${label(e.short)}` : ""}.`
+      : worst[0] === "arm" ? "Mostly held back by inserters that can't keep up."
+      : "Mostly backed up: products can't leave fast enough.";
+    eff = `<div class="rate-eff">
+      <div class="rate-eff-head"><span class="rate-eff-pct" style="color:${col}">${pct}%</span><span class="rate-eff-word">efficiency</span><span class="rate-eff-why">${why}</span></div>
+      <div class="lab-card-bar"><i style="width:${pct}%;background:${col}"></i></div>
+    </div>`;
+  }
+
+  const { imports, exports } = f.flows();
+  const rows = (list: typeof imports, out: boolean) => {
+    if (!list.length) return `<div class="rate-flow-empty">${out ? "Nothing leaves yet." : "Nothing comes in."}</div>`;
+    const shown = list.slice(0, MAX_FLOW_ROWS).map((x) => {
+      const ofMax = out && x.max > 0 ? `<span class="rate-flow-max">${Math.min(100, Math.round((x.rate / x.max) * 100))}%</span>` : "";
+      const rocket = x.rocket ? `<span class="rate-flow-tag">rocket</span>` : "";
+      return `<div class="rate-flow">${iconHtml(x.item)}<span class="rate-flow-name">${label(x.item)}${rocket}</span><span class="rate-flow-rate">${rate(x.rate)}</span>${ofMax}</div>`;
+    });
+    const more = list.length > MAX_FLOW_ROWS ? `<div class="rate-flow-empty">and ${list.length - MAX_FLOW_ROWS} more</div>` : "";
+    return shown.join("") + more;
+  };
+
   const counts: Record<string, number> = {};
   for (const m of f.machines) counts[machineStatus(m)] = (counts[machineStatus(m)] ?? 0) + 1;
-  const pal = PALETTES[overlay.settings.style.palette];
-  const rows = (["working", "arm", "starved", "output", "idle"] as const)
+  const statuses = (["working", "arm", "starved", "output", "idle"] as const)
     .filter((k) => counts[k])
     .map((k) => `<span class="lab-swatch"><i style="background:${statusColor(pal, k)}"></i>${counts[k]} ${({ working: "working", arm: "inserter-bound", starved: "starved", output: "output full", idle: "idle" })[k]}</span>`)
     .join("");
-  return `${f.machines.length} machines · ${f.inserters.length} inserters · ${f.net.nodes.length} belt tiles<div class="lab-swatches">${rows}</div>`;
+
+  return `${eff}
+    <div class="rate-flows">
+      <div class="rate-flow-col"><h4>Imports</h4>${rows(imports, false)}</div>
+      <div class="rate-flow-col"><h4>Exports <span class="rate-flow-hint">of max</span></h4>${rows(exports, true)}</div>
+    </div>
+    <div class="lab-swatches">${statuses}</div>`;
 }
 
 export const RESEARCH_HTML = `

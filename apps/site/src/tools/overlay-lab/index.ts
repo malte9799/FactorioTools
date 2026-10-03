@@ -8,7 +8,7 @@ import { getData, getRenderCatalog, loadData } from "@factoriotools/engine";
 import { mountRenderer, type BlueprintRenderer } from "@factoriotools/renderer";
 import { makeFloatingWindow, type FloatingWindow } from "../../window-manager.js";
 import { RateOverlay } from "../../rate-overlay/controller.js";
-import { clockText, renderLayerList, renderPortList, RESEARCH_HTML, simSummaryHtml, wireLayerList, wirePortList, wireResearch } from "../../rate-overlay/panels.js";
+import { clockText, overviewHtml, renderLayerList, renderPortList, RESEARCH_HTML, wireLayerList, wirePortList, wireResearch } from "../../rate-overlay/panels.js";
 import { DEFAULTS, PALETTES, type LabSettings } from "../../rate-overlay/settings.js";
 import { getCurrentBlueprint } from "../../current-blueprint.js";
 import { currentQuality, onQualityChange } from "../../render-presets.js";
@@ -230,7 +230,7 @@ export function mountOverlayLab(root: HTMLElement): () => void {
   function renderSim() {
     $("#lab-clock").textContent = clockText(overlay);
     $("#lab-play").textContent = overlay.playing ? "Pause" : "Play";
-    $("#lab-sim-summary").innerHTML = simSummaryHtml(overlay);
+    $("#lab-sim-summary").innerHTML = overviewHtml(overlay);
   }
   $("#lab-play").addEventListener("click", () => {
     overlay.playing = !overlay.playing;
