@@ -5,10 +5,10 @@ import type { LaneFeed } from "@factoriotools/sim";
 import { escapeHtml } from "../tools/blueprint-editor/html.js";
 import { CELL, getIconPosition, getSheetSize, onIconsReady, SHEET_URL } from "../tools/blueprint-editor/legacy-view/icons.js";
 import type { RateOverlay } from "./controller.js";
-import { machineStatus, type MachineStatus, type PortInfo, type Research } from "./factory.js";
+import { machineStatus, type LabFactory, type MachineStatus, type PortInfo, type Research } from "./factory.js";
 import { itemLabel } from "./issues.js";
 import { statusColor } from "./overlay.js";
-import { formatRate, PALETTES, type LabSettings, type LaneState, type Palette, type RateUnit } from "./settings.js";
+import { formatRate, PALETTES, PER, type LabSettings, type LaneState, type Palette, type RateUnit } from "./settings.js";
 
 type Layer = keyof LabSettings["layers"];
 
@@ -275,46 +275,130 @@ export function wireResearch(el: HTMLElement, overlay: RateOverlay, signal: Abor
 
 /* ---------- ports ---------- */
 
-export function renderPortList(el: HTMLElement, overlay: RateOverlay) {
-  const f = overlay.factory;
-  if (!f) {
-    el.innerHTML = `<p class="lab-empty">No ports.</p>`;
-    return;
-  }
+/** Markup for one port's editor: its on/off switch and whatever it can be
+ *  set to. The same row goes in the ports list and in the popup a tab
+ *  opens on the map. */
+function portRows(f: LabFactory, overlay: RateOverlay) {
   const label = (n: string) => escapeHtml(itemLabel(f.data, n));
+  // The blueprint's own items first, then every other item to override with.
+  const known = new Set(f.knownItems);
+  const seen = new Set(f.knownItems.map((n) => itemLabel(f.data, n)));
+  const others = Object.keys(f.data.items)
+    .filter((n) => f.data.items[n]?.kind === "item" && !known.has(n) && !NOT_CARGO.test(n))
+    .sort((a, b) => itemLabel(f.data, a).localeCompare(itemLabel(f.data, b)))
+    // Some items share a name (two "Vehicle machine gun"s); offer one.
+    .filter((n) => !seen.has(itemLabel(f.data, n)) && !!seen.add(itemLabel(f.data, n)));
+  const opt = (n: string, cur: string | undefined) => `<option value="${escapeHtml(n)}" ${cur === n ? "selected" : ""}>${label(n)}</option>`;
   const options = (cur: string | undefined, empty = "(empty)") =>
     `<option value="">${empty}</option>` +
-    [...new Set([...f.knownItems, ...(cur ? [cur] : [])])].map((n) => `<option value="${escapeHtml(n)}" ${cur === n ? "selected" : ""}>${label(n)}</option>`).join("");
-  const all = f.ports();
-  const head = (p: PortInfo) =>
+    `<optgroup label="In this blueprint">${f.knownItems.map((n) => opt(n, cur)).join("")}</optgroup>` +
+    `<optgroup label="Other items">${others.map((n) => opt(n, cur)).join("")}</optgroup>`;
+  // An item slot showing the chosen item's icon; clicking it opens a grid
+  // of icons to pick from (see wirePortList). The select underneath holds
+  // the value and fires the change, so picking works like choosing in it.
+  const itemField = (attrs: string, cur: string | undefined, empty?: string) => {
+    const title = cur ? itemLabel(f.data, cur) : (empty ?? "(empty)").replace(/[()]/g, "");
+    return `<span class="lab-item-field"><select hidden ${attrs}>${options(cur, empty)}</select><button type="button" class="lab-item-slot ${cur ? "" : "is-empty"}" data-pick title="${escapeHtml(title)}" aria-label="${escapeHtml(title)}">${cur ? slotIcon(cur, title) : ""}</button></span>`;
+  };
+  const unit = overlay.settings.style.rateUnit;
+  const rateField = (p: PortInfo) => {
+    const v = p.limit.rate === undefined ? "" : +(p.limit.rate * PER[unit]).toFixed(3);
+    return `<label>Rate limit <input type="number" min="0" step="any" data-rate value="${v}" placeholder="none">/${unit}</label>`;
+  };
+  const head = (p: PortInfo, popup: boolean) =>
     `<label class="lab-port-head"><input type="checkbox" data-toggle-port ${p.enabled ? "checked" : ""}>
-      <span class="lab-port-where">${p.via === "belt" ? "Belt" : "Arm"} · ${Math.floor(p.x)}, ${Math.floor(p.y)}</span>
+      ${popup ? `<span>${p.enabled ? "On" : "Off"}</span><span class="lab-port-where">at ${Math.floor(p.x)}, ${Math.floor(p.y)}</span>` : `<span class="lab-port-where">${p.via === "belt" ? "Belt" : "Arm"} · ${Math.floor(p.x)}, ${Math.floor(p.y)}</span>`}
       ${p.reason ? `<span class="lab-port-why">${escapeHtml(p.reason)}</span>` : ""}</label>`;
-  const row = (p: PortInfo) => {
+  return (p: PortInfo, popup = false) => {
     let body = "";
     if (p.kind === "input" && p.via === "belt") {
       const [l, r] = f.inputs.get(p.id) ?? [null, null];
       const stack = (l ?? r)?.stack ?? 1;
-      body = `<label>Left <select data-lane="0">${options(l?.item)}</select></label>
-        <label>Right <select data-lane="1">${options(r?.item)}</select></label>
-        <label>Stacked <select data-stack>${[1, 2, 3, 4].map((n) => `<option value="${n}" ${n === stack ? "selected" : ""}>×${n}</option>`).join("")}</select></label>`;
+      body = `<div class="lab-port-lanes"><label>Left lane ${itemField(`data-lane="0"`, l?.item)}</label>
+        <label>Right lane ${itemField(`data-lane="1"`, r?.item)}</label></div>
+        <label>Stacked <select data-stack>${[1, 2, 3, 4].map((n) => `<option value="${n}" ${n === stack ? "selected" : ""}>×${n}</option>`).join("")}</select></label>
+        ${rateField(p)}`;
     } else if (p.kind === "input") {
       const arm = f.armPorts.find((a) => a.id === p.id)!;
       const onto = arm.onto ? ` from the ${escapeHtml(arm.onto.replace(/-/g, " "))}` : "";
-      body = `<label>Brings${onto} <select data-arm-items>${options(arm.items.length === 1 ? arm.items[0] : undefined, arm.items.length > 1 ? `What the machine needs (${arm.items.length})` : "(nothing)")}</select></label>`;
+      body = `<label>Brings${onto} ${itemField("data-arm-items", arm.items.length === 1 ? arm.items[0] : undefined, arm.items.length > 1 ? `What the machine needs (${arm.items.length})` : "(nothing)")}</label>
+        <label>Per swing <input type="number" min="1" max="${arm.inserter.handSize}" step="1" data-arm-stack value="${p.limit.stack ?? ""}" placeholder="${arm.inserter.handSize}"></label>
+        ${rateField(p)}`;
+    } else {
+      body = rateField(p);
     }
-    return `<div class="lab-port ${p.enabled ? "" : "is-off"}" data-port="${escapeHtml(p.id)}">${head(p)}${body}</div>`;
+    const now = popup ? `<div class="lab-port-now">Now <b data-port-now>${formatRate(p.rate, unit)}</b></div>` : "";
+    return `<div class="lab-port ${popup ? "is-popup" : ""} ${p.enabled ? "" : "is-off"}" data-port="${escapeHtml(p.id)}">${head(p, popup)}${body}${now}</div>`;
   };
+}
+
+/** Swaps a port editor's markup for a fresh render without losing the
+ *  user's place: unchanged markup is left alone, and otherwise the scroll
+ *  position, an open icon grid (its search and scroll too) come back. */
+export function replacePortHtml(el: HTMLElement, html: string) {
+  // The live rate changes all the time; it alone doesn't need a redraw.
+  const key = html.replace(/<b data-port-now>[^<]*<\/b>/, "");
+  if (keyOf.get(el) === key) return;
+  keyOf.set(el, key);
+  const scrollers: [Element, number][] = [];
+  for (let a: Element | null = el; a; a = a.parentElement) if (a.scrollTop) scrollers.push([a, a.scrollTop]);
+  const slots = [...el.querySelectorAll<HTMLElement>("[data-pick]")];
+  const openAt = slots.findIndex((x) => x.classList.contains("is-open"));
+  const picker = el.querySelector<HTMLElement>(".lab-item-picker");
+  const search = picker?.querySelector<HTMLInputElement>("[data-item-search]");
+  const query = search?.value ?? "";
+  const pickerScroll = picker?.scrollTop ?? 0;
+  const searching = !!search && document.activeElement === search;
+  const expanded = !!picker && !picker.querySelector("[data-lazy]");
+  el.innerHTML = html;
+  const again = openAt >= 0 ? el.querySelectorAll<HTMLButtonElement>("[data-pick]")[openAt] : undefined;
+  if (again) {
+    toggleItemPicker(again);
+    const next = el.querySelector<HTMLElement>(".lab-item-picker")!;
+    if (expanded) fillLazyGroups(next);
+    const box = next.querySelector<HTMLInputElement>("[data-item-search]")!;
+    box.value = query;
+    if (query) box.dispatchEvent(new Event("input", { bubbles: true }));
+    if (!searching) box.blur();
+    next.scrollTop = pickerScroll;
+  }
+  for (const [a, top] of scrollers) a.scrollTop = top;
+}
+const keyOf = new WeakMap<HTMLElement, string>();
+
+/** A port's name for a window title: "Belt input". */
+export function portTitle(p: PortInfo): string {
+  return `${p.via === "belt" ? "Belt" : "Arm"} ${p.kind}`;
+}
+
+/** Items that never ride a belt: planners, remotes and placeholders. */
+const NOT_CARGO = /^(item-unknown|no-item|science|empty-module-slot)$|blueprint|planner|-tool$|-remote$/;
+
+/** One port's editor, for the popup a tab opens on the map. */
+export function portEditorHtml(overlay: RateOverlay, id: string): string | undefined {
+  const f = overlay.factory;
+  const p = f?.ports().find((q) => q.id === id);
+  return f && p ? portRows(f, overlay)(p, true) : undefined;
+}
+
+export function renderPortList(el: HTMLElement, overlay: RateOverlay) {
+  const f = overlay.factory;
+  if (!f) {
+    replacePortHtml(el, `<p class="lab-empty">No ports.</p>`);
+    return;
+  }
+  const row = portRows(f, overlay);
+  const all = f.ports();
   const group = (title: string, kind: "input" | "output") => {
     const ps = all.filter((p) => p.kind === kind);
     const main = kind === "input" ? ps.filter((p) => p.via === "arm" || p.items.length) : ps;
     const rest = kind === "input" ? ps.filter((p) => p.via === "belt" && !p.items.length) : [];
     return `<div class="lab-port-group"><h3>${title} <span class="lab-port-count">${ps.filter((p) => p.enabled).length} of ${ps.length} on</span></h3>
       <div class="lab-row"><button type="button" data-all="${kind}" data-on="1">All on</button><button type="button" data-all="${kind}" data-on="0">All off</button></div>
-      ${main.map(row).join("") || `<p class="lab-empty">None.</p>`}
-      ${rest.length ? `<details><summary>${rest.length} belt starts with nothing on them</summary>${rest.map(row).join("")}</details>` : ""}</div>`;
+      ${main.map((p) => row(p)).join("") || `<p class="lab-empty">None.</p>`}
+      ${rest.length ? `<details><summary>${rest.length} belt starts with nothing on them</summary>${rest.map((p) => row(p)).join("")}</details>` : ""}</div>`;
   };
-  el.innerHTML = group("Inputs", "input") + group("Outputs", "output");
+  replacePortHtml(el, group("Inputs", "input") + group("Outputs", "output"));
 }
 
 /** Wires a port list; the overlay's onPortsChange should re-render it. */
@@ -323,11 +407,25 @@ export function wirePortList(el: HTMLElement, overlay: RateOverlay, signal: Abor
     const f = overlay.factory;
     if (!f) return;
     const input = e.target as HTMLInputElement & HTMLSelectElement;
+    // Typing in an icon grid's search box changes nothing about the port.
+    if (input.dataset.itemSearch !== undefined) return;
     const rowEl = input.closest<HTMLElement>("[data-port]");
     const id = rowEl?.dataset.port;
     if (!id || !rowEl) return;
     if (input.dataset.togglePort !== undefined) {
       overlay.setPortEnabled(id, input.checked);
+    } else if (input.dataset.rate !== undefined || input.dataset.armStack !== undefined) {
+      // Blank means no limit; rates are typed in the overlay's time unit.
+      const num = (s: string) => (s.trim() === "" || !Number.isFinite(Number(s)) || Number(s) < 0 ? undefined : Number(s));
+      const limit = { ...(f.ports().find((p) => p.id === id)?.limit ?? {}) };
+      if (input.dataset.rate !== undefined) {
+        const v = num(input.value);
+        limit.rate = v === undefined ? undefined : v / PER[overlay.settings.style.rateUnit];
+      } else {
+        const v = num(input.value);
+        limit.stack = v === undefined || v < 1 ? undefined : Math.round(v);
+      }
+      overlay.setPortLimit(id, limit);
     } else if (input.dataset.armItems !== undefined) {
       const arm = f.armPorts.find((a) => a.id === id)!;
       const needs = arm.inserter.drop.kind === "machine" ? arm.inserter.drop.machine.ingredients.map((i) => i.name) : [];
@@ -341,12 +439,119 @@ export function wirePortList(el: HTMLElement, overlay: RateOverlay, signal: Abor
     }
   }, { signal });
   el.addEventListener("click", (e) => {
-    const b = (e.target as HTMLElement).closest<HTMLButtonElement>("[data-all]");
+    const target = e.target as HTMLElement;
+    const slot = target.closest<HTMLButtonElement>("[data-pick]");
+    if (slot) return toggleItemPicker(slot);
+    const more = target.closest<HTMLElement>("[data-show-all]");
+    if (more) return fillLazyGroups(more.closest(".lab-item-picker")!);
+    const pick = target.closest<HTMLButtonElement>("[data-item]");
+    if (pick) {
+      const picker = pick.closest(".lab-item-picker")!;
+      const select = pickerFor.get(picker);
+      if (!select) return;
+      // A pick closes the grid, so the redraw after it doesn't reopen it.
+      picker.remove();
+      for (const open of el.querySelectorAll(".lab-item-slot.is-open")) open.classList.remove("is-open");
+      select.value = pick.dataset.item!;
+      select.dispatchEvent(new Event("change", { bubbles: true }));
+      return;
+    }
+    const b = target.closest<HTMLButtonElement>("[data-all]");
     if (!b || !overlay.factory) return;
     for (const p of overlay.factory.ports()) if (p.kind === b.dataset.all) overlay.setPortEnabled(p.id, b.dataset.on === "1");
+  }, { signal });
+  el.addEventListener("input", (e) => {
+    const search = (e.target as HTMLElement).closest<HTMLInputElement>("[data-item-search]");
+    if (!search) return;
+    const q = search.value.trim().toLowerCase();
+    const picker = search.closest(".lab-item-picker")!;
+    if (q) fillLazyGroups(picker);
+    for (const b of picker.querySelectorAll<HTMLElement>("[data-item]")) b.hidden = !!q && !b.title.toLowerCase().includes(q);
+    for (const g of picker.querySelectorAll<HTMLElement>(".lab-item-group")) g.hidden = !!q && !g.querySelector("[data-item]:not([hidden])");
   }, { signal });
   el.addEventListener("pointerover", (e) => {
     overlay.highlightPort = (e.target as HTMLElement).closest<HTMLElement>("[data-port]")?.dataset.port;
   }, { signal });
   el.addEventListener("pointerleave", () => (overlay.highlightPort = undefined), { signal });
+}
+
+/** An item's icon for a slot, or its initials where it has none. */
+function slotIcon(name: string, label: string): string {
+  return getIconPosition(name) ? iconHtml(name, 28) : `<span class="lab-item-initials">${escapeHtml(label.split(/\s+/).map((w) => w[0]).join("").slice(0, 3))}</span>`;
+}
+
+/** Which select each open icon grid sets, and how it draws a cell. */
+const pickerFor = new WeakMap<Element, HTMLSelectElement>();
+const pickerCell = new WeakMap<Element, (value: string, title: string, inner: string) => string>();
+
+/** Draws the grid's deferred groups (every other item) into it. */
+function fillLazyGroups(picker: Element) {
+  const select = pickerFor.get(picker);
+  const cell = pickerCell.get(picker);
+  if (!select || !cell) return;
+  for (const g of picker.querySelectorAll<HTMLElement>("[data-lazy]")) {
+    const group = select.querySelectorAll("optgroup")[Number(g.dataset.lazy)]!;
+    g.innerHTML = `<span class="lab-field-label">${escapeHtml(group.label)}</span><div class="lab-item-grid">${[...group.querySelectorAll("option")].map((o) => cell(o.value, o.text, gridIcon(o.value, o.text))).join("")}</div>`;
+    delete g.dataset.lazy;
+  }
+}
+
+/** The icon sheet shrunk once to the grid's icon size, so painting an
+ *  icon is a plain copy rather than a resample of the whole sheet; a
+ *  grid of hundreds of icons stays smooth to hover and drag. */
+const GRID_ICON = 28;
+let gridSheet: string | undefined;
+onIconsReady(() => {
+  const img = new Image();
+  img.src = SHEET_URL;
+  img.decode().then(() => {
+    const k = GRID_ICON / CELL;
+    const c = document.createElement("canvas");
+    c.width = Math.round(img.naturalWidth * k);
+    c.height = Math.round(img.naturalHeight * k);
+    const ctx = c.getContext("2d")!;
+    ctx.imageSmoothingQuality = "high";
+    ctx.drawImage(img, 0, 0, c.width, c.height);
+    c.toBlob((b) => b && (gridSheet = URL.createObjectURL(b)));
+  }).catch(() => {});
+});
+
+function gridIcon(name: string, label: string): string {
+  const pos = gridSheet ? getIconPosition(name) : undefined;
+  if (!pos) return slotIcon(name, label);
+  const k = GRID_ICON / CELL;
+  return `<span class="lab-grid-icon" style="background-image:url(${gridSheet});background-position:${-Math.round(pos.x * k)}px ${-Math.round(pos.y * k)}px"></span>`;
+}
+
+/** Opens (or closes) the icon grid under an item slot, built from the
+ *  options of the select it stands for. One grid open at a time. */
+function toggleItemPicker(slot: HTMLButtonElement) {
+  const field = slot.closest<HTMLElement>(".lab-item-field")!;
+  const open = field.nextElementSibling?.classList.contains("lab-item-picker");
+  for (const p of document.querySelectorAll(".lab-item-picker")) p.remove();
+  for (const s of document.querySelectorAll(".lab-item-slot.is-open")) s.classList.remove("is-open");
+  if (open) return;
+  const select = field.querySelector("select")!;
+  const cell = (value: string, title: string, inner: string) =>
+    `<button type="button" class="lab-item-slot ${value === select.value ? "is-chosen" : ""} ${value ? "" : "is-empty"}" data-item="${escapeHtml(value)}" title="${escapeHtml(title)}">${inner}</button>`;
+  const none = select.options[0]!;
+  // The blueprint's own items show straight away; the long list of every
+  // other item is only drawn once it's asked for (or searched), so the
+  // grid stays small and cheap to paint.
+  const groups = [...select.querySelectorAll("optgroup")]
+    .map((g, i) =>
+      i === 0
+        ? `<div class="lab-item-group"><span class="lab-field-label">${escapeHtml(g.label)}</span><div class="lab-item-grid">${[...g.querySelectorAll("option")].map((o) => cell(o.value, o.text, gridIcon(o.value, o.text))).join("")}</div></div>`
+        : `<div class="lab-item-group" data-lazy="${i}"><button type="button" class="lab-item-more" data-show-all>All items (${g.querySelectorAll("option").length})</button></div>`,
+    )
+    .join("");
+  const picker = document.createElement("div");
+  picker.className = "lab-item-picker";
+  picker.innerHTML = `<div class="lab-item-picker-head"><input type="search" data-item-search placeholder="Search items" aria-label="Search items">${cell("", none.text, "")}<span class="lab-item-none">${escapeHtml(none.text.replace(/[()]/g, ""))}</span></div>${groups}`;
+  // Under the whole lane pair when there are two slots side by side.
+  (field.closest(".lab-port-lanes") ?? field.closest("label") ?? field).after(picker);
+  pickerFor.set(picker, select);
+  pickerCell.set(picker, cell);
+  slot.classList.add("is-open");
+  picker.querySelector<HTMLInputElement>("[data-item-search]")!.focus();
 }
