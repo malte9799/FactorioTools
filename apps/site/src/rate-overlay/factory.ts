@@ -127,6 +127,10 @@ export interface PortInfo {
   rate: number;
 }
 
+function bump(map: Map<string, number>, key: string, by: number) {
+  map.set(key, (map.get(key) ?? 0) + by);
+}
+
 const isSilo = (m: MachineSim) => m.entity.name.includes("rocket-silo");
 
 /** Things that store items, so an arm next to one is reaching into it. */
@@ -159,6 +163,32 @@ export interface InserterSim {
 }
 
 export type MachineStatus = "working" | "arm" | "starved" | "output" | "idle";
+
+/** One item crossing the blueprint's edge, averaged over the last few
+ *  seconds. */
+export interface Flow {
+  item: string;
+  /** Items per second. */
+  rate: number;
+  /** Exports only: what the machines here could make of it at full speed,
+   *  per second (0 when it isn't made here). */
+  max: number;
+  /** Exports only: some or all of it leaves as rocket cargo. */
+  rocket: boolean;
+}
+
+/** How hard the machines are working, and what holds the rest back. */
+export interface Efficiency {
+  /** Mean uptime of every machine, 0..1. */
+  uptime: number;
+  /** Share of all machine time lost to each cause, 0..1. */
+  lost: { arm: number; starved: number; output: number };
+  /** The ingredient starved machines most often lack. */
+  short?: string;
+}
+
+/** How many samples the import/export rates average over. */
+const FLOW_WINDOW_SAMPLES = 60; // one sample per 30 ticks: 30 s, long enough to smooth stack-sized bursts
 
 export function machineStatus(m: MachineSim): MachineStatus {
   if (m.uptime > 0.94) return "working";
@@ -205,6 +235,12 @@ export class LabFactory {
   readonly machines: MachineSim[] = [];
   readonly inserters: InserterSim[] = [];
   readonly meter: LaneMeter;
+  /** Running totals of items arms bring in from outside (ports, source
+   *  chests), carry out (ports) and load into rockets. */
+  private readonly armIn = new Map<string, number>();
+  private readonly armOut = new Map<string, number>();
+  private readonly launched = new Map<string, number>();
+  private flowSamples: { tick: number; imports: Map<string, number>; exports: Map<string, number> }[] = [];
   /** Item names worth offering in the port pickers. */
   readonly knownItems: string[];
   tick = 0;
@@ -381,7 +417,32 @@ export class LabFactory {
     // A belt end that points into empty space carries on somewhere off the
     // blueprint, so it starts taking everything. One that points into a
     // building, or that an inserter takes from, is a dead end by design and
-    // starts off. Either can be switched in the Ports window.
+    // starts off. So does the end of a supply belt: one machines here take
+    // from but nothing made here can reach, like the tail of a belt feeding
+    // a row of silos; in game its items back up there, they don't leave.
+    // Either can be switched in the Ports window.
+    const downstream = (from: Iterable<BeltLine>) => {
+      const seen = new Set<BeltLine>();
+      const todo = [...from];
+      while (todo.length) {
+        const line = todo.pop()!;
+        if (seen.has(line)) continue;
+        seen.add(line);
+        const end = line.end;
+        if (end.kind === "line") {
+          todo.push(end.to);
+        } else if (end.kind === "sideload") {
+          for (const t of end.target) if (t) todo.push(t.line);
+        } else if (end.kind === "splitter") {
+          for (const o of end.splitter.outputs) if (o) todo.push(o);
+        }
+      }
+      return seen;
+    };
+    const productLines = downstream(
+      this.inserters.flatMap((i) => (i.drop.kind === "belt" && (i.pickup.kind === "machine" || i.pickup.kind === "box") ? [i.drop.node.line!] : [])),
+    );
+    const feedsMachines = downstream(this.inserters.flatMap((i) => (i.pickup.kind === "belt" ? [i.pickup.node.line!] : [])));
     const occupied = new Map<string, PlacedEntity>();
     for (const e of entities) {
       const [w0, h0] = data.machines[e.name]?.tileFootprint ?? data.machines[e.name]?.size ?? data.beacons[e.name]?.size ?? footprintOf(e.name) ?? [1, 1];
@@ -396,14 +457,33 @@ export class LabFactory {
       const ahead = occupied.get(`${port.x + DX[port.dir]},${port.y + DY[port.dir]}`);
       const tail = port.line.nodes[port.line.nodes.length - 1];
       const taken = this.inserters.some((i) => i.pickup.kind === "belt" && i.pickup.node === tail);
-      this.portEnabled.set(port.id, !ahead && !taken);
+      const supply = !productLines.has(port.line) && feedsMachines.has(port.line);
+      this.portEnabled.set(port.id, !ahead && !taken && !supply);
       this.portReason.set(
         port.id,
         ahead ? `Points into the ${(data.items[ahead.name]?.localised ?? ahead.name.replace(/-/g, " ")).toLowerCase()}`
         : taken ? "An inserter takes from its end"
+        : supply ? "Supply belt: nothing made here reaches its end"
         : "Points into empty space",
       );
       this.applyBeltPort(port.id);
+    }
+    // Same for an arm that drops onto a tile with a building on it that
+    // takes nothing (a pole, a beacon): in game it stops with a full hand.
+    // A chest it fills, like a storage chest for the logistic network, is a
+    // real way out, and so is any machine this model doesn't run (a
+    // furnace or recycler picks its recipe from what it's given).
+    for (const port of this.armPorts) {
+      if (port.kind !== "output") continue;
+      const there = occupied.get(`${Math.floor(port.at.x)},${Math.floor(port.at.y)}`);
+      if (!there) continue;
+      const name = (data.items[there.name]?.localised ?? there.name.replace(/-/g, " ")).toLowerCase();
+      if (CONTAINER.test(there.name) || data.machines[there.name]) {
+        this.portReason.set(port.id, `${CONTAINER.test(there.name) ? "Fills" : "Feeds"} the ${name}`);
+        continue;
+      }
+      this.portEnabled.set(port.id, false);
+      this.portReason.set(port.id, `Drops onto the ${name}`);
     }
   }
 
@@ -611,7 +691,10 @@ export class LabFactory {
       for (const m of this.machines) this.stepMachine(m);
       for (const ins of this.inserters) this.stepInserter(ins);
       this.tick++;
-      if (this.tick % 30 === 0) this.meter.sample(this.tick);
+      if (this.tick % 30 === 0) {
+        this.meter.sample(this.tick);
+        this.sampleFlows();
+      }
     }
   }
 
@@ -793,6 +876,8 @@ export class LabFactory {
       if (got && count > 0) {
         ins.hand = got;
         ins.handCount += count;
+        // A source chest or an open side brings it in from outside.
+        if (p.kind === "chest" || p.kind === "port") bump(this.armIn, got, count);
       }
       if (ins.hand !== undefined && ins.handCount >= this.handTarget(ins, ins.hand)) {
         ins.phase = "out";
@@ -804,6 +889,8 @@ export class LabFactory {
         // Rocket cargo leaves with the rocket; ingredients go in the buffer.
         if (d.machine.ingredients.some((i) => i.name === ins.hand)) {
           d.machine.buffer.set(ins.hand!, (d.machine.buffer.get(ins.hand!) ?? 0) + ins.handCount);
+        } else {
+          bump(this.launched, ins.hand!, ins.handCount);
         }
         delivered = ins.handCount;
         ins.handCount = 0;
@@ -827,6 +914,7 @@ export class LabFactory {
       } else if (d.kind === "port") {
         // An output port that's off is a dead end: the arm waits.
         if (this.portEnabled.get(d.port.id)) {
+          bump(this.armOut, ins.hand!, ins.handCount);
           delivered = ins.handCount;
           ins.handCount = 0;
         }
@@ -856,6 +944,64 @@ export class LabFactory {
   /** Per-tile flow on one lane of a belt tile, items/second. */
   tileRate(node: BeltNode, lane: Lane): number {
     return this.meter.rate(node.line!, lane, this.belts.segmentOf(node, lane));
+  }
+
+  /** Everything that has crossed the blueprint's edge so far, by item. */
+  private flowTotals() {
+    const imports = new Map(this.armIn);
+    const exports = new Map(this.armOut);
+    for (const [item, n] of this.launched) bump(exports, item, n);
+    for (const p of this.net.ports) {
+      const into = p.kind === "input" ? imports : exports;
+      for (const [item, n] of this.belts.portTotals(p.id)) bump(into, item, n);
+    }
+    return { imports, exports };
+  }
+
+  private sampleFlows() {
+    this.flowSamples.push({ tick: this.tick, ...this.flowTotals() });
+    if (this.flowSamples.length > FLOW_WINDOW_SAMPLES) this.flowSamples.shift();
+  }
+
+  /** What comes in and goes out, per item, over the last ten seconds;
+   *  largest first. */
+  flows(): { imports: Flow[]; exports: Flow[] } {
+    const first = this.flowSamples[0];
+    const last = this.flowSamples[this.flowSamples.length - 1];
+    if (!first || !last || last.tick === first.tick) return { imports: [], exports: [] };
+    const secs = (last.tick - first.tick) / 60;
+    const maxOf = new Map<string, number>();
+    for (const m of this.machines) {
+      for (const p of m.products) bump(maxOf, p.name, (60 * p.amount) / m.craftTicks);
+    }
+    const list = (now: Map<string, number>, then: Map<string, number>, out: boolean): Flow[] =>
+      [...now]
+        .map(([item, n]) => ({
+          item,
+          rate: (n - (then.get(item) ?? 0)) / secs,
+          max: out ? (maxOf.get(item) ?? 0) : 0,
+          rocket: out && this.launched.has(item),
+        }))
+        .filter((f) => f.rate > 1e-3)
+        .sort((a, b) => b.rate - a.rate);
+    return { imports: list(last.imports, first.imports, false), exports: list(last.exports, first.exports, true) };
+  }
+
+  efficiency(): Efficiency {
+    const n = this.machines.length;
+    if (!n) return { uptime: 0, lost: { arm: 0, starved: 0, output: 0 } };
+    let uptime = 0;
+    const lost = { arm: 0, starved: 0, output: 0 };
+    const missing = new Map<string, number>();
+    for (const m of this.machines) {
+      uptime += m.uptime;
+      lost.arm += m.armBound;
+      lost.starved += m.starved;
+      lost.output += m.outFull;
+      if (machineStatus(m) === "starved" && m.missing) bump(missing, m.missing, 1);
+    }
+    const short = [...missing].sort((a, b) => b[1] - a[1])[0]?.[0];
+    return { uptime: uptime / n, lost: { arm: lost.arm / n, starved: lost.starved / n, output: lost.output / n }, short };
   }
 
   /** Output per second of a machine's main product at its current uptime. */

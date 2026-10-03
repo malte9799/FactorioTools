@@ -169,3 +169,21 @@
 .lab-chip i { width: 10px; height: 10px; border-radius: 2px; display: inline-block; filter: grayscale(1); }
 .lab-chip.is-on { color: var(--text); opacity: 1; }
 .lab-chip.is-on i { filter: none; }
+
+/* Rate Calculator overview: efficiency, then imports and exports. */
+.rate-eff { margin-bottom: 10px; }
+.rate-eff-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 8px; }
+.rate-eff-pct { font: 700 22px/1 var(--display); font-variant-numeric: tabular-nums; }
+.rate-eff-word { font: 500 11px/1.2 var(--mono); letter-spacing: 0.08em; text-transform: uppercase; color: var(--text-dim); }
+.rate-eff-why { flex: 1 1 100%; font-size: 12.5px; color: var(--text-dim); }
+.rate-eff .lab-card-bar { margin: 6px 0 0; }
+.rate-flows { display: grid; gap: 10px; margin-bottom: 10px; }
+.rate-flows h4 { margin: 0 0 4px; font: 600 11px/1.2 var(--mono); letter-spacing: 0.1em; text-transform: uppercase; color: var(--gold); }
+.rate-flow-hint { margin-left: 4px; color: var(--text-dim); font-weight: 500; letter-spacing: 0; text-transform: none; }
+.rate-flow { display: grid; grid-template-columns: auto minmax(0, 1fr) auto auto; gap: 6px; align-items: center; padding: 2px 0; font-size: 12.5px; }
+.rate-flow-icon { border: none; box-shadow: none; background-color: transparent; }
+.rate-flow-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rate-flow-rate { font: 12px var(--mono); font-variant-numeric: tabular-nums; }
+.rate-flow-max { min-width: 34px; text-align: right; font: 11px var(--mono); color: var(--text-dim); font-variant-numeric: tabular-nums; }
+.rate-flow-tag { margin-left: 5px; padding: 0 4px; font: 10px/14px var(--mono); color: var(--text-dim); border: 1px solid var(--border); border-radius: 2px; }
+.rate-flow-empty { font-size: 12.5px; color: var(--text-dim); }

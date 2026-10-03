@@ -478,6 +478,23 @@ test("a rate-limited stacked input counts items, not slots", () => {
   near(s.portRate(outputAt(net, 5, 0)), 8);
 });
 
+test("per-item port totals balance: in = out + still on the belt", () => {
+  const { net, sim: s } = sim(row(0, 7, 0, E));
+  const inId = inputAt(net, 0, 0);
+  const outId = outputAt(net, 7, 0);
+  s.setInput(inId, FULL("iron-plate"), { item: "copper-plate", rate: 3 });
+  s.step(1200);
+  const line = lineAt(net, 0, 0);
+  const onBelt = new Map<string, number>();
+  for (const lane of [0, 1] as const) for (const it of s.laneItems(line, lane)) onBelt.set(it.item, (onBelt.get(it.item) ?? 0) + it.count);
+  const ins = s.portTotals(inId);
+  const outs = s.portTotals(outId);
+  for (const item of ["iron-plate", "copper-plate"]) {
+    assert.ok((outs.get(item) ?? 0) > 0, `${item} reached the end`);
+    assert.equal(ins.get(item), (outs.get(item) ?? 0) + (onBelt.get(item) ?? 0), item);
+  }
+});
+
 test("an inserter-style pickup splits a stack and a drop places one", () => {
   const { net, sim: s } = sim(row(0, 3, 0, E, "turbo-transport-belt"));
   const tile = net.nodeAt(1, 0)!;

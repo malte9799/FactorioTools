@@ -39,7 +39,7 @@ import { RateOverlay } from "../../rate-overlay/controller.js";
 import { setCurrentBlueprint, VIEWER_AUTOSAVE_KEY } from "../../current-blueprint.js";
 import { currentQuality, onQualityChange } from "../../render-presets.js";
 import { GRAPHICS_WINDOW_HTML, wireGraphicsPanel } from "../../graphics-panel.js";
-import { clockText, rateUnitHtml, renderLayerList, renderPortList, RESEARCH_HTML, simSummaryHtml, wireLayerList, wirePortList, wireRateUnit, wireResearch } from "../../rate-overlay/panels.js";
+import { clockText, overviewHtml, rateUnitHtml, renderLayerList, renderPortList, RESEARCH_HTML, wireLayerList, wirePortList, wireRateUnit, wireResearch } from "../../rate-overlay/panels.js";
 
 const TEMPLATE = `
   <div id="schematic" class="schematic-frame"></div>
@@ -460,7 +460,7 @@ export function mountBlueprintViewer(root: HTMLElement): () => void {
     if (rateWindowRaw.el.hidden) return;
     $("#rate-clock").textContent = clockText(rateOverlay);
     $("#rate-play").textContent = rateOverlay.playing ? "Pause" : "Play";
-    $("#rate-summary").innerHTML = simSummaryHtml(rateOverlay);
+    $("#rate-summary").innerHTML = overviewHtml(rateOverlay);
   }
   function showRatePane(pane: string | undefined) {
     ratePane = pane;
