@@ -1,105 +1,235 @@
+<div align="center">
+
 # FactorioTools
 
-### [malte9799.github.io/](https://malte9799.github.io/FactorioTools)[`FactorioTools`](https://malte9799.github.io/FactorioTools)
+**Paste a blueprint. Find the bottleneck. Fix it. Export.**
 
-A browser-based Factorio blueprint editor built for optimising production
-lines. Paste a blueprint string and it calculates what the build produces and
-consumes, simulates the belts tick by tick, and shows where output is being
-lost — then lets you fix it in place and export the result.
+A browser-based Factorio blueprint editor built for optimising production lines —
+with a rate calculator, a tick-by-tick belt simulation and the game's own art.
+Plus a live map seed viewer.
 
-Everything runs client-side — no server, no upload, no account. Blueprint
-strings never leave the page.
+[![Open the editor](https://img.shields.io/badge/Open_the_editor-malte9799.github.io-f5a742?style=for-the-badge&logo=githubpages&logoColor=white)](https://malte9799.github.io/FactorioTools)
 
-## What it does
+[![CI](https://github.com/malte9799/FactorioTools/actions/workflows/ci.yml/badge.svg)](https://github.com/malte9799/FactorioTools/actions/workflows/ci.yml)
+![Factorio 2.0](https://img.shields.io/badge/Factorio-2.0_·_Space_Age-e39827)
+![TypeScript](https://img.shields.io/badge/TypeScript-5.7-3178c6?logo=typescript&logoColor=white)
+![Node](https://img.shields.io/badge/Node-22+-5fa04e?logo=nodedotjs&logoColor=white)
+[![Licence: MIT](https://img.shields.io/badge/licence-MIT-blue)](LICENSE)
 
-**Calculates rates** across the whole blueprint — items per second by machine
-group, module and beacon effects, quality tiers, and productivity research.
+[Features](#-features) · [Seed Viewer](#-seed-viewer) · [Quick start](#-quick-start) · [Build from source](#-build-from-source) · [Architecture](#-architecture) · [Licence](#-licence)
 
-**Simulates** the belts tick by tick: per-lane transport lines, curves,
-side-loading, undergrounds and splitters, so lane imbalance and starved
-inputs show up the way they would in game.
+<br>
 
-**Analyses** the result on the map itself — lane signals, machine uptime, and
-a ranked list of what costs output, each traced from the symptom back to its
-cause.
+<img src="docs/screenshots/hero.webp" alt="FactorioTools showing a logistic science build with per-machine rate labels, machine status colours and the Rate Calculator panel reporting 56% efficiency" width="100%">
 
-**Edits** — place, rotate, erase, configure recipes and modules, wire poles and
-combinators, undo/redo, then export the result back to a blueprint string.
+</div>
 
-**Renders** with the game's own art: belts animate, poles turn to face their
-wires, pipes and walls pick their connection art from their neighbours, and
-machines show their recipe and modules in alt-mode.
+<br>
 
-## Seed Viewer
+> [!NOTE]
+> **Everything runs client-side.** No server, no upload, no account — blueprint
+> strings never leave the page.
 
-A second tool at `#/seed-viewer`: enter a map seed and explore the Nauvis it
-generates, drawn the way the game's own map draws it — terrain and water,
-resource patches as a checkerboard, cliffs, trees, and where enemy bases can
-spawn. Hover a patch to see what it holds. Pan and zoom as far as you like;
-the link in the address bar carries the seed and the view.
+## ✨ Features
 
-Nothing is pre-rendered. `packages/mapgen` runs the game's own noise
-expressions in the browser, and its output is held to the real game: the
-test fixtures are exact values recorded from Factorio, and every terrain,
-resource, tree and enemy expression on Nauvis matches them bit for bit.
+<table>
+  <tr>
+    <td width="50%" valign="top">
+      <h3>📊 Calculates rates</h3>
+      Items per second across the whole blueprint, grouped by machine
+      configuration — with module and beacon effects, quality tiers and
+      productivity research all accounted for. Imports, exports and the
+      share of theoretical max at a glance.
+    </td>
+    <td width="50%">
+      <img src="docs/screenshots/rate-table.webp" alt="Rate table listing products, ingredients and machines for a red science build">
+    </td>
+  </tr>
+  <tr>
+    <td width="50%">
+      <img src="docs/screenshots/simulation.webp" alt="Simulation pane with inserter capacity research and belt stacking controls">
+    </td>
+    <td width="50%" valign="top">
+      <h3>⏱️ Simulates belts tick by tick</h3>
+      Per-lane transport lines, curves, side-loading, undergrounds and
+      splitters — so lane imbalance and starved inputs show up the way they
+      would in game. Run at 1×, 4× or 16×, skip ahead a minute, and toggle
+      inserter capacity research and belt stacking.
+    </td>
+  </tr>
+  <tr>
+    <td width="50%" valign="top">
+      <h3>🔍 Analyses on the map</h3>
+      Lane signals, machine uptime, and a ranked list of what costs output,
+      each traced from the symptom back to its cause. Hover any machine for
+      its recipe, modules, beacons and exact per-minute flows.
+    </td>
+    <td width="50%">
+      <img src="docs/screenshots/machine-tooltip.webp" alt="Zoomed-in assemblers with a tooltip showing recipe, modules and per-minute rates">
+    </td>
+  </tr>
+  <tr>
+    <td width="50%">
+      <img src="docs/screenshots/space-platform.webp" alt="A full space platform rendered with game sprites">
+    </td>
+    <td width="50%" valign="top">
+      <h3>🎨 Renders with the game's own art</h3>
+      Belts animate, poles turn to face their wires, pipes and walls pick
+      their connection art from their neighbours, and machines show their
+      recipe and modules in alt-mode. Space Age, quality and elevated rails
+      included.
+    </td>
+  </tr>
+  <tr>
+    <td width="50%" valign="top">
+      <h3>🛠️ Edits in place</h3>
+      Place, rotate and erase; configure recipes and modules; wire poles and
+      combinators; undo and redo. Import from a string, a
+      <a href="https://factorioprints.com">factorioprints.com</a> or
+      <a href="https://fprints.xyz">fprints.xyz</a> link, then export the
+      result back to a blueprint string.
+    </td>
+    <td width="50%">
+      <img src="docs/screenshots/import-export.webp" alt="Import / Export menu with clipboard import, random example and share links">
+    </td>
+  </tr>
+  <tr>
+    <td width="50%">
+      <img src="docs/screenshots/overlay-lab.webp" alt="Overlay Lab with layer controls for dimming, lane signals and machine status">
+    </td>
+    <td width="50%" valign="top">
+      <h3>🧪 Overlay Lab</h3>
+      Tune how the analysis is drawn: dim the build, choose lane-signal and
+      machine-status styles, and filter to just the lanes or machines you
+      care about — flowing, backed up, starved, output full, idle.
+    </td>
+  </tr>
+</table>
 
-Oil wells and ore tiles are the ones the game places, with their amounts.
-Where an entity lands is a roll, and the game rolls each chunk from one
-random stream that every entity in the chunk draws from in turn; the viewer
-replays that stream (see `packages/mapgen/src/placement.ts`). Cliffs follow
-the game's placement rule as well. Both were worked out from what the real
-game generated and are held to it by fixtures.
+## 🌍 Seed Viewer
 
-Two known gaps. After generating a chunk the game straightens its shoreline
-(no water one tile wide), which the viewer does not reproduce: in the few
-chunks where that moves a tile, every roll in the chunk shifts and its wells
-can come out wrong. And a cliff next to an oil well may differ.
+<div align="center">
+<img src="docs/screenshots/seed-viewer.webp" alt="Seed Viewer showing the Nauvis map of seed 123 with ore patches, enemy bases, forests and cliffs, and a panel listing the nearest patches" width="100%">
+</div>
 
-The panel has the game's map-generator settings: its presets (rail world,
-death world, island and the rest), the map type, frequency, size and richness
-for every control, the moisture and terrain-type sliders, the starting area
-and the map size. All nine presets are checked against the game, and so are
-maps created from a settings file with the sliders at both ends of their
-range.
-The game-version list shows whichever versions the data pipeline has been run
-for; within 2.0 the changelog shows no change to Nauvis generation, so one is
-enough there, and 1.1 and earlier use a different noise system this does not
-implement.
+<br>
 
-All five planets generate, each from its own seed (the map seed plus the
-CRC32 of the planet's name), and each is held to the game by fixtures like
-Nauvis. Fulgora and Aquilo are built on the game's Voronoi noise
-(`packages/mapgen/src/voronoi.ts`), which matches the game bit for bit in
-every distance type.
+> [!WARNING]
+> **Early prototype.** The numbers behind the map are checked against the
+> game; how the page looks next to the real map has not been.
 
-The viewer is an early prototype and says so on the page. What it does not do
-yet: cliffs wherever the game smooths them (the Lakes and Island presets, and
-Vulcanus), by a rule not reproduced (none are drawn); cliffs on Fulgora that
-a ruin displaces (about one in six differs); resource entities on Gleba
-beyond a sixth of its stone, and about a third of Aquilo's wells, whose
-chunks the shoreline straightening shifts; and the exact position of individual
-trees and spawners — the rolls are replayed, but not yet which attempts
-collide, so the viewer shows trees as a scatter of the right density and
-enemy bases as the area they can occupy.
+Enter a map seed and explore the world it generates — where the ore is, how
+much, and where the biters are. Nothing is pre-rendered: the page runs the
+game's own map generation live, so every seed, preset and slider setting works.
 
-## Requirements
+<table>
+  <tr>
+    <td width="50%" valign="top">
+      <h3>⛏️ Finds the resources</h3>
+      Ore patches, oil wells, trees, cliffs and enemy bases, drawn the way
+      the in-game map draws them. Hover a patch for its exact amount and
+      size; the panel lists the nearest patches with distance and bearing.
+      Pan, zoom and share the view as a link.
+    </td>
+    <td width="50%">
+      <img src="docs/screenshots/seed-viewer-patch.webp" alt="A hovered iron ore patch outlined in white with a tooltip reading 425k in 702 tiles, 48 tiles from spawn">
+    </td>
+  </tr>
+  <tr>
+    <td width="50%">
+      <img src="docs/screenshots/seed-viewer-planets.webp" alt="The same seed on Vulcanus, Gleba, Fulgora and Aquilo">
+    </td>
+    <td width="50%" valign="top">
+      <h3>🪐 All five planets, all the settings</h3>
+      Nauvis, Vulcanus, Gleba, Fulgora and Aquilo, each from the seed the
+      game gives it. The game's presets (rail world, death world, island…),
+      the map type, frequency, size and richness for every resource, the
+      moisture and terrain sliders, the starting area and the map size.
+    </td>
+  </tr>
+</table>
 
-The renderer draws real Factorio sprites. To regenerate them yourself you
-need your own copy of the game.
+<details>
+<summary><b>How close it is to the game, and where it is not</b></summary>
+
+<br>
+
+[`packages/mapgen`](packages/mapgen) reimplements Factorio 2.0 map generation
+in TypeScript, in single precision and in the game's order of operations. Its
+tests hold it to exact values recorded from the real game:
+
+| Checked bit for bit | |
+|---|---|
+| Every tile, resource, tree and enemy expression on Nauvis | two seeds, three presets, two custom settings files |
+| Vulcanus, Gleba, Fulgora, Aquilo | every tile and entity expression |
+| Each noise function on its own | basis, multi-octave, spot and all Voronoi variants |
+| Cliffs and resource entities around spawn on Nauvis | what the game actually placed |
+
+Where an entity lands is a roll, and the game rolls each chunk from one random
+stream that every entity in the chunk draws from in turn. The viewer replays
+that stream (see [`placement.ts`](packages/mapgen/src/placement.ts)), so ore
+tiles and oil wells are the ones the game places, with their amounts.
+
+**Known gaps**
+
+- The game straightens shorelines after generating a chunk. That is not
+  reproduced, and in the few chunks it touches the wells can come out wrong —
+  about a third of them on Aquilo, which is mostly coast.
+- No cliffs are drawn where the game smooths them: the Lakes and Island
+  presets, and Vulcanus.
+- On Fulgora about one cliff in six differs, and scrap is drawn as a filled
+  field although the game fills only about half of its tiles.
+- On Gleba only a sixth of the stone is placed.
+- Trees are a scatter of the right density and enemy bases the area they can
+  occupy, not individual entities.
+- Only Factorio 2.0 is supported; 1.1 uses a different noise system.
+
+</details>
+
+## 🚀 Quick start
+
+1. Open **[malte9799.github.io/FactorioTools](https://malte9799.github.io/FactorioTools)**.
+2. In game, copy a blueprint to the clipboard.
+3. Click **Import / Export → Import from clipboard** and paste the string or link.
+   No blueprint handy? **Load a random example** picks from 170+ curated builds.
+4. Open **Rates** to see what it produces, where it loses output, and why.
+
+## 🧰 Build from source
+
+### Requirements
 
 - **Node.js 22+**
-- **Factorio 2.0** (Space Age, quality and elevated rails are all read if
-  present)
+- **Factorio 2.0** — only if you want to regenerate the sprites and game data
+  (Space Age, quality and elevated rails are read if present)
 
-## Setup
+The generated dataset in `apps/site/public/data/` is checked in, so cloning
+and running is enough to work on the app:
 
 ```bash
+git clone https://github.com/malte9799/FactorioTools.git
+cd FactorioTools
 npm install
+npm run dev
 ```
 
-Then generate the dataset from your own Factorio install. First, dump the
-prototype data from inside the game (this writes
-`data-raw-dump.json` into Factorio's `script-output` directory):
+### Commands
+
+| Command | What it does |
+|---|---|
+| `npm run dev` | Start the dev server |
+| `npm run build` | Production build into `apps/site/dist` |
+| `npm test` | Engine, simulation, renderer and map-generation test suites |
+| `npm run check` | Typecheck every workspace |
+
+### Regenerating the game data
+
+<details>
+<summary><b>Rebuild sprites and prototypes from your own Factorio install</b></summary>
+
+<br>
+
+First, dump the prototype data from inside the game. This writes
+`data-raw-dump.json` into Factorio's `script-output` directory:
 
 ```bash
 factorio --dump-data
@@ -108,99 +238,105 @@ factorio --dump-data
 Then run the pipeline **in this order** — the steps are not independent:
 
 ```bash
-npm run dump-to-gamedata --workspace=@factoriotools/data-pipeline
-npm run extract-sprites --workspace=@factoriotools/data-pipeline
+npm run dump-to-gamedata   --workspace=@factoriotools/data-pipeline
+npm run extract-sprites    --workspace=@factoriotools/data-pipeline
 npm run crop-sprite-sheets --workspace=@factoriotools/data-pipeline
 ```
 
-`dump-to-gamedata` reads the dump and writes `game-data.json` and
-`render-catalog.json`. `extract-sprites` copies the referenced sheets out of
-the install. `crop-sprite-sheets` then trims each sheet to the cells the
-renderer actually samples (143 MB → 10.6 MB) and rewrites the catalog's column
-counts to match.
+| Step | Output |
+|---|---|
+| `dump-to-gamedata` | Reads the dump and writes `game-data.json` and `render-catalog.json`. |
+| `extract-sprites` | Copies the referenced sheets out of the install, plus the shortcut-bar art the quickbar draws its buttons from. |
+| `crop-sprite-sheets` | Trims each sheet to the cells the renderer actually samples (143 MB → 10.6 MB) and rewrites the catalog's column counts to match. |
 
-The Seed Viewer's data is a separate, independent step:
+> [!WARNING]
+> Running the first step alone leaves the catalog claiming uncropped column
+> counts against cropped images, which silently breaks about 29 entities.
+> If you regenerate, regenerate all three.
+
+The Seed Viewer's data is a separate, independent step that reads the same
+dump and writes `data/mapgen/<version>.json`:
 
 ```bash
 npm run dump-to-mapgen --workspace=@factoriotools/data-pipeline
 ```
 
-It reads the same dump and writes `data/mapgen/<version>.json`: the game's
-named noise expressions and functions, the autoplace rule of every tile and
-entity, each planet's map-gen settings and the generator's presets. Each game
-version gets its own file and an entry in `index.json`, which is what the Seed
-Viewer's version list shows; run the step once per install (with
-`FACTORIO_DUMP` and `FACTORIO_DATA` pointing at it) to add one.
+**Good to know**
 
-Running the first step alone leaves the catalog claiming uncropped column
-counts against cropped images, which silently breaks about 29 entities. If you
-regenerate, regenerate all three.
+- Non-standard install paths are read from `FACTORIO_DATA` and `FACTORIO_DUMP`.
+- `extract-sprites` is incremental: it stamps each source file's size and
+  mtime and skips anything unchanged whose output is still present, so
+  re-running it after a crop leaves the cropped sheets alone. Pass `--force`
+  to rebuild regardless.
+- Until the shortcut art exists, the quickbar shows plain text labels.
+- The belt simulation reads belt speeds, underground lengths and splitter
+  prototypes from `game-data.json`. A dataset generated before those were
+  extracted still works — `packages/sim` falls back to built-in vanilla values.
 
-`extract-sprites` also copies the shortcut-bar art (every `shortcut`
-prototype: undo, redo, the planners, alt mode, the wires) into
-`public/data/sprites/shortcuts/` with `public/data/shortcut-icons.json`; the
-editor's quickbar draws its tool buttons from these and shows plain text
-labels until they exist.
+</details>
 
-Non-standard install paths are read from `FACTORIO_DATA` and `FACTORIO_DUMP`.
+<details>
+<summary><b>Check map generation against a real Factorio install</b></summary>
 
-The belt simulation reads belt speeds, underground lengths and splitter
-prototypes from `game-data.json`. A dataset generated before those were
-extracted still works: `packages/sim` falls back to built-in vanilla values.
+<br>
 
-`extract-sprites` is incremental: it stamps each source file's size and
-mtime, and skips anything unchanged whose output is still present. Re-running
-it after a crop therefore leaves the cropped sheets alone instead of
-replacing them with fresh uncropped copies. Pass `--force` to rebuild
-regardless.
-
-## Development
+`packages/mapgen` has two development scripts that run the game headless.
+Both use their own config and write directory, so a running game and your
+saves are left alone. Neither is needed to run the tests.
 
 ```bash
-npm run dev      # dev server
-npm run build    # production build into apps/site/dist
-npm test         # engine + renderer test suites
-npm run check    # typecheck every workspace
-```
-
-## Layout
-
-| Workspace | What it holds |
-|---|---|
-| `packages/engine` | Blueprint decode/encode, the rate calculator, prototype types. No DOM. |
-| `packages/renderer` | Canvas renderer: sprite atlas, neighbour classification, camera, draw passes. |
-| `packages/sim` | Tick-by-tick belt simulation: per-lane transport lines, curves, side-loading, undergrounds, splitters. No DOM. |
-| `packages/mapgen` | Map generation: a compiler and evaluator for the game's noise expressions, bit-exact with the game. No DOM. |
-| `packages/data-pipeline` | One-time scripts that turn a Factorio install into the dataset above. |
-| `apps/site` | The page itself — panels, menus, editing, library. |
-
-`engine`, `sim`, `mapgen` and most of `renderer` are DOM-free and tested directly
-with `tsx`; `apps/site` is the browser layer.
-
-### Checking map generation against the game
-
-`packages/mapgen` has two development scripts that run a real Factorio
-install headless. Both use their own config and write directory, so a running
-game and your saves are left alone. Neither is needed to run the tests.
-
-```bash
-npm run make-fixtures --workspace=@factoriotools/mapgen      # re-record the test fixtures
+npm run make-fixtures   --workspace=@factoriotools/mapgen          # re-record the test fixtures
 npm run compare-preview --workspace=@factoriotools/mapgen -- 123   # diff a seed against the game's map preview
 ```
 
 `FACTORIO_BIN` and `FACTORIO_DATA` point them at a non-standard install.
 
-## Audit
+</details>
 
-`audit/` holds a full code audit — 19 findings with severity and effort
-ratings, the implementation reports, and the verification scripts that back
-them. Those scripts are runnable and self-checking, and one of them
-(`verify-render-identical.ts`) hashes the entire render path so a refactor can
+## 🏗️ Architecture
+
+An npm-workspaces monorepo. `engine`, `sim`, `mapgen` and most of `renderer` are
+DOM-free and tested directly with `tsx`; `apps/site` is the browser layer.
+
+```mermaid
+flowchart LR
+    F[(Factorio install)] -->|data-pipeline| D[/game-data.json<br/>render-catalog.json<br/>sprites/]
+    F -->|data-pipeline| N[/mapgen data/]
+    D --> E[engine]
+    D --> S[sim]
+    D --> R[renderer]
+    N --> M[mapgen]
+    E --> A[apps/site]
+    S --> A
+    R --> A
+    M --> A
+```
+
+| Workspace | What it holds |
+|---|---|
+| [`packages/engine`](packages/engine) | Blueprint decode/encode, the rate calculator, prototype types. No DOM. |
+| [`packages/sim`](packages/sim) | Tick-by-tick belt simulation: per-lane transport lines, curves, side-loading, undergrounds, splitters. No DOM. |
+| [`packages/mapgen`](packages/mapgen) | Factorio 2.0 map generation: noise expressions, spot and Voronoi noise, cliffs, entity placement. No DOM. |
+| [`packages/renderer`](packages/renderer) | Canvas renderer: sprite atlas, neighbour classification, camera, draw passes. |
+| [`packages/data-pipeline`](packages/data-pipeline) | One-time scripts that turn a Factorio install into the dataset. |
+| [`apps/site`](apps/site) | The page itself — panels, menus, editing, library. |
+
+Every pushed branch is built and published as a preview under
+`https://malte9799.github.io/FactorioTools/preview/<branch>/`.
+
+### Code audit
+
+[`audit/`](audit) holds a full code audit — 19 findings with severity and
+effort ratings, the implementation reports, and the verification scripts that
+back them. The scripts are runnable and self-checking; one of them,
+`verify-render-identical.ts`, hashes the entire render path so a refactor can
 prove it changed no pixels.
 
-## Licence
+## 📜 Licence
 
-The code is MIT (see `LICENSE`).
+The code is [MIT](LICENSE). Blueprint math is ported from
+[Rate Calculator](https://codeberg.org/raiguard/RateCalculator) by raiguard,
+also MIT licensed.
 
 Map generation stands on other people's reverse engineering. The algorithms
 behind the game's noise functions were worked out and published, with Wube's
@@ -213,4 +349,5 @@ author of the game's noise system.
 
 Factorio, its prototype data and its sprite art are the property of
 [Wube Software](https://factorio.com) and are **not** covered by that licence.
-This project reads them from a Factorio installation at build time.
+This project reads them from a Factorio installation at build time and is not
+affiliated with Wube Software.

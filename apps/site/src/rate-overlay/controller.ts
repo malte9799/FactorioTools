@@ -10,11 +10,14 @@ import { hoverCardHtml } from "./card.js";
 import { FULL_RESEARCH, LabFactory, type PortLimit, type Research } from "./factory.js";
 import { detectIssues, type Issue } from "./issues.js";
 import { drawOverlay, type HoverTarget, type PortTabRect } from "./overlay.js";
-import { portEditorHtml, portTitle, wirePortList } from "./panels.js";
+import { portEditorHtml, portTitle, replacePortHtml, wirePortList } from "./panels.js";
 import { formatRate, loadSettings, saveSettings, type LabSettings } from "./settings.js";
 import { makeFloatingWindow, type FloatingWindow } from "../window-manager.js";
 
 type Lanes = [LaneFeed | null, LaneFeed | null];
+
+/** Every layer off: what the ports-only mode draws under its tabs. */
+const NO_LAYERS: LabSettings["layers"] = { dim: false, lanes: false, rings: false, hover: false, items: false, ports: false };
 
 /** Ticks simulated before the overlay counts as settled: a factory that
  *  has been running for a minute rather than one just switched on, so the
@@ -90,6 +93,8 @@ export class RateOverlay {
   private tabDown: string | undefined;
   private warm = 0;
   private enabled = false;
+  /** Port tabs alone, with the overlay itself off (alt mode's ports). */
+  private portsOnly = false;
   private dirty = false;
   private rebuildTimer = 0;
   private raf = 0;
@@ -121,7 +126,7 @@ export class RateOverlay {
     host.appendChild(popup);
     this.portPopupTitle = popup.querySelector(".gui-titlebar span")!;
     this.portPopupBody = popup.querySelector(".gui-body")!;
-    this.portPopup = makeFloatingWindow(popup, { x: 0, y: 0, width: 320, onClose: () => (this.editingPort = undefined) });
+    this.portPopup = makeFloatingWindow(popup, { x: 0, y: 0, width: 320, onClose: () => this.closePortPopup() });
     wirePortList(this.portPopupBody, this, this.abort.signal);
     this.listen();
   }
@@ -141,16 +146,39 @@ export class RateOverlay {
     return this.warm > 0;
   }
 
+  /** Running and drawing: the full overlay, or only its port tabs. */
+  private get active() {
+    return this.enabled || this.portsOnly;
+  }
+
   /** Shows or hides the overlay. Hidden, nothing is simulated or drawn; an
    *  edit made meanwhile is picked up when it's shown again. */
   setEnabled(on: boolean) {
     if (on === this.enabled) return;
+    const was = this.active;
     this.enabled = on;
-    this.canvas.hidden = !on;
-    if (!on) {
-      cancelAnimationFrame(this.raf);
+    this.activeChanged(was);
+  }
+
+  /** Shows the port tabs even while the overlay is off. The model keeps
+   *  running underneath, so their rates stay live. */
+  setPortsOnly(on: boolean) {
+    if (on === this.portsOnly) return;
+    const was = this.active;
+    this.portsOnly = on;
+    this.activeChanged(was);
+  }
+
+  private activeChanged(was: boolean) {
+    const now = this.active;
+    this.canvas.hidden = !now;
+    if (!this.enabled) {
       this.hover = undefined;
       this.card.hidden = true;
+    }
+    if (now === was) return;
+    if (!now) {
+      cancelAnimationFrame(this.raf);
       this.closePortPopup();
       return;
     }
@@ -168,7 +196,7 @@ export class RateOverlay {
     this.userLimits.clear();
     this.closePortPopup();
     this.justLoaded = entities;
-    if (this.enabled) this.rebuild();
+    if (this.active) this.rebuild();
     else this.dirty = true;
   }
 
@@ -181,7 +209,7 @@ export class RateOverlay {
     }
     this.justLoaded = undefined;
     this.entities = entities;
-    if (!this.enabled) {
+    if (!this.active) {
       this.dirty = true;
       return;
     }
@@ -276,6 +304,7 @@ export class RateOverlay {
   closePortPopup() {
     this.editingPort = undefined;
     this.portPopup.hide();
+    replacePortHtml(this.portPopupBody, "");
   }
 
   private renderPortPopup() {
@@ -284,8 +313,8 @@ export class RateOverlay {
     const p = this.factory?.ports().find((q) => q.id === id);
     const html = portEditorHtml(this, id);
     if (!p || !html) return this.closePortPopup();
-    this.portPopupTitle.textContent = portTitle(p);
-    this.portPopupBody.innerHTML = html;
+    if (this.portPopupTitle.textContent !== portTitle(p)) this.portPopupTitle.textContent = portTitle(p);
+    replacePortHtml(this.portPopupBody, html);
   }
 
   /** Keeps the popup's live rate current without redrawing its fields. */
@@ -293,7 +322,8 @@ export class RateOverlay {
     const id = this.editingPort;
     const el = id ? this.portPopupBody.querySelector<HTMLElement>("[data-port-now]") : null;
     const p = el ? this.factory?.ports().find((q) => q.id === id) : undefined;
-    if (el && p) el.textContent = formatRate(p.rate, this.settings.style.rateUnit);
+    const text = p && formatRate(p.rate, this.settings.style.rateUnit);
+    if (el && text && el.textContent !== text) el.textContent = text;
   }
 
   /** Simulate ahead: a minute at a time from the Simulation controls. */
@@ -325,7 +355,7 @@ export class RateOverlay {
       return { x: e.clientX - r.left, y: e.clientY - r.top };
     };
     const tabAt = (e: MouseEvent) => {
-      if (!this.enabled || !this.factory) return undefined;
+      if (!this.active || !this.factory) return undefined;
       const { x, y } = local(e);
       return this.portTabs.find((t) => x >= t.x && x <= t.x + t.w && y >= t.y && y <= t.y + t.h);
     };
@@ -417,7 +447,7 @@ export class RateOverlay {
   }
 
   private readonly frame = (now: number) => {
-    if (!this.enabled) return;
+    if (!this.active) return;
     const dt = Math.min(0.1, (now - this.last) / 1000);
     this.last = now;
     const f = this.factory;
@@ -459,11 +489,11 @@ export class RateOverlay {
         dpr,
         camera: this.renderer.camera,
         factory: f,
-        settings: this.settings,
+        settings: this.enabled ? this.settings : { ...this.settings, layers: NO_LAYERS },
         issues: this.issues,
-        hover: this.settings.layers.hover ? this.hover : undefined,
+        hover: this.enabled && this.settings.layers.hover ? this.hover : undefined,
         icons: getSharedIconAtlas(),
-        showPorts: this.settings.layers.ports || this.forcePorts,
+        showPorts: this.settings.layers.ports || this.forcePorts || this.portsOnly,
         highlightPort: this.highlightPort ?? this.editingPort,
       });
       if (now - this.lastUi > 400 && this.warm === 0) {

@@ -240,6 +240,27 @@ class LaneMeter {
   }
 }
 
+/** Every belt line items on `from` can reach: straight on, side-loaded or
+ *  through a splitter. */
+function downstream(from: Iterable<BeltLine>): Set<BeltLine> {
+  const seen = new Set<BeltLine>();
+  const todo = [...from];
+  while (todo.length) {
+    const line = todo.pop()!;
+    if (seen.has(line)) continue;
+    seen.add(line);
+    const end = line.end;
+    if (end.kind === "line") {
+      todo.push(end.to);
+    } else if (end.kind === "sideload") {
+      for (const t of end.target) if (t) todo.push(t.line);
+    } else if (end.kind === "splitter") {
+      for (const o of end.splitter.outputs) if (o) todo.push(o);
+    }
+  }
+  return seen;
+}
+
 export class LabFactory {
   readonly net: BeltNetwork;
   readonly belts: BeltSim;
@@ -343,9 +364,14 @@ export class LabFactory {
         const node = this.net.nodeAt(Math.floor(p.x), Math.floor(p.y));
         if (node?.line) {
           // An inserter drops on the lane farther from itself. It drops
-          // away from its facing, and picks up toward it.
+          // away from its facing, and picks up toward it. On a curve the
+          // lanes are judged against whichever of the belt's two travel
+          // directions the arm is beside: an arm on the outside of a curve
+          // reaches across to the inner lane, from either side.
           const away = (isDrop ? (facing + 2) % 4 : facing) as Card;
-          const lane: Lane = laneSide(node.dir, 0) === away ? 0 : 1;
+          const inLine = away === node.dir || away === (node.dir + 2) % 4;
+          const travel = node.curveFrom && inLine ? node.curveFrom.dir : node.dir;
+          const lane: Lane = laneSide(travel, 0) === away ? 0 : 1;
           return { kind: "belt", node, lane };
         }
         const chest = chestAt(p.x, p.y);
@@ -425,36 +451,6 @@ export class LabFactory {
     const items = new Set<string>();
     for (const m of this.machines) for (const i of [...m.ingredients, ...m.products]) items.add(i.name);
     this.knownItems = [...items].sort();
-    this.guessInputs();
-    // A belt end that points into empty space carries on somewhere off the
-    // blueprint, so it starts taking everything. One that points into a
-    // building, or that an inserter takes from, is a dead end by design and
-    // starts off. So does the end of a supply belt: one machines here take
-    // from but nothing made here can reach, like the tail of a belt feeding
-    // a row of silos; in game its items back up there, they don't leave.
-    // Either can be switched in the Ports window.
-    const downstream = (from: Iterable<BeltLine>) => {
-      const seen = new Set<BeltLine>();
-      const todo = [...from];
-      while (todo.length) {
-        const line = todo.pop()!;
-        if (seen.has(line)) continue;
-        seen.add(line);
-        const end = line.end;
-        if (end.kind === "line") {
-          todo.push(end.to);
-        } else if (end.kind === "sideload") {
-          for (const t of end.target) if (t) todo.push(t.line);
-        } else if (end.kind === "splitter") {
-          for (const o of end.splitter.outputs) if (o) todo.push(o);
-        }
-      }
-      return seen;
-    };
-    const productLines = downstream(
-      this.inserters.flatMap((i) => (i.drop.kind === "belt" && (i.pickup.kind === "machine" || i.pickup.kind === "box") ? [i.drop.node.line!] : [])),
-    );
-    const feedsMachines = downstream(this.inserters.flatMap((i) => (i.pickup.kind === "belt" ? [i.pickup.node.line!] : [])));
     const occupied = new Map<string, PlacedEntity>();
     for (const e of entities) {
       const [w0, h0] = data.machines[e.name]?.tileFootprint ?? data.machines[e.name]?.size ?? data.beacons[e.name]?.size ?? footprintOf(e.name) ?? [1, 1];
@@ -464,6 +460,28 @@ export class LabFactory {
       const top = Math.round(e.y - h / 2);
       for (let dx = 0; dx < w; dx++) for (let dy = 0; dy < h; dy++) occupied.set(`${left + dx},${top + dy}`, e);
     }
+    // A belt that starts right in front of something that can't put items
+    // on it (an inserter, a machine, a pole) has no way in from outside:
+    // that end gets no port at all. A loader or a known chest behind it
+    // still counts as a supply.
+    for (const port of this.net.ports) {
+      if (port.kind !== "input") continue;
+      const behind = occupied.get(`${port.x - DX[port.dir]},${port.y - DY[port.dir]}`);
+      if (behind && !behind.name.includes("loader") && !KNOWN_CHEST.test(behind.name) && !LABELS.test(behind.name)) this.walledIn.add(port.id);
+    }
+    this.guessInputs();
+    // A belt end that points into empty space carries on somewhere off the
+    // blueprint, so it starts taking everything. One that points into a
+    // building, or that an inserter takes from, is a dead end by design and
+    // starts off. So does the end of a supply belt: one machines here take
+    // from but nothing made here can reach, like the tail of a belt feeding
+    // a row of silos; in game its items back up there, they don't leave.
+    // Either can be switched in the Ports window.
+    const productLines = downstream(
+      this.inserters.flatMap((i) => (i.drop.kind === "belt" && (i.pickup.kind === "machine" || i.pickup.kind === "box") ? [i.drop.node.line!] : [])),
+    );
+    const feedsMachines = downstream(this.inserters.flatMap((i) => (i.pickup.kind === "belt" ? [i.pickup.node.line!] : [])));
+    const fed = this.reachedLines();
     for (const port of this.net.ports) {
       if (port.kind !== "output") continue;
       const into = occupied.get(`${port.x + DX[port.dir]},${port.y + DY[port.dir]}`);
@@ -481,6 +499,13 @@ export class LabFactory {
         : into ? `Runs into the ${(data.items[into.name]?.localised ?? into.name.replace(/-/g, " ")).toLowerCase()}`
         : "Points into empty space",
       );
+      // A way out nothing reaches would only ever export 0: it starts off,
+      // and comes back on by itself once something can reach it.
+      if (this.portEnabled.get(port.id) && !fed.has(port.line)) {
+        this.portEnabled.set(port.id, false);
+        this.unreached.set(port.id, this.portReason.get(port.id)!);
+        this.portReason.set(port.id, "Nothing reaches it");
+      }
       this.applyBeltPort(port.id);
     }
     // Same for an arm that drops onto a tile with a building on it that
@@ -533,6 +558,11 @@ export class LabFactory {
       // The synthetic input behind an unfed splitter half starts empty:
       // nothing is placed there in the blueprint.
       if (port.kind !== "input" || port.line.nodes.length === 0) continue;
+      if (this.walledIn.has(port.id)) {
+        this.portEnabled.set(port.id, false);
+        this.setInput(port.id, null, null);
+        continue;
+      }
 
       const labelled = this.labelFor(port.line);
       if (labelled) {
@@ -575,6 +605,8 @@ export class LabFactory {
       };
       walk(port.line);
       if (first === "drop") {
+        // It would only ever import 0, so it starts off.
+        this.portEnabled.set(port.id, false);
         this.setInput(port.id, null, null);
         this.portReason.set(port.id, "Filled inside the blueprint");
         continue;
@@ -595,6 +627,7 @@ export class LabFactory {
       const k = peers.indexOf(g.id);
       const m = g.items.length;
       const pick = (slot: number) => (m ? g.items[(k * 2 + slot) % m] : undefined);
+      if (!m) this.portEnabled.set(g.id, false);
       this.setInput(g.id, feed(pick(0)), feed(pick(1)));
       this.portReason.set(g.id, m ? "Guessed from the machines it feeds" : "Nothing downstream takes from it");
     }
@@ -652,7 +685,46 @@ export class LabFactory {
 
   setPortEnabled(portId: string, on: boolean) {
     this.portEnabled.set(portId, on);
+    this.unreached.delete(portId);
     if (!portId.startsWith("arm-")) this.applyBeltPort(portId);
+    this.wakeReachedOutputs();
+  }
+
+  /** Belt outputs switched off only because nothing reached them, with the
+   *  reason they'd have had otherwise. */
+  private readonly unreached = new Map<string, string>();
+
+  /** Belt inputs with no way in from outside, left out of ports(). */
+  private readonly walledIn = new Set<string>();
+
+  /** Belt lines something can bring items onto: a fed, enabled input
+   *  upstream, or an arm with a supply dropping on the way. An arm taking
+   *  from a belt only counts once that belt is reached itself. */
+  private reachedLines(): Set<BeltLine> {
+    const on = (id: string) => this.portEnabled.get(id) ?? true;
+    let reached = downstream(
+      this.net.ports.filter((p) => p.kind === "input" && on(p.id) && (this.inputs.get(p.id) ?? [null, null]).some((l) => l)).map((p) => p.line),
+    );
+    for (;;) {
+      const supplied = (t: Target) =>
+        t.kind === "belt" ? reached.has(t.node.line!) : t.kind === "port" ? on(t.port.id) && t.port.items.length > 0 : t.kind !== "none";
+      const more = this.inserters.flatMap((i) => (i.drop.kind === "belt" && !reached.has(i.drop.node.line!) && supplied(i.pickup) ? [i.drop.node.line!] : []));
+      if (!more.length) return reached;
+      reached = downstream([...reached, ...more]);
+    }
+  }
+
+  private wakeReachedOutputs() {
+    if (!this.unreached.size) return;
+    const reached = this.reachedLines();
+    for (const port of this.net.ports) {
+      const reason = this.unreached.get(port.id);
+      if (reason === undefined || !reached.has(port.line)) continue;
+      this.unreached.delete(port.id);
+      this.portEnabled.set(port.id, true);
+      this.portReason.set(port.id, reason);
+      this.applyBeltPort(port.id);
+    }
   }
 
   private applyBeltPort(portId: string) {
@@ -673,11 +745,12 @@ export class LabFactory {
   setArmPortItems(portId: string, items: string[]) {
     const port = this.armPorts.find((p) => p.id === portId);
     if (port) port.items = items;
+    this.wakeReachedOutputs();
   }
 
   /** Every port, belt and arm, for the Ports window and the map tabs. */
   ports(): PortInfo[] {
-    const belt = this.net.ports.map((p): PortInfo => {
+    const belt = this.net.ports.filter((p) => !this.walledIn.has(p.id)).map((p): PortInfo => {
       const node = p.line.nodes[p.kind === "input" ? 0 : p.line.nodes.length - 1];
       const feed = this.inputs.get(p.id) ?? [null, null];
       return {

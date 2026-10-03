@@ -31,7 +31,7 @@ import { appendQualityOptions, QUALITY_TIERS } from "./quality-options.js";
 import { buildPropertiesPanel, buildRecipeMenu, buildModuleMenu, buildFilterItemMenu } from "./edit-properties.js";
 import type { GridMenuHandle } from "./grid-menu.js";
 import { buildLibrarySidebar } from "./library-sidebar.js";
-import { buildQuickbar, type QuickbarHandle, type QuickbarItem } from "./quickbar.js";
+import { buildQuickbar, readAltLayers, writeAltLayers, type AltLayers, type QuickbarHandle, type QuickbarItem } from "./quickbar.js";
 import { buildGridMenu } from "./grid-menu.js";
 import { BlueprintLinkError, looksLikeBlueprintString, parseBlueprintLink, resolveBlueprintLink, SHARE_TARGETS } from "./blueprint-links.js";
 import { saveToLibrary } from "./blueprint-library.js";
@@ -1030,10 +1030,25 @@ export function mountBlueprintEditor(root: HTMLElement): () => void {
   // by being re-applied to the fresh instance rather than living on the
   // renderer itself.
   let altModeOn = false;
+  // What alt mode shows, picked from the alt-mode button's right-click
+  // menu. Ports are the rate overlay's tabs, shown on their own here even
+  // with the Rate Calculator window closed.
+  let altLayers = readAltLayers();
   function setAltMode(enabled: boolean) {
     altModeOn = enabled;
-    renderer.setAltMode(altModeOn);
+    applyAltMode();
     syncQuickbar();
+  }
+  function setAltLayers(layers: AltLayers) {
+    altLayers = { ...layers };
+    writeAltLayers(altLayers);
+    applyAltMode();
+    syncQuickbar();
+  }
+  function applyAltMode() {
+    renderer.setAltMode(altModeOn);
+    renderer.setAltModeLayers(altLayers);
+    rateOverlay.setPortsOnly(altModeOn && altLayers.ports);
   }
 
   /** Mirrors the editor state onto the quickbar: undo/redo availability,
@@ -1045,6 +1060,7 @@ export function mountBlueprintEditor(root: HTMLElement): () => void {
       canRedo: redoStack.length > 0,
       boxMode: boxModeKind === "copyBox" || boxModeKind === "deleteBox" ? boxModeKind : null,
       altMode: altModeOn,
+      altLayers,
       wire: wireColorInHand,
       held: paletteSelection ? { name: paletteSelection, quality: paletteQuality } : null,
     });
@@ -2697,6 +2713,7 @@ export function mountBlueprintEditor(root: HTMLElement): () => void {
 
   quickbar = buildQuickbar($<HTMLDivElement>("#quickbar"), {
     onPickItem: pickQuickbarItem,
+    onAltLayers: setAltLayers,
     onAssignSlot(bar, slot) {
       hotbarTarget = { bar, slot };
       enterMenuState("hotbar");
@@ -3369,7 +3386,7 @@ export function mountBlueprintEditor(root: HTMLElement): () => void {
     renderer = mountRenderer(canvas, getData(), getRenderCatalog(), currentQuality());
     renderer.onHover(onSchematicHover);
     rateOverlay.attach(renderer);
-    renderer.setAltMode(altModeOn);
+    applyAltMode();
     wireEditCallbacks();
     wireCameraPersistence();
     // A fresh renderer starts in 'idle', so whatever was in hand when the
