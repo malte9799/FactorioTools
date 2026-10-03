@@ -987,6 +987,22 @@ body:has(#library-window.is-collapsed:not([hidden])) #window-toolbar { left: cal
 .qb-num-col,
 .qb-slot-col { flex-direction: column; }
 
+/* The alt-mode button's right-click menu, opening above the tool grid. */
+.qb-tools { position: relative; }
+.qb-alt-menu {
+  position: absolute;
+  right: -1px;
+  bottom: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 170px;
+  border-bottom: none;
+}
+.qb-alt-menu[hidden] { display: none; }
+.qb-alt-title { font-family: var(--display); font-size: 13px; font-weight: 700; color: #ffe6c0; margin-bottom: 2px; }
+.qb-alt-row { display: flex; align-items: center; gap: 6px; font-size: 13px; color: #e6e0d8; cursor: pointer; white-space: nowrap; }
+
 .qb-tool-grid {
   display: grid;
   grid-auto-flow: column;

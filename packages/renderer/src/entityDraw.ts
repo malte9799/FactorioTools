@@ -66,6 +66,16 @@ export function drawQualityBadge(
   drawPlainIcon(ctx, iconAtlas, entity.quality, entity.x - fw / 2 + size / 2, entity.y + fh / 2 - size / 2, size);
 }
 
+/** Which of the alt-mode badges are drawn — each can be switched off on
+ *  its own (the quickbar's alt-mode button, right-clicked). */
+export interface AltModeLayers {
+  quality: boolean;
+  recipe: boolean;
+  modules: boolean;
+}
+
+export const ALL_ALT_MODE_LAYERS: AltModeLayers = { quality: true, recipe: true, modules: true };
+
 /** Alt-mode overlay (Factorio's own Alt-key view): a recipe icon centered
  *  on crafting machines, and a row of module icons beneath — for machines
  *  AND beacons, since both can carry modules. Drawn as a separate pass
@@ -78,16 +88,17 @@ export function drawAltModeOverlay(
   iconAtlas: IconAtlas,
   entity: PlacedEntity,
   visual: ResolvedVisual,
+  layers: AltModeLayers = ALL_ALT_MODE_LAYERS,
 ): void {
-  drawQualityBadge(ctx, iconAtlas, entity, visual);
+  if (layers.quality) drawQualityBadge(ctx, iconAtlas, entity, visual);
 
   const [fw, fh] = visual.tileFootprint;
   if (!visual.isMachine && !visual.isBeacon) return;
 
   // Recipe badge: centered on the machine, or nudged up a touch when a
   // module row will also be drawn so the two don't overlap.
-  if (visual.isMachine && entity.recipe) {
-    const hasModules = entity.modules.length > 0;
+  if (layers.recipe && visual.isMachine && entity.recipe) {
+    const hasModules = layers.modules && entity.modules.length > 0;
     const recipeCy = entity.y - (hasModules ? RECIPE_ICON_SIZE * 0.35 : 0);
     drawIcon(ctx, iconAtlas, entity.recipe, entity.x, recipeCy, Math.min(RECIPE_ICON_SIZE, fw * 0.6, fh * 0.6));
   }
@@ -97,7 +108,7 @@ export function drawAltModeOverlay(
   // than a count badge), centered as a horizontal strip under the recipe
   // badge (machines) or under the entity center (beacons, which have no
   // recipe badge to make room for).
-  if (entity.modules.length > 0) {
+  if (layers.modules && entity.modules.length > 0) {
     const instances: string[] = [];
     for (const stack of entity.modules) {
       for (let i = 0; i < stack.count; i++) instances.push(stack.name);
@@ -106,7 +117,7 @@ export function drawAltModeOverlay(
       const step = MODULE_ICON_SIZE + MODULE_ICON_GAP;
       const totalWidth = instances.length * step - MODULE_ICON_GAP;
       const startX = entity.x - totalWidth / 2 + MODULE_ICON_SIZE / 2;
-      const rowY = visual.isMachine ? entity.y + RECIPE_ICON_SIZE * 0.55 : entity.y;
+      const rowY = visual.isMachine && layers.recipe ? entity.y + RECIPE_ICON_SIZE * 0.55 : entity.y;
       instances.forEach((moduleName, i) => {
         drawIcon(ctx, iconAtlas, moduleName, startX + i * step, rowY, Math.min(MODULE_ICON_SIZE, fw / Math.max(instances.length, 1)));
       });
