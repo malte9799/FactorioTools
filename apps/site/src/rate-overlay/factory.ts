@@ -3,7 +3,7 @@
  *  have something real-looking to show until phase 2 of the simulation
  *  lands. Machines craft at the engine's calculated speed (modules, beacons
  *  and quality included); inserters are a fixed-time swing derived from
- *  the dataset's chest-to-chest throughput, one item per swing. */
+ *  their arm's rotation speed and quality, carrying a researched hand. */
 import { calculate, type GameData, type PlacedEntity } from "@factoriotools/engine";
 import { BeltSim, beltSpecResolver, buildBeltNetwork, cardOf, DX, DY, laneSide, type BeltLine, type BeltNetwork, type BeltNode, type Card, type Lane, type LaneFeed } from "@factoriotools/sim";
 
@@ -19,24 +19,26 @@ export interface Research {
 
 export const FULL_RESEARCH: Research = { hands: "full", beltStack: 4 };
 
-/** Ticks for one pickup-to-drop-and-back swing at normal quality, from the
- *  dataset's chest-to-chest rates for a one-item hand. Fast, bulk and stack
- *  inserters share one arm speed. */
-const SWING_TICKS: Record<string, number> = {
-  "burner-inserter": 76,
-  inserter: 70,
-  "long-handed-inserter": 48,
-  "fast-inserter": 24,
-  "bulk-inserter": 24,
-  "stack-inserter": 24,
+/** Arm rotation speed at normal quality, revolutions per tick, from the
+ *  prototypes (an inserter's tooltip shows it as degrees per second: 0.014
+ *  is 302°/s). Quality multiplies it like machine speed: legendary is 2.5×.
+ *  Fast, bulk and stack inserters share one arm speed. Pickup to drop and
+ *  back is one full revolution. */
+const ROTATION_SPEED: Record<string, number> = {
+  "burner-inserter": 0.013,
+  inserter: 0.014,
+  "long-handed-inserter": 0.02,
+  "fast-inserter": 0.04,
+  "bulk-inserter": 0.04,
+  "stack-inserter": 0.04,
 };
 
-/** Approximate hand sizes without and with full inserter capacity research. */
+/** Hand sizes without and with full inserter capacity research. */
 function handSizeFor(name: string, research: Research): number {
   const full = research.hands === "full";
   if (name.includes("stack")) return full ? 16 : 4;
   if (name.includes("bulk")) return full ? 12 : 2;
-  return full ? 3 : 1;
+  return full ? 4 : 1;
 }
 
 export interface MachineSim {
@@ -365,8 +367,9 @@ export class LabFactory {
       };
       const handSize = e.overrideStackSize ?? handSizeFor(e.name, research);
       // Quality speeds the arm's rotation up the same way it speeds up
-      // machines. Kept fractional: a legendary stack arm takes 9.6 ticks.
-      const swing = (SWING_TICKS[e.name] ?? Math.round(60 / proto.throughput)) / (data.qualityMachineSpeed[e.quality] ?? 1);
+      // machines. Kept fractional: a normal inserter's trip is 71.4 ticks.
+      const rotation = ROTATION_SPEED[e.name] ?? proto.throughput / 60;
+      const swing = 1 / rotation / (data.qualityMachineSpeed[e.quality] ?? 1);
       const tripTicks = Math.max(4, swing);
       const ins: InserterSim = {
         entity: e,
@@ -454,7 +457,9 @@ export class LabFactory {
     }
     for (const port of this.net.ports) {
       if (port.kind !== "output") continue;
-      const ahead = occupied.get(`${port.x + DX[port.dir]},${port.y + DY[port.dir]}`);
+      const into = occupied.get(`${port.x + DX[port.dir]},${port.y + DY[port.dir]}`);
+      // A loader set to take items off the belt is a way out, not a wall.
+      const ahead = into && !(into.name.includes("loader") && into.undergroundType === "input") ? into : undefined;
       const tail = port.line.nodes[port.line.nodes.length - 1];
       const taken = this.inserters.some((i) => i.pickup.kind === "belt" && i.pickup.node === tail);
       const supply = !productLines.has(port.line) && feedsMachines.has(port.line);
@@ -464,6 +469,7 @@ export class LabFactory {
         ahead ? `Points into the ${(data.items[ahead.name]?.localised ?? ahead.name.replace(/-/g, " ")).toLowerCase()}`
         : taken ? "An inserter takes from its end"
         : supply ? "Supply belt: nothing made here reaches its end"
+        : into ? `Runs into the ${(data.items[into.name]?.localised ?? into.name.replace(/-/g, " ")).toLowerCase()}`
         : "Points into empty space",
       );
       this.applyBeltPort(port.id);
@@ -895,12 +901,13 @@ export class LabFactory {
         delivered = ins.handCount;
         ins.handCount = 0;
       } else if (d.kind === "belt") {
-        // One slot per tick as space opens up under the hand: a whole stack
-        // for a stack inserter, a single item for anything else.
-        const n = ins.stacksOnBelt ? Math.min(ins.handCount, this.research.beltStack) : 1;
-        if (this.belts.dropOnTile(d.node, d.lane, ins.hand!, n)) {
+        // Every slot with room under the hand, each tick: a whole stack for
+        // a stack inserter, a single item for anything else.
+        while (ins.handCount > 0) {
+          const n = ins.stacksOnBelt ? Math.min(ins.handCount, this.research.beltStack) : 1;
+          if (!this.belts.dropOnTile(d.node, d.lane, ins.hand!, n, true)) break;
           ins.handCount -= n;
-          delivered = n;
+          delivered += n;
         }
       } else if (d.kind === "box") {
         // As much of the hand as fits; the rest waits for space.
