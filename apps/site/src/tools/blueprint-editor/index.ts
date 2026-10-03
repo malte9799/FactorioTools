@@ -1077,6 +1077,7 @@ export function mountBlueprintEditor(root: HTMLElement): () => void {
     renderer.setAltMode(altModeOn);
     renderer.setAltModeLayers(altLayers);
     rateOverlay.setPortsOnly(altModeOn && altLayers.ports);
+    rateOverlay.setAltDisplays(altModeOn);
   }
 
   /** Mirrors the editor state onto the quickbar: undo/redo availability,

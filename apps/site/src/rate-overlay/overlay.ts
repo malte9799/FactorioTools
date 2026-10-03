@@ -29,6 +29,8 @@ export interface OverlayFrame {
   icons: IconAtlas;
   /** Draw port tabs (the layer, or while the Ports window is open). */
   showPorts: boolean;
+  /** Draw the display panels set to show in alt mode. */
+  altDisplays?: boolean;
   /** A port to ring, for the row the cursor is on in the Ports window. */
   highlightPort?: string;
 }
@@ -366,6 +368,9 @@ export function drawOverlay(fr: OverlayFrame): PortTabRect[] {
 
   /* ---------- circuits ---------- */
   if (L.circuits) drawCircuits(fr, { world, visible, toScreen, labels, detail, hovered: hoveredEntity(fr.hover) });
+  // Alt mode shows the display panels set to "Always show in Alt-mode",
+  // even with the overlay itself off.
+  else if (fr.altDisplays) drawCircuits(fr, { world, visible, toScreen, labels, detail: Math.max(detail, 0.85), hovered: undefined, displaysOnly: true });
 
   /* ---------- ports ---------- */
   const tabs: PortTabRect[] = [];
@@ -530,6 +535,9 @@ function drawCircuits(
     labels: (() => void)[];
     detail: number;
     hovered: PlacedEntity | undefined;
+    /** Alt mode without the overlay: only the display panels set to show
+     *  in alt mode. */
+    displaysOnly?: boolean;
   },
 ) {
   const { ctx, factory: f, camera } = fr;
@@ -537,42 +545,46 @@ function drawCircuits(
   const ppt = camera.state.pixelsPerTile;
   const byNumber = new Map(f.entities.map((e) => [e.entityNumber, e] as const));
   h.world();
+  if (!h.displaysOnly) {
 
-  // The hovered entity's networks glow in their colour.
-  const lit = new Set<number>();
-  if (h.hovered) {
-    for (const color of ["red", "green"] as const) {
-      for (const side of [1, 2] as const) {
-        const net = c.network(h.hovered.entityNumber, color, side);
-        if (net) lit.add(net.id);
+    // The hovered entity's networks glow in their colour.
+    const lit = new Set<number>();
+    if (h.hovered) {
+      for (const color of ["red", "green"] as const) {
+        for (const side of [1, 2] as const) {
+          const net = c.network(h.hovered.entityNumber, color, side);
+          if (net) lit.add(net.id);
+        }
       }
     }
+    ctx.lineCap = "round";
+    for (const w of f.wires) {
+      if (w.color === "copper") continue;
+      const a = byNumber.get(w.from);
+      const b = byNumber.get(w.to);
+      if (!a || !b) continue;
+      const net = c.network(w.from, w.color, combinatorSide(a, w.fromSide));
+      if (!net) continue;
+      // The renderer draws every wire already; this only lights up the
+      // networks of whatever is under the cursor.
+      const hot = lit.has(net.id);
+      if (!hot) continue;
+      if (!h.visible(a.x, a.y, 8) && !h.visible(b.x, b.y, 8)) continue;
+      ctx.strokeStyle = WIRE_COLOR[w.color];
+      ctx.globalAlpha = net.values.size ? 0.95 : 0.55;
+      ctx.lineWidth = Math.max(0.04, 3 / ppt);
+      ctx.beginPath();
+      ctx.moveTo(a.x, a.y);
+      ctx.lineTo(b.x, b.y);
+      ctx.stroke();
+    }
+    ctx.globalAlpha = 1;
+
   }
-  ctx.lineCap = "round";
-  for (const w of f.wires) {
-    if (w.color === "copper") continue;
-    const a = byNumber.get(w.from);
-    const b = byNumber.get(w.to);
-    if (!a || !b) continue;
-    const net = c.network(w.from, w.color, combinatorSide(a, w.fromSide));
-    if (!net) continue;
-    // The renderer draws every wire already; this only lights up the
-    // networks of whatever is under the cursor.
-    const hot = lit.has(net.id);
-    if (!hot) continue;
-    if (!h.visible(a.x, a.y, 8) && !h.visible(b.x, b.y, 8)) continue;
-    ctx.strokeStyle = WIRE_COLOR[w.color];
-    ctx.globalAlpha = net.values.size ? 0.95 : 0.55;
-    ctx.lineWidth = Math.max(0.04, 3 / ppt);
-    ctx.beginPath();
-    ctx.moveTo(a.x, a.y);
-    ctx.lineTo(b.x, b.y);
-    ctx.stroke();
-  }
-  ctx.globalAlpha = 1;
 
   for (const e of f.circuitEntities) {
     if (!h.visible(e.x, e.y)) continue;
+    if (h.displaysOnly && !(/display-panel/.test(e.name) && e.panel?.alwaysShow)) continue;
     const n = e.entityNumber;
     if (/lamp/.test(e.name)) {
       const lamp = c.lamp(n);

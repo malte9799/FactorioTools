@@ -149,7 +149,27 @@ export class RateOverlay {
 
   /** Running and drawing: the full overlay, or only its port tabs. */
   private get active() {
-    return this.enabled || this.portsOnly;
+    return this.enabled || this.portsOnly || (this.altDisplays && this.hasAltDisplays);
+  }
+
+  /** Alt mode is on: draw display panels set to "Always show in Alt-mode".
+   *  The model only runs for it while such a panel exists. */
+  setAltDisplays(on: boolean) {
+    if (on === this.altDisplays) return;
+    const was = this.active;
+    this.altDisplays = on;
+    this.activeChanged(was);
+  }
+
+  private altDisplays = false;
+  private hasAltDisplays = false;
+
+  /** Picks up a display panel's alt-mode setting appearing or going away
+   *  with an edit. */
+  private checkAltDisplays() {
+    const was = this.active;
+    this.hasAltDisplays = this.entities.some((e) => /display-panel/.test(e.name) && e.panel?.alwaysShow);
+    this.activeChanged(was);
   }
 
   /** Shows or hides the overlay. Hidden, nothing is simulated or drawn; an
@@ -198,8 +218,9 @@ export class RateOverlay {
     this.userLimits.clear();
     this.closePortPopup();
     this.justLoaded = entities;
-    if (this.active) this.rebuild();
-    else this.dirty = true;
+    this.dirty = true;
+    this.checkAltDisplays();
+    if (this.active && this.dirty) this.rebuild();
   }
 
   /** The same blueprint, edited: rebuild shortly, keeping port settings. */
@@ -212,6 +233,7 @@ export class RateOverlay {
     this.justLoaded = undefined;
     this.entities = entities;
     this.wires = wires;
+    this.checkAltDisplays();
     if (!this.active) {
       this.dirty = true;
       return;
@@ -507,6 +529,7 @@ export class RateOverlay {
         hover: this.enabled && this.settings.layers.hover ? this.hover : undefined,
         icons: getSharedIconAtlas(),
         showPorts: this.settings.layers.ports || this.forcePorts || this.portsOnly,
+        altDisplays: this.altDisplays && this.hasAltDisplays,
         highlightPort: this.highlightPort ?? this.editingPort,
       });
       if (now - this.lastUi > 400 && this.warm === 0) {
