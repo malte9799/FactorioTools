@@ -8,7 +8,7 @@ import type { RateOverlay } from "./controller.js";
 import { machineStatus, type MachineStatus, type PortInfo, type Research } from "./factory.js";
 import { itemLabel } from "./issues.js";
 import { statusColor } from "./overlay.js";
-import { formatRate, PALETTES, type LabSettings, type LaneState, type Palette, type RateUnit } from "./settings.js";
+import { formatRate, PALETTES, PER, type LabSettings, type LaneState, type Palette, type RateUnit } from "./settings.js";
 
 type Layer = keyof LabSettings["layers"];
 
@@ -282,9 +282,21 @@ export function renderPortList(el: HTMLElement, overlay: RateOverlay) {
     return;
   }
   const label = (n: string) => escapeHtml(itemLabel(f.data, n));
+  // The blueprint's own items first, then every other item to override with.
+  const known = new Set(f.knownItems);
+  const others = Object.keys(f.data.items)
+    .filter((n) => f.data.items[n]?.kind === "item" && !known.has(n))
+    .sort((a, b) => itemLabel(f.data, a).localeCompare(itemLabel(f.data, b)));
+  const opt = (n: string, cur: string | undefined) => `<option value="${escapeHtml(n)}" ${cur === n ? "selected" : ""}>${label(n)}</option>`;
   const options = (cur: string | undefined, empty = "(empty)") =>
     `<option value="">${empty}</option>` +
-    [...new Set([...f.knownItems, ...(cur ? [cur] : [])])].map((n) => `<option value="${escapeHtml(n)}" ${cur === n ? "selected" : ""}>${label(n)}</option>`).join("");
+    `<optgroup label="In this blueprint">${f.knownItems.map((n) => opt(n, cur)).join("")}</optgroup>` +
+    `<optgroup label="Other items">${others.map((n) => opt(n, cur)).join("")}</optgroup>`;
+  const unit = overlay.settings.style.rateUnit;
+  const rateField = (p: PortInfo) => {
+    const v = p.limit.rate === undefined ? "" : +(p.limit.rate * PER[unit]).toFixed(3);
+    return `<label>Rate <input type="number" min="0" step="any" data-rate value="${v}" placeholder="max">/${unit}</label>`;
+  };
   const all = f.ports();
   const head = (p: PortInfo) =>
     `<label class="lab-port-head"><input type="checkbox" data-toggle-port ${p.enabled ? "checked" : ""}>
@@ -297,11 +309,16 @@ export function renderPortList(el: HTMLElement, overlay: RateOverlay) {
       const stack = (l ?? r)?.stack ?? 1;
       body = `<label>Left <select data-lane="0">${options(l?.item)}</select></label>
         <label>Right <select data-lane="1">${options(r?.item)}</select></label>
-        <label>Stacked <select data-stack>${[1, 2, 3, 4].map((n) => `<option value="${n}" ${n === stack ? "selected" : ""}>×${n}</option>`).join("")}</select></label>`;
+        <label>Stacked <select data-stack>${[1, 2, 3, 4].map((n) => `<option value="${n}" ${n === stack ? "selected" : ""}>×${n}</option>`).join("")}</select></label>
+        ${rateField(p)}`;
     } else if (p.kind === "input") {
       const arm = f.armPorts.find((a) => a.id === p.id)!;
       const onto = arm.onto ? ` from the ${escapeHtml(arm.onto.replace(/-/g, " "))}` : "";
-      body = `<label>Brings${onto} <select data-arm-items>${options(arm.items.length === 1 ? arm.items[0] : undefined, arm.items.length > 1 ? `What the machine needs (${arm.items.length})` : "(nothing)")}</select></label>`;
+      body = `<label>Brings${onto} <select data-arm-items>${options(arm.items.length === 1 ? arm.items[0] : undefined, arm.items.length > 1 ? `What the machine needs (${arm.items.length})` : "(nothing)")}</select></label>
+        <label>Per swing <input type="number" min="1" max="${arm.inserter.handSize}" step="1" data-arm-stack value="${p.limit.stack ?? ""}" placeholder="${arm.inserter.handSize}"></label>
+        ${rateField(p)}`;
+    } else {
+      body = rateField(p);
     }
     return `<div class="lab-port ${p.enabled ? "" : "is-off"}" data-port="${escapeHtml(p.id)}">${head(p)}${body}</div>`;
   };
@@ -328,6 +345,18 @@ export function wirePortList(el: HTMLElement, overlay: RateOverlay, signal: Abor
     if (!id || !rowEl) return;
     if (input.dataset.togglePort !== undefined) {
       overlay.setPortEnabled(id, input.checked);
+    } else if (input.dataset.rate !== undefined || input.dataset.armStack !== undefined) {
+      // Blank means no limit; rates are typed in the overlay's time unit.
+      const num = (s: string) => (s.trim() === "" || !Number.isFinite(Number(s)) || Number(s) < 0 ? undefined : Number(s));
+      const limit = { ...(f.ports().find((p) => p.id === id)?.limit ?? {}) };
+      if (input.dataset.rate !== undefined) {
+        const v = num(input.value);
+        limit.rate = v === undefined ? undefined : v / PER[overlay.settings.style.rateUnit];
+      } else {
+        const v = num(input.value);
+        limit.stack = v === undefined || v < 1 ? undefined : Math.round(v);
+      }
+      overlay.setPortLimit(id, limit);
     } else if (input.dataset.armItems !== undefined) {
       const arm = f.armPorts.find((a) => a.id === id)!;
       const needs = arm.inserter.drop.kind === "machine" ? arm.inserter.drop.machine.ingredients.map((i) => i.name) : [];

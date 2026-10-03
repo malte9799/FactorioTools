@@ -263,7 +263,8 @@ export class BeltSim {
     }
 
     for (const out of this.outputs.values()) {
-      if (typeof out.mode === "object") out.tokens = Math.min(1, out.tokens + out.mode.rate / TICKS_PER_SECOND);
+      // A rate counts items, so the bucket holds up to one full stack.
+      if (typeof out.mode === "object") out.tokens = Math.min(MAX_BELT_STACK, out.tokens + out.mode.rate / TICKS_PER_SECOND);
     }
 
     // Input ports fill in behind whatever just moved.
@@ -349,8 +350,8 @@ export class BeltSim {
       case "open": {
         const out = this.outputs.get(end.port.id)!;
         let take = out.mode === "sink";
-        if (typeof out.mode === "object" && out.tokens >= 1 - EPS) {
-          out.tokens -= 1;
+        if (typeof out.mode === "object" && out.tokens >= countOf(item) - EPS) {
+          out.tokens -= countOf(item);
           take = true;
         }
         if (take) {

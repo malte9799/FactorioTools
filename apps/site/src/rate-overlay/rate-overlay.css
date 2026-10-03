@@ -187,3 +187,4 @@
 .rate-flow-max { min-width: 34px; text-align: right; font: 11px var(--mono); color: var(--text-dim); font-variant-numeric: tabular-nums; }
 .rate-flow-tag { margin-left: 5px; padding: 0 4px; font: 10px/14px var(--mono); color: var(--text-dim); border: 1px solid var(--border); border-radius: 2px; }
 .rate-flow-empty { font-size: 12.5px; color: var(--text-dim); }
+.lab-port input[type="number"] { width: 64px; font-size: 12px; }

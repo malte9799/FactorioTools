@@ -45,7 +45,7 @@ export interface LabSettings {
 export type PaletteName = "factorio" | "colorblind" | "muted";
 export type RateUnit = "s" | "min" | "h";
 
-const PER: Record<RateUnit, number> = { s: 1, min: 60, h: 3600 };
+export const PER: Record<RateUnit, number> = { s: 1, min: 60, h: 3600 };
 
 /** An items-per-second rate in the chosen unit, compact: 0.75/s, 45/min,
  *  2.7k/h. */

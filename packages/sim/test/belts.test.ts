@@ -486,6 +486,15 @@ test("a rate-limited stacked input counts items, not slots", () => {
   near(s.portRate(outputAt(net, 5, 0)), 8);
 });
 
+test("a rate-limited output counts items, not slots", () => {
+  const { net, sim: s } = sim(row(0, 5, 0, E));
+  s.setInput(inputAt(net, 0, 0), { item: "iron-plate", rate: "full", stack: 4 }, { item: "iron-plate", rate: "full", stack: 4 });
+  s.setOutput(outputAt(net, 5, 0), { rate: 6 });
+  measure(s);
+  near(s.portRate(outputAt(net, 5, 0)), 6);
+  assertInvariants(s, net);
+});
+
 test("per-item port totals balance: in = out + still on the belt", () => {
   const { net, sim: s } = sim(row(0, 7, 0, E));
   const inId = inputAt(net, 0, 0);

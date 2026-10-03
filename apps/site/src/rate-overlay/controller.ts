@@ -7,7 +7,7 @@ import { getData, getRenderCatalog, type PlacedEntity } from "@factoriotools/eng
 import { getSharedIconAtlas, type BlueprintRenderer } from "@factoriotools/renderer";
 import type { LaneFeed } from "@factoriotools/sim";
 import { hoverCardHtml } from "./card.js";
-import { FULL_RESEARCH, LabFactory, type Research } from "./factory.js";
+import { FULL_RESEARCH, LabFactory, type PortLimit, type Research } from "./factory.js";
 import { detectIssues, type Issue } from "./issues.js";
 import { drawOverlay, type HoverTarget, type PortTabRect } from "./overlay.js";
 import { loadSettings, saveSettings, type LabSettings } from "./settings.js";
@@ -76,6 +76,7 @@ export class RateOverlay {
   private readonly userInputs = new Map<string, Lanes>();
   private readonly userArms = new Map<string, string[]>();
   private readonly userEnabled = new Map<string, boolean>();
+  private readonly userLimits = new Map<string, PortLimit>();
   private hover: HoverTarget | undefined;
   private pointer: { x: number; y: number } | undefined;
   private portTabs: PortTabRect[] = [];
@@ -144,6 +145,7 @@ export class RateOverlay {
     this.userInputs.clear();
     this.userArms.clear();
     this.userEnabled.clear();
+    this.userLimits.clear();
     this.justLoaded = entities;
     if (this.enabled) this.rebuild();
     else this.dirty = true;
@@ -184,6 +186,7 @@ export class RateOverlay {
     for (const [id, [l, r]] of this.userInputs) if (ids.has(id)) f.setInput(id, l, r);
     for (const [id, items] of this.userArms) if (ids.has(id)) f.setArmPortItems(id, items);
     for (const [id, on] of this.userEnabled) if (ids.has(id)) f.setPortEnabled(id, on);
+    for (const [id, limit] of this.userLimits) if (ids.has(id)) f.setPortLimit(id, limit);
     this.factory = f;
     this.hover = undefined;
     this.issues = [];
@@ -220,6 +223,12 @@ export class RateOverlay {
   setArmPortItems(id: string, items: string[]) {
     this.factory?.setArmPortItems(id, items);
     this.userArms.set(id, items);
+    this.options.onPortsChange?.();
+  }
+
+  setPortLimit(id: string, limit: PortLimit) {
+    this.factory?.setPortLimit(id, limit);
+    this.userLimits.set(id, limit);
     this.options.onPortsChange?.();
   }
 
