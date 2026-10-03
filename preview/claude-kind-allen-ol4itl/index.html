@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <!--
+      Defence in depth behind the escaping in blueprint-editor/html.ts: a
+      pasted blueprint is untrusted input, so if a sink is ever missed, this
+      still stops the payload from loading outside script or phoning anything
+      home. It does NOT stop an inline event handler in innerHTML-inserted
+      markup — script-src does not cover those — which is why the escaping,
+      not this header, is the actual fix.
+
+      style-src needs 'unsafe-inline' because the app sets element.style
+      directly (tooltip transform, floating windows). Fonts are self-hosted,
+      so no third-party origin is allowed at all any more.
+      img-src needs data: for the sprite/icon canvases.
+      connect-src names the two blueprint sites the Import menu reads links
+      from (factorioprints.com's Firebase database, fprints.xyz's Supabase
+      API) — see tools/blueprint-editor/blueprint-links.ts. Nothing else.
+
+      frame-ancestors is deliberately absent: browsers ignore it in a <meta>
+      element (it only works as a real HTTP header) and including it just
+      logs a console error. Set it, along with X-Content-Type-Options and
+      Referrer-Policy, on the host if it allows custom headers.
+    -->
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self';
+               script-src 'self';
+               style-src 'self' 'unsafe-inline';
+               font-src 'self';
+               img-src 'self' data: blob:;
+               connect-src 'self' https://facorio-blueprints.firebaseio.com https://tutpmokznoxsgodpklag.supabase.co;
+               worker-src 'self' blob:;
+               base-uri 'none';
+               object-src 'none';
+               form-action 'none'"
+    />
+    <title>FactorioTools — Blueprint editor and rate analysis for Factorio</title>
+    <meta
+      name="description"
+      content="Blueprint editor for Factorio built around rate calculation, simulation and analysis — paste a blueprint string, find the bottleneck, fix it and export. No mods needed."
+    />
+    <!-- Fonts are self-hosted (see the @font-face block at the top of
+         style.css). Preloading the two faces the first paint actually needs
+         — the body sans and the display face used by headings — so they are
+         in flight alongside the CSS instead of after it. -->
+    <link rel="preload" href="./fonts/ibm-plex-sans-400.woff2" as="font" type="font/woff2" crossorigin />
+    <link rel="preload" href="./fonts/chakra-petch-600.woff2" as="font" type="font/woff2" crossorigin />
+    <script type="module" crossorigin src="./assets/index-B4nx0-o-.js"></script>
+    <link rel="stylesheet" crossorigin href="./assets/index-BDKVUiyH.css">
+  </head>
+  <body>
+    <div id="nav-root"></div>
+    <main id="tool-root"></main>
+  </body>
+</html>
