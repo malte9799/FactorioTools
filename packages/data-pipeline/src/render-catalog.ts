@@ -673,6 +673,11 @@ function platformGraphics(connections: any): GraphicsLayer[] | undefined {
 }
 
 const ROTATES_FOOTPRINT = new Set([
+  // 1x2 combinators: without the swap an east/west-facing one snapped (and
+  // hit-tested) as if it still stood upright, half a tile off the grid.
+  "arithmetic-combinator",
+  "decider-combinator",
+  "selector-combinator",
   "splitter",
   "fast-splitter",
   "express-splitter",

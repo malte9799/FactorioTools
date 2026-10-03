@@ -8,10 +8,10 @@ import { buildGrid, NeighbourGrid, step, toCardinal } from "./neighbours/grid.js
 import { buildFluidNetwork, FluidNetwork } from "./neighbours/fluid.js";
 import { buildHeatNetwork, HeatNetwork } from "./neighbours/heat.js";
 import type { PlatformBox } from "./neighbours/platform.js";
-import { buildWireNetwork, resolveWires, terminalFor, type ResolvedWire, type WireNetwork } from "./neighbours/wires.js";
+import { buildWireNetwork, resolveWires, terminalFor, wireSideAt, type ResolvedWire, type WireNetwork } from "./neighbours/wires.js";
 import { drawSupplyAreas, drawWires, type SupplyArea } from "./draw/wireDraw.js";
 import { collectEntity, collectInserterPlatform, type CollectContext } from "./draw/collect.js";
-import { paint, paintPlain, drawOutline, drawHoverHighlight, drawInserterIndication, drawUndergroundLine, type PaintTally } from "./draw/paint.js";
+import { paint, paintPlain, drawOutline, drawDirectionArrows, drawHoverHighlight, drawInserterIndication, drawUndergroundLine, type PaintTally } from "./draw/paint.js";
 import { getHoverHighlightSprite, getIndicationSprites, getUndergroundLinesSprite } from "./hoverHighlightSprite.js";
 import { compareDrawCommands, type DrawCommand } from "./draw/commands.js";
 import { planBake, type BakePlan } from "./draw/bake.js";
@@ -306,12 +306,13 @@ export interface BlueprintRenderer {
    *  (InteractionMode's 'wire' kind), INSTEAD of onSelect — the app pairs
    *  two of these into one connect/disconnect. Clicks that hit no entity
    *  never fire it, and never cancel anything (see onPointerDown). */
-  onWireClick(callback: (entityNumber: number) => void): void;
+  onWireClick(callback: (entityNumber: number, side: 1 | 2) => void): void;
   /** Arms (or disarms, with null) the entity an in-progress wire trails
    *  from, so the renderer can draw the dangling end to the cursor while a
    *  two-click connect is half-finished. The app owns the pick itself; this
-   *  only tells the renderer what to draw. */
-  setPendingWire(entityNumber: number | null): void;
+   *  only tells the renderer what to draw. `side` is the half that was
+   *  picked (2 for a combinator's output). */
+  setPendingWire(entityNumber: number | null, side?: 1 | 2): void;
   /** Fires when a box drawn in 'deleteBox' mode completes (drag-release or
    *  a plain click) and hits at least one entity — the app deletes them
    *  immediately. Mode stays 'deleteBox' afterward; the renderer does not
@@ -510,6 +511,7 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
    *  armed. The app owns the pick itself; this is only what the renderer
    *  needs to draw the dangling end. */
   let pendingWireFrom: number | null = null;
+  let pendingWireSide: 1 | 2 = 1;
   let grid = new NeighbourGrid();
   let fluidNetwork = new FluidNetwork();
   let heatNetwork = new HeatNetwork();
@@ -520,6 +522,10 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
    *  hoverCallback (an app-level subscriber, which may not even be set) so
    *  the hover-highlight overlay always has something to draw from. */
   let hoveredEntityNumber: number | undefined;
+  /** Which half of the hovered entity the cursor is over — only ever 2 on
+   *  the output half of a combinator. A held wire attaches to this half, so
+   *  wire mode highlights just it. */
+  let hoveredSide: 1 | 2 = 1;
   let altMode = false;
   let altModeLayers: AltModeLayers = ALL_ALT_MODE_LAYERS;
   let animationFrame = 0;
@@ -810,6 +816,12 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
 
   function visualFor(name: string): ResolvedVisual | undefined {
     return visualLookup.get(name);
+  }
+
+  /** The wire side of entity `entityNumber` under a world point. */
+  function sideAt(entityNumber: number, world: { x: number; y: number }): 1 | 2 {
+    const entity = entityById.get(entityNumber);
+    return entity ? wireSideAt(entity, visualFor(entity.name), entity.direction, world.x, world.y) : 1;
   }
 
   /** Factorio snaps placement so the footprint's edges land on the tile
@@ -1185,7 +1197,7 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
     const trailing: ResolvedWire[] = [];
     if (mode.kind === "wire" && pendingWireFrom !== null) {
       const from = entityById.get(pendingWireFrom);
-      const start = from && terminalFor(from, visualFor(from.name), directionOf(from), mode.color);
+      const start = from && terminalFor(from, visualFor(from.name), directionOf(from), mode.color, pendingWireSide);
       if (start) {
         const cursor = worldAtScreenPoint(lastPointer.x, lastPointer.y);
         trailing.push({ color: mode.color, x1: start.x, y1: start.y, x2: cursor.x, y2: cursor.y, reaches: true });
@@ -1236,7 +1248,18 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
       if (hovered && visual) {
         const [fw, fh] = effectiveFootprint(visual, hovered.direction);
         drawUndergroundPair(hovered, corner);
-        drawHoverHighlight(ctx, corner, hovered.x, hovered.y, fw, fh);
+        if (mode.kind === "wire" && visual.outputWireConnections) {
+          // A held wire attaches to one half of a combinator — bracket just
+          // the half under the cursor (input behind, output ahead).
+          const { dx, dy } = step(toCardinal(hovered.direction));
+          const sign = hoveredSide === 2 ? 0.5 : -0.5;
+          drawHoverHighlight(ctx, corner, hovered.x + dx * sign, hovered.y + dy * sign, 1, 1);
+        } else {
+          drawHoverHighlight(ctx, corner, hovered.x, hovered.y, fw, fh);
+        }
+        // A combinator shows which way signals flow through it.
+        const arrows = visual.outputWireConnections && getIndicationSprites();
+        if (arrows) drawDirectionArrows(ctx, arrows.arrow, hovered.x, hovered.y, toCardinal(hovered.direction));
         // An inserter also shows where it picks up (bar) and drops (arrow).
         const indication = visual.inserterGraphics && getIndicationSprites();
         if (indication) {
@@ -2065,7 +2088,7 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
     if (mode.kind === "wire") {
       const world = worldAtPointer(e);
       const hit = spatialIndex.hitTest(world.x, world.y);
-      if (hit !== undefined) wireClickCallback?.(hit);
+      if (hit !== undefined) wireClickCallback?.(hit, sideAt(hit, world));
       return;
     }
 
@@ -2237,7 +2260,7 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
   let selectCallback: ((entityNumber: number) => void) | null = null;
   let eraseCallback: ((entityNumber: number) => void) | null = null;
   let altRightClickCallback: ((entityNumber: number) => void) | null = null;
-  let wireClickCallback: ((entityNumber: number) => void) | null = null;
+  let wireClickCallback: ((entityNumber: number, side: 1 | 2) => void) | null = null;
   let deleteBoxCallback: ((entityNumbers: ReadonlySet<number>) => void) | null = null;
   let cutBoxCallback: ((entityNumbers: ReadonlySet<number>) => void) | null = null;
   let copyBoxCallback: ((entityNumbers: ReadonlySet<number>) => void) | null = null;
@@ -2254,8 +2277,10 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
   const onHoverMove = (e: PointerEvent) => {
     const world = worldAtPointer(e);
     const hit = spatialIndex.hitTest(world.x, world.y);
-    if (hit !== hoveredEntityNumber) {
+    const side = hit === undefined ? 1 : sideAt(hit, world);
+    if (hit !== hoveredEntityNumber || side !== hoveredSide) {
       hoveredEntityNumber = hit;
+      hoveredSide = side;
       invalidate(); // the highlighted corners moved (or appeared/vanished)
     }
     hoverCallback?.(hit, e);
@@ -2543,9 +2568,10 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
     onWireClick(callback) {
       wireClickCallback = callback;
     },
-    setPendingWire(entityNumber) {
-      if (pendingWireFrom === entityNumber) return;
+    setPendingWire(entityNumber, side = 1) {
+      if (pendingWireFrom === entityNumber && pendingWireSide === side) return;
       pendingWireFrom = entityNumber;
+      pendingWireSide = side;
       invalidate();
     },
     onDeleteBox(callback) {

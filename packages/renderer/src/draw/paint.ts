@@ -308,3 +308,17 @@ export function drawInserterIndication(
   ctx.drawImage(sprites.arrow, -0.5, -distance - 0.5, 1, 1);
   ctx.restore();
 }
+
+/** A hovered combinator's two direction arrows, the way the game shows
+ *  them: one indication_arrow over the input half and one over the output
+ *  half, both pointing the way signals flow (`facing`, a 16-way direction).
+ *  Each sits 0.75 tiles from the centre of the 1x2 body (measured off an
+ *  in-game screenshot). */
+export function drawDirectionArrows(ctx: CanvasRenderingContext2D, arrow: HTMLImageElement, x: number, y: number, facing: number): void {
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.rotate((facing / 16) * 2 * Math.PI);
+  ctx.drawImage(arrow, -0.5, -0.75 - 0.5, 1, 1);
+  ctx.drawImage(arrow, -0.5, 0.75 - 0.5, 1, 1);
+  ctx.restore();
+}

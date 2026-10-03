@@ -975,6 +975,8 @@ export function mountBlueprintEditor(root: HTMLElement): () => void {
    *  next click starts a fresh pair. Cleared by the first 'q' press; a
    *  second 'q' leaves wire mode entirely (see the 'q' handler). */
   let pendingWireFrom: number | null = null;
+  /** Which half of that entity was picked — 2 for a combinator's output. */
+  let pendingWireSide: 1 | 2 = 1;
 
   /** Arms or clears the half-finished wire pick, keeping the renderer in
    *  step so it can trail the in-progress wire to the cursor. Every write
@@ -983,9 +985,10 @@ export function mountBlueprintEditor(root: HTMLElement): () => void {
    *  completing a wire, 'q'), and one of them forgetting to notify would
    *  leave a wire dangling from an entity the app no longer considers
    *  armed. */
-  function setPendingWireFrom(entityNumber: number | null): void {
+  function setPendingWireFrom(entityNumber: number | null, side: 1 | 2 = 1): void {
     pendingWireFrom = entityNumber;
-    renderer.setPendingWire(entityNumber);
+    pendingWireSide = side;
+    renderer.setPendingWire(entityNumber, side);
   }
   /** Which wire colour is on the cursor (Alt+C/R/G), or null outside wire
    *  mode. Mirrors the renderer's own 'wire' InteractionMode so the app can
@@ -1849,7 +1852,7 @@ export function mountBlueprintEditor(root: HTMLElement): () => void {
     // terminal of the held colour is refused outright rather than armed, so
     // the gesture never strands the user half-way through a wire that could
     // not exist (a belt has no circuit terminals at all).
-    renderer.onWireClick((entityNumber) => {
+    renderer.onWireClick((entityNumber, side) => {
       if (wireColorInHand === null) return;
       const entity = entities.find((e) => e.entityNumber === entityNumber);
       if (!entity) return;
@@ -1858,17 +1861,19 @@ export function mountBlueprintEditor(root: HTMLElement): () => void {
         return;
       }
       if (pendingWireFrom === null) {
-        setPendingWireFrom(entityNumber);
+        setPendingWireFrom(entityNumber, side);
         setStatus(`Picked one end — click another entity to connect or disconnect the ${wireColorInHand} wire.`);
         return;
       }
       // Re-clicking the same entity is inert, per the user's own design:
-      // only 'q' clears a pick, never a click.
-      if (pendingWireFrom === entityNumber) return;
+      // only 'q' clears a pick, never a click. (A combinator's other half is
+      // a different terminal, so input-to-own-output still goes through.)
+      if (pendingWireFrom === entityNumber && pendingWireSide === side) return;
       const from = pendingWireFrom;
+      const fromSide = pendingWireSide;
       setPendingWireFrom(null);
       applyEdit(() => {
-        const result = toggleWire(wires, wireColorInHand!, from, entityNumber);
+        const result = toggleWire(wires, wireColorInHand!, from, entityNumber, fromSide, side);
         wires = result.wires;
         setStatus(result.connected ? `Connected with a ${wireColorInHand} wire.` : `Disconnected the ${wireColorInHand} wire.`);
       });
@@ -3400,7 +3405,7 @@ export function mountBlueprintEditor(root: HTMLElement): () => void {
     else if (paletteSelection) renderer.setInteractionMode({ kind: "place", entityName: paletteSelection, quality: paletteQuality });
     // A fresh renderer knows nothing of a half-finished pick either, so an
     // armed wire would stop trailing to the cursor across the swap.
-    if (pendingWireFrom !== null) renderer.setPendingWire(pendingWireFrom);
+    if (pendingWireFrom !== null) renderer.setPendingWire(pendingWireFrom, pendingWireSide);
     if (entities.length) {
       const savedCamera = readSavedCamera();
       renderer.loadBlueprint(entities, wires);

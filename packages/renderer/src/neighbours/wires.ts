@@ -13,7 +13,7 @@
  */
 import type { PlacedEntity, WireAttachPoints, WireColor, WireLink } from "@factoriotools/engine";
 import type { ResolvedVisual } from "../entityLookup.js";
-import { toCardinal } from "./grid.js";
+import { step, toCardinal } from "./grid.js";
 
 /** One wire, resolved to the two world-space points it should be drawn
  *  between. */
@@ -246,29 +246,45 @@ export function canWire(visual: ResolvedVisual | undefined, color: WireColor): b
   return has(visual.wireConnections) || has(visual.outputWireConnections);
 }
 
+/** Which of an entity's two wire sides a world point falls on: the half
+ *  toward its facing is a combinator's output (side 2), the half behind it
+ *  the input (side 1). Anything without a separate output terminal only has
+ *  side 1. */
+export function wireSideAt(
+  entity: PlacedEntity,
+  visual: ResolvedVisual | undefined,
+  direction: number,
+  worldX: number,
+  worldY: number,
+): 1 | 2 {
+  if (!visual?.outputWireConnections) return 1;
+  const { dx, dy } = step(toCardinal(direction));
+  return (worldX - entity.x) * dx + (worldY - entity.y) * dy > 0 ? 2 : 1;
+}
+
 /** Adds the wire if it is absent, removes it if it is present, and reports
  *  which happened. One gesture toggles, so clicking the same pair twice is a
- *  no-op overall rather than stacking duplicate wires. */
+ *  no-op overall rather than stacking duplicate wires.
+ *
+ *  Side 1 is what a pole-to-pole copper wire uses, and a plain (non-
+ *  combinator) circuit terminal too; side 2 is a combinator's output. The
+ *  same two entities joined on different sides are different wires, and a
+ *  combinator's own input may be wired to its own output. */
 export function toggleWire(
   wires: WireLink[],
   color: WireColor,
   a: number,
   b: number,
+  aSide: 1 | 2 = 1,
+  bSide: 1 | 2 = 1,
 ): { wires: WireLink[]; connected: boolean } {
-  if (a === b) return { wires, connected: false };
-  if (wireExists(wires, color, a, b)) {
-    return {
-      wires: wires.filter(
-        (w) => !(w.color === color && ((w.from === a && w.to === b) || (w.from === b && w.to === a))),
-      ),
-      connected: false,
-    };
-  }
-  // Side 1 on both ends: that is what a pole-to-pole copper wire uses, and
-  // what a plain (non-combinator) circuit terminal uses too. A combinator's
-  // output side is only reachable by wiring from the output terminal, which
-  // this gesture does not distinguish yet.
-  return { wires: [...wires, { color, from: a, fromSide: 1, to: b, toSide: 1 }], connected: true };
+  if (a === b && aSide === bSide) return { wires, connected: false };
+  const same = (w: WireLink): boolean =>
+    w.color === color &&
+    ((w.from === a && w.fromSide === aSide && w.to === b && w.toSide === bSide) ||
+      (w.from === b && w.fromSide === bSide && w.to === a && w.toSide === aSide));
+  if (wires.some(same)) return { wires: wires.filter((w) => !same(w)), connected: false };
+  return { wires: [...wires, { color, from: a, fromSide: aSide, to: b, toSide: bSide }], connected: true };
 }
 
 /** Copper wires a freshly placed pole should take on, mirroring the game's
