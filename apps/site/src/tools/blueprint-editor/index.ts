@@ -523,6 +523,9 @@ export function mountBlueprintEditor(root: HTMLElement): () => void {
   });
   /** What the open signal picker fills, and which wildcards it offers. */
   let signalPick: { allow: Wildcards; onPick: (signal: BpSignalId) => void } | undefined;
+  /** The signal picker's last tab, kept while one building's GUI stays
+   *  open so every slot opens where the last pick was made. */
+  let signalTab: { entity: number; group: string } | undefined;
 
   // All floating windows start hidden so the blueprint fills the screen
   // uninterrupted — the toolbar below (bottom-of-template, always visible)
@@ -2098,6 +2101,7 @@ export function mountBlueprintEditor(root: HTMLElement): () => void {
 
     switch (next) {
       case "default":
+        signalTab = undefined;
         deselect();
         return;
       case "build":
@@ -2121,11 +2125,15 @@ export function mountBlueprintEditor(root: HTMLElement): () => void {
       case "signal": {
         const pick = signalPick;
         if (!pick) return enterMenuState("machine-info");
+        const owner = selectedEntity!.entityNumber;
         openMenuWindow(signalWindow, buildSignalMenu($<HTMLDivElement>("#signal-body"), getRenderCatalog(), pick.allow, (signal) => {
           signalPick = undefined;
           pick.onPick(signal);
           enterMenuState("machine-info");
-        }, () => enterMenuState("machine-info")));
+        }, () => enterMenuState("machine-info"), {
+          initial: signalTab?.entity === owner ? signalTab.group : undefined,
+          onChange: (group) => (signalTab = { entity: owner, group }),
+        }));
         return;
       }
     }
@@ -3317,6 +3325,27 @@ export function mountBlueprintEditor(root: HTMLElement): () => void {
       // Pipetting an empty slot clears the cursor instead of picking up
       // "nothing", matching how 'q' over empty ground clears it.
       setHeldModule(inSlot ? { ...inSlot } : null);
+      return;
+    }
+
+    // An item in a circuit GUI slot, or in the signal picker: into the
+    // cursor as a ghost to build, like the game's pipette over a slot.
+    const signalItem =
+      underPointer?.closest<HTMLElement>(".circuit-slot[data-signal]")?.dataset.signal ??
+      underPointer?.closest<HTMLElement>("#signal-window .palette-cell")?.dataset.value;
+    if (signalItem) {
+      const data = getData();
+      if (data.modules[signalItem]) {
+        setHeldModule({ name: signalItem, quality: "normal" });
+      } else if (placeableEntries(data, getRenderCatalog()).some((en) => en.name === signalItem)) {
+        setHeldModule(null);
+        setMode({ place: signalItem, quality: paletteQuality });
+        enterMenuState("default");
+        updateCursorIcon(lastPointerPos.x, lastPointerPos.y);
+      } else {
+        const catalog = getRenderCatalog();
+        setStatus(`${catalog.itemNames[signalItem] ?? catalog.signals?.[signalItem]?.localised ?? signalItem} can't be built.`, "error");
+      }
       return;
     }
 

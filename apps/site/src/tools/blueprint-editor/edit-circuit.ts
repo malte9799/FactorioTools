@@ -191,7 +191,11 @@ export function buildCircuitSection(container: HTMLElement, entity: PlacedEntity
     const b = el("button", `f-slot circuit-slot${opts.tint ? ` is-${opts.tint}` : ""}${opts.selected ? " is-selected" : ""}`);
     b.type = "button";
     b.title = signal?.name ? `${label(signal)}${onPick ? " — right-click to clear" : ""}` : (opts.title ?? "Pick a signal");
-    if (signal?.name) b.appendChild(icon(signal.name, label(signal), 32));
+    if (signal?.name) {
+      b.appendChild(icon(signal.name, label(signal), 32));
+      // For the 'q' pipette: an item in a slot can be taken into the cursor.
+      if (!signal.type || signal.type === "item") b.dataset.signal = signal.name;
+    }
     if (opts.count !== undefined) b.appendChild(el("span", "f-slot-count", slotCount(opts.count)));
     if (opts.onClick) b.addEventListener("click", opts.onClick);
     else if (onPick) b.addEventListener("click", () => cb.pickSignal(allow, (s) => onPick(s)));
@@ -793,7 +797,14 @@ const WILDCARD_NAMES: Record<string, Wildcards[number]> = { "signal-each": "each
 
 /** The signal picker: every item, fluid and virtual signal, in the build
  *  menu's grid, with only the wildcards this slot allows. */
-export function buildSignalMenu(container: HTMLElement, catalog: RenderCatalog, allow: Wildcards, onPick: (signal: BpSignalId) => void, onCancel: () => void): GridMenuHandle {
+export function buildSignalMenu(
+  container: HTMLElement,
+  catalog: RenderCatalog,
+  allow: Wildcards,
+  onPick: (signal: BpSignalId) => void,
+  onCancel: () => void,
+  tab: { initial?: string; onChange?: (group: string) => void } = {},
+): GridMenuHandle {
   const entries: GridMenuEntry[] = [
     ...Object.entries(catalog.itemNames).map(([name, localised]) => ({ name, localised, position: catalog.itemMenuPositions[name] })),
     ...Object.entries(catalog.signals ?? {})
@@ -805,6 +816,8 @@ export function buildSignalMenu(container: HTMLElement, catalog: RenderCatalog, 
     groups: catalog.menuGroups,
     filterLabel: "Filter signals",
     showQuality: false,
+    initialTab: tab.initial,
+    onTabChange: tab.onChange,
     onConfirm: ({ name }) => {
       const type = catalog.signals?.[name]?.type;
       onPick(type ? { type, name } : { name });
