@@ -66,7 +66,7 @@ const TEMPLATE = `
         <button type="button" id="seed-random" title="Pick a random seed">Random</button>
       </form>
       <p class="seed-note" id="seed-status" role="status"></p>
-      <p class="seed-disclaimer"><strong>Early prototype.</strong> This map is recomputed outside the game and has not been checked by eye against it. It is not guaranteed to look anything like the real seed.</p>
+      <p class="seed-disclaimer"><strong>Early prototype</strong></p>
 
       <div class="seed-fields">
         <label class="seed-field"><span>Game version</span><select id="seed-version"></select></label>
