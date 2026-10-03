@@ -1,53 +1,154 @@
+<div align="center">
+
 # FactorioTools
 
-### [malte9799.github.io/](https://malte9799.github.io/FactorioTools)[`FactorioTools`](https://malte9799.github.io/FactorioTools)
+**Paste a blueprint. Find the bottleneck. Fix it. Export.**
 
-A browser-based Factorio blueprint editor built for optimising production
-lines. Paste a blueprint string and it calculates what the build produces and
-consumes, simulates the belts tick by tick, and shows where output is being
-lost — then lets you fix it in place and export the result.
+A browser-based Factorio blueprint editor built for optimising production lines —
+with a rate calculator, a tick-by-tick belt simulation and the game's own art.
 
-Everything runs client-side — no server, no upload, no account. Blueprint
-strings never leave the page.
+[![Open the editor](https://img.shields.io/badge/Open_the_editor-malte9799.github.io-f5a742?style=for-the-badge&logo=githubpages&logoColor=white)](https://malte9799.github.io/FactorioTools)
 
-## What it does
+[![CI](https://github.com/malte9799/FactorioTools/actions/workflows/ci.yml/badge.svg)](https://github.com/malte9799/FactorioTools/actions/workflows/ci.yml)
+![Factorio 2.0](https://img.shields.io/badge/Factorio-2.0_·_Space_Age-e39827)
+![TypeScript](https://img.shields.io/badge/TypeScript-5.7-3178c6?logo=typescript&logoColor=white)
+![Node](https://img.shields.io/badge/Node-22+-5fa04e?logo=nodedotjs&logoColor=white)
+[![Licence: MIT](https://img.shields.io/badge/licence-MIT-blue)](LICENSE)
 
-**Calculates rates** across the whole blueprint — items per second by machine
-group, module and beacon effects, quality tiers, and productivity research.
+[Features](#-features) · [Quick start](#-quick-start) · [Build from source](#-build-from-source) · [Architecture](#-architecture) · [Licence](#-licence)
 
-**Simulates** the belts tick by tick: per-lane transport lines, curves,
-side-loading, undergrounds and splitters, so lane imbalance and starved
-inputs show up the way they would in game.
+<br>
 
-**Analyses** the result on the map itself — lane signals, machine uptime, and
-a ranked list of what costs output, each traced from the symptom back to its
-cause.
+<img src="docs/screenshots/hero.webp" alt="FactorioTools showing a logistic science build with per-machine rate labels, machine status colours and the Rate Calculator panel reporting 56% efficiency" width="100%">
 
-**Edits** — place, rotate, erase, configure recipes and modules, wire poles and
-combinators, undo/redo, then export the result back to a blueprint string.
+</div>
 
-**Renders** with the game's own art: belts animate, poles turn to face their
-wires, pipes and walls pick their connection art from their neighbours, and
-machines show their recipe and modules in alt-mode.
+<br>
 
-## Requirements
+> [!NOTE]
+> **Everything runs client-side.** No server, no upload, no account — blueprint
+> strings never leave the page.
 
-The renderer draws real Factorio sprites. To regenerate them yourself you
-need your own copy of the game.
+## ✨ Features
+
+<table>
+  <tr>
+    <td width="50%" valign="top">
+      <h3>📊 Calculates rates</h3>
+      Items per second across the whole blueprint, grouped by machine
+      configuration — with module and beacon effects, quality tiers and
+      productivity research all accounted for. Imports, exports and the
+      share of theoretical max at a glance.
+    </td>
+    <td width="50%">
+      <img src="docs/screenshots/rate-table.webp" alt="Rate table listing products, ingredients and machines for a red science build">
+    </td>
+  </tr>
+  <tr>
+    <td width="50%">
+      <img src="docs/screenshots/simulation.webp" alt="Simulation pane with inserter capacity research and belt stacking controls">
+    </td>
+    <td width="50%" valign="top">
+      <h3>⏱️ Simulates belts tick by tick</h3>
+      Per-lane transport lines, curves, side-loading, undergrounds and
+      splitters — so lane imbalance and starved inputs show up the way they
+      would in game. Run at 1×, 4× or 16×, skip ahead a minute, and toggle
+      inserter capacity research and belt stacking.
+    </td>
+  </tr>
+  <tr>
+    <td width="50%" valign="top">
+      <h3>🔍 Analyses on the map</h3>
+      Lane signals, machine uptime, and a ranked list of what costs output,
+      each traced from the symptom back to its cause. Hover any machine for
+      its recipe, modules, beacons and exact per-minute flows.
+    </td>
+    <td width="50%">
+      <img src="docs/screenshots/machine-tooltip.webp" alt="Zoomed-in assemblers with a tooltip showing recipe, modules and per-minute rates">
+    </td>
+  </tr>
+  <tr>
+    <td width="50%">
+      <img src="docs/screenshots/space-platform.webp" alt="A full space platform rendered with game sprites">
+    </td>
+    <td width="50%" valign="top">
+      <h3>🎨 Renders with the game's own art</h3>
+      Belts animate, poles turn to face their wires, pipes and walls pick
+      their connection art from their neighbours, and machines show their
+      recipe and modules in alt-mode. Space Age, quality and elevated rails
+      included.
+    </td>
+  </tr>
+  <tr>
+    <td width="50%" valign="top">
+      <h3>🛠️ Edits in place</h3>
+      Place, rotate and erase; configure recipes and modules; wire poles and
+      combinators; undo and redo. Import from a string, a
+      <a href="https://factorioprints.com">factorioprints.com</a> or
+      <a href="https://fprints.xyz">fprints.xyz</a> link, then export the
+      result back to a blueprint string.
+    </td>
+    <td width="50%">
+      <img src="docs/screenshots/import-export.webp" alt="Import / Export menu with clipboard import, random example and share links">
+    </td>
+  </tr>
+  <tr>
+    <td width="50%">
+      <img src="docs/screenshots/overlay-lab.webp" alt="Overlay Lab with layer controls for dimming, lane signals and machine status">
+    </td>
+    <td width="50%" valign="top">
+      <h3>🧪 Overlay Lab</h3>
+      Tune how the analysis is drawn: dim the build, choose lane-signal and
+      machine-status styles, and filter to just the lanes or machines you
+      care about — flowing, backed up, starved, output full, idle.
+    </td>
+  </tr>
+</table>
+
+## 🚀 Quick start
+
+1. Open **[malte9799.github.io/FactorioTools](https://malte9799.github.io/FactorioTools)**.
+2. In game, copy a blueprint to the clipboard.
+3. Click **Import / Export → Import from clipboard** and paste the string or link.
+   No blueprint handy? **Load a random example** picks from 170+ curated builds.
+4. Open **Rates** to see what it produces, where it loses output, and why.
+
+## 🧰 Build from source
+
+### Requirements
 
 - **Node.js 22+**
-- **Factorio 2.0** (Space Age, quality and elevated rails are all read if
-  present)
+- **Factorio 2.0** — only if you want to regenerate the sprites and game data
+  (Space Age, quality and elevated rails are read if present)
 
-## Setup
+The generated dataset in `apps/site/public/data/` is checked in, so cloning
+and running is enough to work on the app:
 
 ```bash
+git clone https://github.com/malte9799/FactorioTools.git
+cd FactorioTools
 npm install
+npm run dev
 ```
 
-Then generate the dataset from your own Factorio install. First, dump the
-prototype data from inside the game (this writes
-`data-raw-dump.json` into Factorio's `script-output` directory):
+### Commands
+
+| Command | What it does |
+|---|---|
+| `npm run dev` | Start the dev server |
+| `npm run build` | Production build into `apps/site/dist` |
+| `npm test` | Engine, simulation and renderer test suites |
+| `npm run check` | Typecheck every workspace |
+
+### Regenerating the game data
+
+<details>
+<summary><b>Rebuild sprites and prototypes from your own Factorio install</b></summary>
+
+<br>
+
+First, dump the prototype data from inside the game. This writes
+`data-raw-dump.json` into Factorio's `script-output` directory:
 
 ```bash
 factorio --dump-data
@@ -56,73 +157,78 @@ factorio --dump-data
 Then run the pipeline **in this order** — the steps are not independent:
 
 ```bash
-npm run dump-to-gamedata --workspace=@factoriotools/data-pipeline
-npm run extract-sprites --workspace=@factoriotools/data-pipeline
+npm run dump-to-gamedata   --workspace=@factoriotools/data-pipeline
+npm run extract-sprites    --workspace=@factoriotools/data-pipeline
 npm run crop-sprite-sheets --workspace=@factoriotools/data-pipeline
 ```
 
-`dump-to-gamedata` reads the dump and writes `game-data.json` and
-`render-catalog.json`. `extract-sprites` copies the referenced sheets out of
-the install. `crop-sprite-sheets` then trims each sheet to the cells the
-renderer actually samples (143 MB → 10.6 MB) and rewrites the catalog's column
-counts to match.
+| Step | Output |
+|---|---|
+| `dump-to-gamedata` | Reads the dump and writes `game-data.json` and `render-catalog.json`. |
+| `extract-sprites` | Copies the referenced sheets out of the install, plus the shortcut-bar art the quickbar draws its buttons from. |
+| `crop-sprite-sheets` | Trims each sheet to the cells the renderer actually samples (143 MB → 10.6 MB) and rewrites the catalog's column counts to match. |
 
-Running the first step alone leaves the catalog claiming uncropped column
-counts against cropped images, which silently breaks about 29 entities. If you
-regenerate, regenerate all three.
+> [!WARNING]
+> Running the first step alone leaves the catalog claiming uncropped column
+> counts against cropped images, which silently breaks about 29 entities.
+> If you regenerate, regenerate all three.
 
-`extract-sprites` also copies the shortcut-bar art (every `shortcut`
-prototype: undo, redo, the planners, alt mode, the wires) into
-`public/data/sprites/shortcuts/` with `public/data/shortcut-icons.json`; the
-editor's quickbar draws its tool buttons from these and shows plain text
-labels until they exist.
+**Good to know**
 
-Non-standard install paths are read from `FACTORIO_DATA` and `FACTORIO_DUMP`.
+- Non-standard install paths are read from `FACTORIO_DATA` and `FACTORIO_DUMP`.
+- `extract-sprites` is incremental: it stamps each source file's size and
+  mtime and skips anything unchanged whose output is still present, so
+  re-running it after a crop leaves the cropped sheets alone. Pass `--force`
+  to rebuild regardless.
+- Until the shortcut art exists, the quickbar shows plain text labels.
+- The belt simulation reads belt speeds, underground lengths and splitter
+  prototypes from `game-data.json`. A dataset generated before those were
+  extracted still works — `packages/sim` falls back to built-in vanilla values.
 
-The belt simulation reads belt speeds, underground lengths and splitter
-prototypes from `game-data.json`. A dataset generated before those were
-extracted still works: `packages/sim` falls back to built-in vanilla values.
+</details>
 
-`extract-sprites` is incremental: it stamps each source file's size and
-mtime, and skips anything unchanged whose output is still present. Re-running
-it after a crop therefore leaves the cropped sheets alone instead of
-replacing them with fresh uncropped copies. Pass `--force` to rebuild
-regardless.
+## 🏗️ Architecture
 
-## Development
+An npm-workspaces monorepo. `engine`, `sim` and most of `renderer` are
+DOM-free and tested directly with `tsx`; `apps/site` is the browser layer.
 
-```bash
-npm run dev      # dev server
-npm run build    # production build into apps/site/dist
-npm test         # engine + renderer test suites
-npm run check    # typecheck every workspace
+```mermaid
+flowchart LR
+    F[(Factorio install)] -->|data-pipeline| D[/game-data.json<br/>render-catalog.json<br/>sprites/]
+    D --> E[engine]
+    D --> S[sim]
+    D --> R[renderer]
+    E --> A[apps/site]
+    S --> A
+    R --> A
 ```
-
-## Layout
 
 | Workspace | What it holds |
 |---|---|
-| `packages/engine` | Blueprint decode/encode, the rate calculator, prototype types. No DOM. |
-| `packages/renderer` | Canvas renderer: sprite atlas, neighbour classification, camera, draw passes. |
-| `packages/sim` | Tick-by-tick belt simulation: per-lane transport lines, curves, side-loading, undergrounds, splitters. No DOM. |
-| `packages/data-pipeline` | One-time scripts that turn a Factorio install into the dataset above. |
-| `apps/site` | The page itself — panels, menus, editing, library. |
+| [`packages/engine`](packages/engine) | Blueprint decode/encode, the rate calculator, prototype types. No DOM. |
+| [`packages/sim`](packages/sim) | Tick-by-tick belt simulation: per-lane transport lines, curves, side-loading, undergrounds, splitters. No DOM. |
+| [`packages/renderer`](packages/renderer) | Canvas renderer: sprite atlas, neighbour classification, camera, draw passes. |
+| [`packages/data-pipeline`](packages/data-pipeline) | One-time scripts that turn a Factorio install into the dataset. |
+| [`apps/site`](apps/site) | The page itself — panels, menus, editing, library. |
 
-`engine`, `sim` and most of `renderer` are DOM-free and tested directly with `tsx`;
-`apps/site` is the browser layer.
+Every pushed branch is built and published as a preview under
+`https://malte9799.github.io/FactorioTools/preview/<branch>/`.
 
-## Audit
+### Code audit
 
-`audit/` holds a full code audit — 19 findings with severity and effort
-ratings, the implementation reports, and the verification scripts that back
-them. Those scripts are runnable and self-checking, and one of them
-(`verify-render-identical.ts`) hashes the entire render path so a refactor can
+[`audit/`](audit) holds a full code audit — 19 findings with severity and
+effort ratings, the implementation reports, and the verification scripts that
+back them. The scripts are runnable and self-checking; one of them,
+`verify-render-identical.ts`, hashes the entire render path so a refactor can
 prove it changed no pixels.
 
-## Licence
+## 📜 Licence
 
-The code is MIT (see `LICENSE`).
+The code is [MIT](LICENSE). Blueprint math is ported from
+[Rate Calculator](https://codeberg.org/raiguard/RateCalculator) by raiguard,
+also MIT licensed.
 
 Factorio, its prototype data and its sprite art are the property of
 [Wube Software](https://factorio.com) and are **not** covered by that licence.
-This project reads them from a Factorio installation at build time.
+This project reads them from a Factorio installation at build time and is not
+affiliated with Wube Software.
