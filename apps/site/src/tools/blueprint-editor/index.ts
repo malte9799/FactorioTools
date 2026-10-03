@@ -33,6 +33,7 @@ import { appendQualityOptions, QUALITY_TIERS } from "./quality-options.js";
 import { buildPropertiesPanel, buildRecipeMenu, buildModuleMenu, buildFilterItemMenu, localisedNameOf } from "./edit-properties.js";
 import { buildSignalMenu, circuitWindowKind, type Wildcards } from "./edit-circuit.js";
 import { CircuitSim } from "@factoriotools/sim";
+import { SimClock } from "../../sim-clock.js";
 import type { GridMenuHandle } from "./grid-menu.js";
 import { buildLibrarySidebar } from "./library-sidebar.js";
 import { buildQuickbar, readAltLayers, writeAltLayers, type AltLayers, type QuickbarHandle, type QuickbarItem } from "./quickbar.js";
@@ -2391,9 +2392,10 @@ export function mountBlueprintEditor(root: HTMLElement): () => void {
    *  GUI while the Simulate overlay is off. Rebuilt after every edit. */
   let editorCircuits: CircuitSim | undefined;
   let circuitLoopId = 0;
-  let circuitLast = 0;
-  let circuitAcc = 0;
-  let circuitDrawn = 0;
+  const circuitClock = new SimClock();
+  /** The tick the open GUI last showed, so a frame without a new tick
+   *  costs nothing. */
+  let shownTick = -1;
 
   /** The circuit state the GUI shows: the Simulate overlay's own while it
    *  runs, so both agree, else the editor's. */
@@ -2404,24 +2406,21 @@ export function mountBlueprintEditor(root: HTMLElement): () => void {
     return editorCircuits;
   }
 
-  /** Runs the editor's circuit simulation at game speed while an entity
-   *  GUI with live values is open, and redraws those values ten times a
-   *  second. */
+  /** While an entity GUI with live values is open: runs the editor's
+   *  circuit simulation one tick per frame (SimClock), or follows the
+   *  Simulate overlay's while that runs, and shows every tick. */
   function circuitLoop(now: number) {
     if (propertiesWindow.el.hidden || menuState !== "machine-info" || !panelRefresh) {
       circuitLoopId = 0;
       return;
     }
+    const sim = liveCircuits()!;
     if (!(rateOverlay.isEnabled && rateOverlay.factory)) {
-      const sim = liveCircuits()!;
-      circuitAcc += Math.min(0.25, (now - circuitLast) / 1000) * 60;
-      const ticks = Math.floor(circuitAcc);
-      circuitAcc -= ticks;
+      const ticks = circuitClock.advance(now, 1, true);
       for (let i = 0; i < ticks; i++) sim.step();
     }
-    circuitLast = now;
-    if (now - circuitDrawn > 100) {
-      circuitDrawn = now;
+    if (sim.tick !== shownTick) {
+      shownTick = sim.tick;
       panelRefresh();
     }
     circuitLoopId = requestAnimationFrame(circuitLoop);
@@ -2513,8 +2512,9 @@ export function mountBlueprintEditor(root: HTMLElement): () => void {
         redraw: renderPropertiesPanel,
       },
     });
+    shownTick = -1;
     if (panelRefresh && !circuitLoopId) {
-      circuitLast = performance.now();
+      circuitClock.reset(performance.now());
       circuitLoopId = requestAnimationFrame(circuitLoop);
     }
     propertiesWindow.show();

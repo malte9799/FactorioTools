@@ -109,10 +109,12 @@ export function buildConnectionBar(container: HTMLElement, entity: PlacedEntity,
   let last = "";
   const refresh = () => {
     const sim = cb.live();
+    // Only the network numbers decide the layout; the signal list for a
+    // tooltip is read when the pointer gets there, not every tick.
     const parts = sides.map(({ side }) =>
       (["red", "green"] as const).map((color) => {
         const net = sim?.network(entity.entityNumber, color, side);
-        return net ? { color, id: net.id + 1, title: signalsTitle(net.values, label) } : undefined;
+        return net ? { color, id: net.id + 1, side } : undefined;
       }),
     );
     const key = JSON.stringify(parts) + cb.wired;
@@ -123,13 +125,18 @@ export function buildConnectionBar(container: HTMLElement, entity: PlacedEntity,
       const group = el("div", "circuit-bar-side");
       if (sideLabel) group.appendChild(el("b", "circuit-bar-label", sideLabel));
       const nets = parts[i]!.filter((p) => p !== undefined);
-      if (!nets.length) group.appendChild(el("span", undefined, cb.wired || i > 0 ? "Not connected" : "Not connected"));
+      if (!nets.length) group.appendChild(el("span", undefined, "Not connected"));
       else {
         group.appendChild(el("span", undefined, "Connected to:"));
-        for (const n of nets) {
-          const id = el("span", `circuit-bar-net is-${n!.color}`, String(n!.id));
+        for (const p of nets) {
+          const id = el("span", `circuit-bar-net is-${p!.color}`, String(p!.id));
           const info = el("span", "circuit-info", "i");
-          id.title = info.title = n!.title;
+          for (const target of [id, info]) {
+            target.addEventListener("pointerenter", () => {
+              const values = cb.live()?.network(entity.entityNumber, p!.color, p!.side)?.values ?? new Map();
+              id.title = info.title = signalsTitle(values, label);
+            });
+          }
           group.append(id, info);
         }
       }
@@ -355,26 +362,60 @@ export function buildCircuitSection(container: HTMLElement, entity: PlacedEntity
     return row;
   };
 
-  /** A grid of live signals; with `tint`, red and green rows apart. */
+  /** A grid of live signals; with `tint`, red and green rows apart.
+   *  Updated in place every tick: a slot's icon is only rebuilt when its
+   *  signal changes, its count only rewritten when the count does, so a
+   *  counter ticking every frame touches one text node. */
   const liveGrid = (parent: HTMLElement, read: () => { signals: Signals; tint?: "red" | "green" }[]) => {
     const grid = el("div", "f-slot-grid circuit-grid");
     parent.appendChild(grid);
-    let last = "";
+    const cells: { el: HTMLButtonElement; key?: string; count?: number; countEl?: HTMLElement; tint?: string }[] = [];
     const refresh = () => {
-      const rows = read();
-      const key = rows.map((r) => `${r.tint}:${[...r.signals].join(";")}`).join("|");
-      if (key === last) return;
-      last = key;
-      grid.replaceChildren();
-      for (const r of rows) {
+      const want: { key?: string; count?: number; tint?: string }[] = [];
+      for (const r of read()) {
         const list = [...r.signals].sort((a, b) => (a[0] < b[0] ? -1 : 1));
-        const cells = Math.max(10, Math.ceil(list.length / 10) * 10);
-        for (let i = 0; i < cells; i++) {
-          const entry = list[i];
-          const s = entry ? parseSignalKey(entry[0]) : undefined;
-          grid.appendChild(slot(s ? { type: s.type, name: s.name } : undefined, [], undefined, { count: entry?.[1], tint: entry ? r.tint : undefined }));
-        }
+        const size = Math.max(10, Math.ceil(list.length / 10) * 10);
+        for (let i = 0; i < size; i++) want.push(list[i] ? { key: list[i]![0], count: list[i]![1], tint: r.tint } : {});
       }
+      while (cells.length < want.length) {
+        const b = el("button", "f-slot circuit-slot");
+        b.type = "button";
+        b.disabled = true;
+        grid.appendChild(b);
+        cells.push({ el: b });
+      }
+      while (cells.length > want.length) cells.pop()!.el.remove();
+      want.forEach((w, i) => {
+        const c = cells[i]!;
+        if (c.key !== w.key) {
+          c.key = w.key;
+          c.el.replaceChildren();
+          c.countEl = undefined;
+          c.count = undefined;
+          delete c.el.dataset.signal;
+          c.el.title = "";
+          if (w.key) {
+            const s = parseSignalKey(w.key);
+            c.el.appendChild(icon(s.name, label({ name: s.name, type: s.type }), 32));
+            c.el.title = label({ name: s.name, type: s.type });
+            if (s.type === "item") c.el.dataset.signal = s.name;
+          }
+        }
+        if (c.count !== w.count) {
+          c.count = w.count;
+          if (w.count === undefined) c.countEl?.remove();
+          else {
+            if (!c.countEl) c.el.appendChild((c.countEl = el("span", "f-slot-count")));
+            c.countEl.textContent = slotCount(w.count);
+          }
+          if (w.count === undefined) c.countEl = undefined;
+        }
+        if (c.tint !== w.tint) {
+          c.el.classList.remove("is-red", "is-green");
+          if (w.tint) c.el.classList.add(`is-${w.tint}`);
+          c.tint = w.tint;
+        }
+      });
     };
     refresh();
     refreshers.push(refresh);

@@ -13,6 +13,7 @@ import { drawOverlay, type HoverTarget, type PortTabRect } from "./overlay.js";
 import { portEditorHtml, portTitle, replacePortHtml, wirePortList } from "./panels.js";
 import { formatRate, loadSettings, saveSettings, type LabSettings } from "./settings.js";
 import { makeFloatingWindow, type FloatingWindow } from "../window-manager.js";
+import { SimClock } from "../sim-clock.js";
 
 type Lanes = [LaneFeed | null, LaneFeed | null];
 
@@ -99,8 +100,7 @@ export class RateOverlay {
   private dirty = false;
   private rebuildTimer = 0;
   private raf = 0;
-  private last = 0;
-  private acc = 0;
+  private readonly clock = new SimClock();
   private lastUi = 0;
   private lastDraw = 0;
 
@@ -204,7 +204,7 @@ export class RateOverlay {
       return;
     }
     if (this.dirty || !this.factory) this.rebuild();
-    this.last = performance.now();
+    this.clock.reset(performance.now());
     this.raf = requestAnimationFrame(this.frame);
   }
 
@@ -483,9 +483,14 @@ export class RateOverlay {
 
   private readonly frame = (now: number) => {
     if (!this.active) return;
-    const dt = Math.min(0.1, (now - this.last) / 1000);
-    this.last = now;
     const f = this.factory;
+    // Same limits as the renderer underneath: its render preset caps the
+    // pixel ratio and the frame rate, and the overlay follows suit.
+    const quality = this.renderer?.getQuality();
+    const mayDraw = !quality || now - this.lastDraw >= 1000 / quality.maxFps - 2;
+    // With circuits on the map, every tick is drawn: one tick per drawn
+    // frame at normal speed, so no circuit value is skipped.
+    const everyTick = !!f && f.circuits.networks.length > 0;
     if (f && this.warm > 0) {
       // Catch up in slices so a big blueprint doesn't freeze the page.
       const until = performance.now() + WARM_BUDGET_MS;
@@ -499,15 +504,10 @@ export class RateOverlay {
         this.options.onUpdate?.();
       }
     } else if (f && this.playing) {
-      this.acc += dt * 60 * this.speed;
-      const n = Math.min(600, Math.floor(this.acc));
-      this.acc -= n;
-      f.step(n);
-    }
-    // Same limits as the renderer underneath: its render preset caps the
-    // pixel ratio and the frame rate, and the overlay follows suit.
-    const quality = this.renderer?.getQuality();
-    const mayDraw = !quality || now - this.lastDraw >= 1000 / quality.maxFps - 2;
+      // Ticking every tick, the clock only runs on frames that are drawn;
+      // the frames in between leave it alone, so their time still counts.
+      if (mayDraw || !everyTick) f.step(this.clock.advance(now, this.speed, everyTick));
+    } else this.clock.advance(now, 0);
     if (f && this.renderer && mayDraw) {
       this.lastDraw = now;
       const dpr = Math.min(window.devicePixelRatio || 1, quality?.maxPixelRatio ?? Infinity);
@@ -532,11 +532,13 @@ export class RateOverlay {
         altDisplays: this.altDisplays && this.hasAltDisplays,
         highlightPort: this.highlightPort ?? this.editingPort,
       });
+      // The hover card follows every drawn frame, so its signals do too;
+      // it only touches the DOM when its text changed.
+      if (this.hover && this.warm === 0) this.renderCard();
       if (now - this.lastUi > 400 && this.warm === 0) {
         this.lastUi = now;
         this.issues = detectIssues(f);
         this.options.onUpdate?.();
-        this.renderCard();
         this.tickPortPopup();
       }
     }
