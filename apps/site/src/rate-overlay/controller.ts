@@ -15,8 +15,9 @@ import { loadSettings, saveSettings, type LabSettings } from "./settings.js";
 type Lanes = [LaneFeed | null, LaneFeed | null];
 
 /** Ticks simulated before the overlay counts as settled: a factory that
- *  has been running for half a minute rather than one just switched on. */
-const WARM_TICKS = 1800;
+ *  has been running for a minute rather than one just switched on, so the
+ *  overview's 30-second rates don't include belts still filling up. */
+const WARM_TICKS = 3600;
 /** Most of a frame the warm-up may take, so a big blueprint stays responsive
  *  while it catches up. */
 const WARM_BUDGET_MS = 10;

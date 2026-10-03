@@ -137,6 +137,10 @@ export class BeltSim {
   private readonly inputs = new Map<string, { lanes: [LaneFeed | null, LaneFeed | null]; tokens: [number, number] }>();
   private readonly outputs = new Map<string, { mode: OutputMode; tokens: number }>();
   private readonly portCounts = new Map<string, number>();
+  /** Items through each port since the start, by item id. Unlike
+   *  portCounts these never reset, so a caller can sample them at its own
+   *  pace and take differences. */
+  private readonly portItemTotals = new Map<string, Map<number, number>>();
   private readonly splitterState = new Map<
     Splitter,
     { input: [Lane, Lane]; output: [Lane, Lane]; decided: [SplitDecision, SplitDecision] }
@@ -297,6 +301,13 @@ export class BeltSim {
     dst.pos.push(p);
     dst.item.push(pack(this.itemId(feed.item), stack));
     this.portCounts.set(portId, this.portCounts.get(portId)! + stack);
+    this.addPortTotal(portId, this.itemId(feed.item), stack);
+  }
+
+  private addPortTotal(portId: string, itemId: number, count: number) {
+    let totals = this.portItemTotals.get(portId);
+    if (!totals) this.portItemTotals.set(portId, (totals = new Map()));
+    totals.set(itemId, (totals.get(itemId) ?? 0) + count);
   }
 
   /** Moves every item on one lane, front first. An item reaching the end is
@@ -342,7 +353,10 @@ export class BeltSim {
           out.tokens -= 1;
           take = true;
         }
-        if (take) this.portCounts.set(end.port.id, this.portCounts.get(end.port.id)! + countOf(item));
+        if (take) {
+          this.portCounts.set(end.port.id, this.portCounts.get(end.port.id)! + countOf(item));
+          this.addPortTotal(end.port.id, idOf(item), countOf(item));
+        }
         return take;
       }
       case "line": {
@@ -513,6 +527,14 @@ export class BeltSim {
   /** Items/second through a port over the counter window. */
   portRate(portId: string): number {
     return (this.portCounts.get(portId)! * TICKS_PER_SECOND) / Math.max(1, this.window);
+  }
+
+  /** Items that have entered (input) or left (output) through a port since
+   *  the simulation began, by item name. */
+  portTotals(portId: string): Map<string, number> {
+    const out = new Map<string, number>();
+    for (const [id, n] of this.portItemTotals.get(portId) ?? []) out.set(this.items[id]!, n);
+    return out;
   }
 
   /** Current slots on a lane, front first. */

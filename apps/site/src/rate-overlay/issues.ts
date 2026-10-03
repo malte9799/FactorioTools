@@ -33,7 +33,12 @@ const centre = (m: MachineSim) => ({ x: m.entity.x, y: m.entity.y });
 const at = (e: { x: number; y: number }) => ({ x: e.x, y: e.y });
 
 export function itemLabel(data: GameData, name: string): string {
-  return data.items[name]?.localised ?? name;
+  // Placeable items (an inserter, a belt) carry their bare internal name in
+  // the dataset; their building has the real one.
+  const own = data.items[name]?.localised;
+  if (own && own !== name) return own;
+  const building = data.inserters[name]?.localised ?? data.belts[name]?.localised ?? data.machines[name]?.localised;
+  return building ?? name.charAt(0).toUpperCase() + name.slice(1).replace(/-/g, " ");
 }
 export function recipeLabel(data: GameData, name: string): string {
   return data.recipes[name]?.localised ?? name;
