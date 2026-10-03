@@ -50,7 +50,10 @@ export function cliffPieces(
 ): Uint8Array {
   const out = new Uint8Array(cols * rows);
   const stride = cols + 1;
-  const level = (v: number): number => Math.floor((v - elevation0) / interval);
+  // Level 0 is everything below the first cliff elevation: ground lower
+  // than that never gets a cliff, however far down it goes (Fulgora's sea
+  // floor drops through several intervals).
+  const level = (v: number): number => Math.max(0, Math.floor((v - elevation0) / interval) + 1);
   for (let j = 0; j < rows; j++) {
     for (let i = 0; i < cols; i++) {
       const a = j * stride + i;

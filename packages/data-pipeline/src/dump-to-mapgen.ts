@@ -117,6 +117,11 @@ function main(): void {
   // Decoratives are left out: the viewer does not draw them and they are
   // more than half of all autoplace rules.
   const autoplace: Json = { tile: {}, entity: {} };
+  const defaultMasks = table(table(raw["utility-constants"]?.default)?.default_collision_masks);
+  const layerNames = (mask: Record<string, Json> | undefined): string[] | undefined => {
+    const layers = table(mask?.layers);
+    return layers ? Object.keys(layers).sort() : undefined;
+  };
   for (const [type, protos] of Object.entries(raw)) {
     if (type === "optimized-decorative") continue;
     for (const [name, p] of Object.entries(protos)) {
@@ -135,6 +140,10 @@ function main(): void {
         // free, and whether the entity lands anywhere within its tile (two
         // extra random draws) or snaps to it.
         collision_box: Array.isArray(p.collision_box) ? p.collision_box : undefined,
+        // Which tiles it may stand on: an entity cannot be placed on a tile
+        // it shares a collision layer with. A prototype without a mask of
+        // its own takes its type's default.
+        collision_layers: layerNames(table(p.collision_mask) ?? table(defaultMasks?.[type])),
         off_grid: Array.isArray(p.flags) && p.flags.includes("placeable-off-grid") ? true : undefined,
         // Resources only: an infinite one (oil) reports its amount as a
         // yield, `normal` being 100%.

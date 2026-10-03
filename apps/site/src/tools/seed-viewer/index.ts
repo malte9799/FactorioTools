@@ -66,6 +66,7 @@ const TEMPLATE = `
         <button type="button" id="seed-random" title="Pick a random seed">Random</button>
       </form>
       <p class="seed-note" id="seed-status" role="status"></p>
+      <p class="seed-disclaimer"><strong>Early prototype.</strong> This map is recomputed outside the game and has not been checked by eye against it. It is not guaranteed to look anything like the real seed.</p>
 
       <div class="seed-fields">
         <label class="seed-field"><span>Game version</span><select id="seed-version"></select></label>
@@ -663,7 +664,7 @@ export function mountSeedViewer(container: HTMLElement): () => void {
     const image = new ImageData(TILE, TILE);
     const out = new Uint32Array(image.data.buffer);
     const cliffColor = pack(...colors.cliff);
-    const sparse = resources.map((r) => r.chance < 1);
+    const sparse = resources.map((r) => r.wells);
     // Sample coordinates across the whole level, so the checkerboard and the
     // tree scatter run on unbroken from one tile image to the next.
     const gx0 = t.tx * TILE;

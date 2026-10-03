@@ -12,6 +12,7 @@ import {
 } from "./basis.js";
 import { Rng, penaltySeed } from "./rng.js";
 import { candidatePoints, selectSpots, type Spot, type SpotParams } from "./spot.js";
+import { Voronoi, type VoronoiParams } from "./voronoi.js";
 
 const f = Math.fround;
 const TWO_POW_MINUS_32 = 2 ** -32;
@@ -26,6 +27,7 @@ interface Frame {
 
 export class Evaluator {
   private readonly tables = new Map<number, NoiseTables>();
+  private readonly voronoi = new Map<number, Voronoi>();
   private readonly plans = new Map<string, number[]>();
   private readonly candidates = new Map<string, { xs: Int32Array; ys: Int32Array }>();
   private readonly regions = new Map<string, Spot[]>();
@@ -269,6 +271,15 @@ export class Evaluator {
       case "spot":
         this.spot(node.p as SpotParams, id, a, b, out);
         return;
+      case "voronoi": {
+        let voronoi = this.voronoi.get(id);
+        if (!voronoi) {
+          voronoi = new Voronoi(node.p as VoronoiParams);
+          this.voronoi.set(id, voronoi);
+        }
+        voronoi.run(a, b, out, n);
+        return;
+      }
       case "multisample": {
         const sx = new Float32Array(n);
         const sy = new Float32Array(n);

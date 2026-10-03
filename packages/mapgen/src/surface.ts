@@ -5,7 +5,7 @@
  *  spawn. Everything is derived from the planet's autoplace rules. */
 import { Program, type Node, type Op } from "./compiler.js";
 import { Evaluator } from "./evaluator.js";
-import { compileSettings, type MapGenData, type MapGenOptions } from "./settings.js";
+import { compileSettings, type AutoplaceEntry, type MapGenData, type MapGenOptions } from "./settings.js";
 import type { SpotParams } from "./spot.js";
 import { cliffName, cliffPieces, onCliffLine, pointInBox, trimCliffs, type OrientedBox } from "./cliffs.js";
 import { CHUNK, placementGroups, rollChunk, type Attempt, type PlacementEntity } from "./placement.js";
@@ -16,6 +16,9 @@ export interface TileLayer {
   name: string;
   color: Rgb;
   water: boolean;
+  /** No resource can stand here. Water on most planets; not on Aquilo,
+   *  whose oil and brine sit in the open ocean. */
+  noResources: boolean;
 }
 
 export interface ResourceLayer {
@@ -24,6 +27,9 @@ export interface ResourceLayer {
   /** Share of patch tiles that pass the resource's random penalty: 1 for an
    *  ore that fills its patch, 1/48 for oil wells. */
   chance: number;
+  /** Stands as separate wells in its field rather than covering it: oil,
+   *  and anything else too wide for one tile or thinned out by chance. */
+  wells: boolean;
   /** Amount that counts as 100% yield, for an infinite resource. */
   normalYield: number | null;
 }
@@ -147,13 +153,28 @@ export function unsupportedFunctions(data: MapGenData, planet: string): string[]
     if (seen.has(id)) return;
     seen.add(id);
     const node = program.nodes[id]!;
-    if (node.op === "voronoi") missing.add(`voronoi_${node.p.kind as string}`);
     for (const a of node.args) visit(a);
     if (node.op === "spot") for (const key of ["density", "quantity", "radius", "favorability"] as const) visit((node.p as SpotParams)[key]);
     if (node.op === "multisample") visit(node.p.expr as number);
   };
   roots.forEach(visit);
   return [...missing].sort();
+}
+
+/** The tile a position gets: the highest probability, the earlier tile on
+ *  a tie. `values[offset + t][i]` is tile t's probability. A rule that
+ *  comes out as NaN (Fulgora has one) never wins. */
+function winningTile(values: Float32Array[], offset: number, count: number, i: number): number {
+  let best = 0;
+  let bestP = -Infinity;
+  for (let t = 0; t < count; t++) {
+    const p = values[offset + t]![i]!;
+    if (p > bestP) {
+      bestP = p;
+      best = t;
+    }
+  }
+  return best;
 }
 
 export class MapSurface {
@@ -189,7 +210,7 @@ export class MapSurface {
   private readonly placementGroups: number[][];
   /** Applies per-tile penalties: placement is one particular roll. */
   private readonly exactEvaluator: Evaluator;
-  private readonly chunkWater = new Map<string, Uint8Array>();
+  private readonly chunkTiles = new Map<string, Uint8Array>();
   private readonly chunkPlaced = new Map<string, PlacedResource[]>();
   private readonly xs = new Float32Array(BATCH);
   private readonly ys = new Float32Array(BATCH);
@@ -212,12 +233,30 @@ export class MapSurface {
       .sort(([, a], [, b]) => ((a.order ?? "") < (b.order ?? "") ? -1 : (a.order ?? "") > (b.order ?? "") ? 1 : 0));
 
     const tileNames = Object.keys(mgs.autoplace_settings?.tile?.settings ?? {});
-    this.tiles = tileNames.map((name) => ({ name, color: data.autoplace.tile[name]?.map_color ?? [255, 0, 255], water: WATER.test(name) }));
+    // An entity cannot stand on a tile it shares a collision layer with.
+    // Data written before the layers were exported falls back to "water
+    // blocks everything but fish".
+    const tileLayers = tileNames.map((name) => data.autoplace.tile[name]?.collision_layers);
+    const blockedTiles = (a: AutoplaceEntry): Uint8Array => {
+      const out = new Uint8Array(tileNames.length + 1);
+      tileNames.forEach((name, t) => {
+        const layers = tileLayers[t];
+        if (layers && a.collision_layers) out[t] = a.collision_layers.some((layer) => layers.includes(layer)) ? 1 : 0;
+        else out[t] = WATER.test(name) === (a.type === "fish") ? 0 : 1;
+      });
+      // Nothing stands in the void beyond a bounded map.
+      out[tileNames.length] = 1;
+      return out;
+    };
+    const noResources = blockedTiles({ type: "resource", collision_layers: ["resource"] });
+    this.tiles = tileNames.map((name, t) => ({
+      name, color: data.autoplace.tile[name]?.map_color ?? [255, 0, 255], water: WATER.test(name), noResources: noResources[t] === 1,
+    }));
     // A bounded map (the ribbon world) ends in void; nothing generates there.
     this.halfWidth = options.width ? options.width / 2 : Infinity;
     this.halfHeight = options.height ? options.height / 2 : Infinity;
     this.voidTile = this.tiles.length;
-    if (options.width || options.height) this.tiles.push({ name: "out-of-map", color: [0, 0, 0], water: true });
+    if (options.width || options.height) this.tiles.push({ name: "out-of-map", color: [0, 0, 0], water: true, noResources: true });
     this.tileRoots = tileNames.map((name) => program.named(`tile:${name}:probability`));
 
     const resources = entities.filter(([, a]) => a.type === "resource");
@@ -225,10 +264,13 @@ export class MapSurface {
     this.resourceOrders = resources.map(([, a]) => a.order ?? "");
     this.resources = resources.map(([name, a], i) => {
       const penalty = this.findNode(this.resourceRoots[i]!, "random_penalty");
+      const chance = penalty ? 1 / (penalty.p.amplitude as number) : 1;
+      const box = a.collision_box;
       return {
         name,
         color: a.map_color ?? [255, 255, 255],
-        chance: penalty ? 1 / (penalty.p.amplitude as number) : 1,
+        chance,
+        wells: chance < 1 || (box !== undefined && box[1][0] - box[0][0] > 1),
         normalYield: a.infinite && a.normal ? a.normal : null,
       };
     });
@@ -247,7 +289,7 @@ export class MapSurface {
       richness: program.named(`entity:${name}:richness`),
       offGrid: a.off_grid === true,
       box: a.collision_box ?? [[-0.4, -0.4], [0.4, 0.4]],
-      aquatic: a.type === "fish",
+      blocked: blockedTiles(a),
     }));
     this.placementGroups = placementGroups(entities.map(([, a]) => ({ order: a.order ?? "" })));
 
@@ -261,7 +303,7 @@ export class MapSurface {
     this.cliffElevation0 = settings.constants.cliff_elevation_0 ?? 10;
     this.cliffInterval = settings.constants.cliff_elevation_interval ?? 40;
     this.cliffBoxes = cliff?.orientations ?? {};
-    this.oreRoots = this.resourceRoots.filter((_, i) => this.resources[i]!.chance === 1);
+    this.oreRoots = this.resourceRoots.filter((_, i) => !this.resources[i]!.wells);
     this.colors = {
       tree: data.colors?.tree ?? [48, 99, 48],
       enemy: data.colors?.enemy ?? [255, 26, 26],
@@ -310,11 +352,11 @@ export class MapSurface {
     return best;
   }
 
-  /** Which of a chunk's 1024 tiles are water. */
-  private waterOf(chunkX: number, chunkY: number): Uint8Array {
+  /** The tile type of each of a chunk's 1024 tiles. */
+  private tilesOf(chunkX: number, chunkY: number): Uint8Array {
     const key = `${chunkX},${chunkY}`;
-    let water = this.chunkWater.get(key);
-    if (water) return water;
+    let types = this.chunkTiles.get(key);
+    if (types) return types;
     const xs = new Float32Array(CHUNK * CHUNK);
     const ys = new Float32Array(CHUNK * CHUNK);
     for (let k = 0; k < xs.length; k++) {
@@ -322,21 +364,19 @@ export class MapSurface {
       ys[k] = chunkY * CHUNK + Math.floor(k / CHUNK);
     }
     const tile = this.evaluate(this.tileRoots, xs, ys);
-    water = new Uint8Array(xs.length);
+    types = new Uint8Array(xs.length);
     for (let k = 0; k < xs.length; k++) {
-      let best = 0;
-      for (let t = 1; t < tile.length; t++) if (tile[t]![k]! > tile[best]![k]!) best = t;
-      if (this.tiles[best]!.water) water[k] = 1;
+      types[k] = winningTile(tile, 0, tile.length, k);
     }
-    if (this.chunkWater.size > 4096) this.chunkWater.clear();
-    this.chunkWater.set(key, water);
-    return water;
+    if (this.chunkTiles.size > 4096) this.chunkTiles.clear();
+    this.chunkTiles.set(key, types);
+    return types;
   }
 
-  private isWater(x: number, y: number): boolean {
+  private tileAt(x: number, y: number): number {
     const cx = Math.floor(x / CHUNK);
     const cy = Math.floor(y / CHUNK);
-    return this.waterOf(cx, cy)[(y - cy * CHUNK) * CHUNK + (x - cx * CHUNK)] === 1;
+    return this.tilesOf(cx, cy)[(y - cy * CHUNK) * CHUNK + (x - cx * CHUNK)]!;
   }
 
   /** Every placement attempt in a chunk, in the game's order. */
@@ -354,7 +394,7 @@ export class MapSurface {
     const values = this.exactEvaluator.run(roots, xs, ys);
     const attempts = rollChunk(
       chunkX, chunkY, entities, this.placementGroups,
-      values.slice(0, entities.length), values.slice(entities.length), this.waterOf(chunkX, chunkY),
+      values.slice(0, entities.length), values.slice(entities.length), this.tilesOf(chunkX, chunkY),
     );
     return { attempts, entities };
   }
@@ -379,7 +419,8 @@ export class MapSurface {
       const [[x1, y1], [x2, y2]] = entity.box;
       const cx = a.tileX + 0.5;
       const cy = a.tileY + 0.5;
-      // Resources collide with each other and with water, nothing else.
+      // Resources collide with each other and with the tiles they cannot
+      // stand on, nothing else.
       let free = true;
       for (let i = 0; i < placed.length && free; i++) {
         const [[ox1, oy1], [ox2, oy2]] = boxes[i]!;
@@ -388,7 +429,7 @@ export class MapSurface {
         if (cx + x1 < ox + ox2 && cx + x2 > ox + ox1 && cy + y1 < oy + oy2 && cy + y2 > oy + oy1) free = false;
       }
       for (let ty = Math.floor(cy + y1); ty <= Math.floor(cy + y2) && free; ty++) {
-        for (let tx = Math.floor(cx + x1); tx <= Math.floor(cx + x2) && free; tx++) if (this.isWater(tx, ty)) free = false;
+        for (let tx = Math.floor(cx + x1); tx <= Math.floor(cx + x2) && free; tx++) if (entity.blocked[this.tileAt(tx, ty)]) free = false;
       }
       if (!free) continue;
       // The amount is the richness rounded down; a resource that would hold
@@ -408,7 +449,7 @@ export class MapSurface {
    *  `grid` is the cell size in tiles. At the game's own 4 the result is the
    *  game's cliffs, less the pieces ore displaces; a larger grid follows the
    *  same contour more coarsely, for views zoomed too far out to show cells. */
-  cliffs(cellX0: number, cellY0: number, cols: number, rows: number, grid = 4): Uint8Array {
+  cliffs(cellX0: number, cellY0: number, cols: number, rows: number, grid = 4, displace = true): Uint8Array {
     if (!this.cliffRoots) return new Uint8Array(cols * rows);
     // One cell of margin: whether a line ends in a cell depends on its
     // neighbours.
@@ -424,7 +465,7 @@ export class MapSurface {
     }
     const [elevation, cliffiness] = this.evaluate(this.cliffRoots, vx, vy);
     const pieces = cliffPieces(elevation!, cliffiness!, mc, mr, this.cliffElevation0, this.cliffInterval);
-    const displaced = grid === 4 ? this.cliffsUnderOre(pieces, cellX0 - 1, cellY0 - 1, mc) : new Set<number>();
+    const displaced = grid === 4 && displace ? this.cliffsUnderOre(pieces, cellX0 - 1, cellY0 - 1, mc) : new Set<number>();
     trimCliffs(pieces, mc, mr, (k) => displaced.has(k));
     const out = new Uint8Array(cols * rows);
     for (let j = 0; j < rows; j++) out.set(pieces.subarray((j + 1) * mc + 1, (j + 1) * mc + 1 + cols), j * cols);
@@ -451,6 +492,12 @@ export class MapSurface {
         ys[c * W * H + i] = ty + Math.floor(i / W);
       }
     });
+    // Where cliffs are dense (Fulgora) the pieces' surroundings overlap many
+    // times over; evaluating every tile of the block once is then cheaper.
+    const rows = pieces.length / cols;
+    const blockW = cols * 4 + 6;
+    const blockH = rows * 4 + 6;
+    if (cells.length * W * H > blockW * blockH) return this.cliffsUnderOreDense(pieces, cellX0, cellY0, cols, cells);
     const ore = this.evaluate(this.oreRoots, xs, ys);
     cells.forEach((k, c) => {
       const box = this.cliffBoxes[cliffName(pieces[k]!)!];
@@ -467,6 +514,45 @@ export class MapSurface {
         }
       }
     });
+    return out;
+  }
+
+  /** `cliffsUnderOre` over one evaluation of the whole block of tiles. */
+  private cliffsUnderOreDense(pieces: Uint8Array, cellX0: number, cellY0: number, cols: number, cells: number[]): Set<number> {
+    const rows = pieces.length / cols;
+    const blockW = cols * 4 + 6;
+    const blockH = rows * 4 + 6;
+    const x0 = cellX0 * 4 - 3;
+    const y0 = cellY0 * 4 - 3;
+    const xs = new Float32Array(blockW * blockH);
+    const ys = new Float32Array(xs.length);
+    for (let i = 0; i < xs.length; i++) {
+      xs[i] = x0 + (i % blockW);
+      ys[i] = y0 + Math.floor(i / blockW);
+    }
+    const ore = this.evaluate(this.oreRoots, xs, ys);
+    const covered = new Uint8Array(xs.length);
+    for (const p of ore) for (let i = 0; i < covered.length; i++) if (p[i]! > 0) covered[i] = 1;
+    const out = new Set<number>();
+    for (const k of cells) {
+      const box = this.cliffBoxes[cliffName(pieces[k]!)!];
+      if (!box) continue;
+      const cx = k % cols;
+      const cy = Math.floor(k / cols);
+      const originX = (cellX0 + cx) * 4 + 2;
+      const originY = (cellY0 + cy) * 4 + 2.5;
+      search: for (let j = 0; j < 10; j++) {
+        for (let i = 0; i < 10; i++) {
+          const tx = cx * 4 + i;
+          const ty = cy * 4 + j;
+          if (!covered[ty * blockW + tx]) continue;
+          if (pointInBox(box, originX, originY, x0 + tx + 0.5, y0 + ty + 0.5, 0.1)) {
+            out.add(k);
+            break search;
+          }
+        }
+      }
+    }
     return out;
   }
 
@@ -509,15 +595,7 @@ export class MapSurface {
       }
       const v = this.evaluator.run(roots, xs, ys);
       for (let i = 0; i < n; i++) {
-        let best = 0;
-        let bestP = -Infinity;
-        for (let t = 0; t < nTiles; t++) {
-          const p = v[t]![i]!;
-          if (p > bestP) {
-            bestP = p;
-            best = t;
-          }
-        }
+        const best = winningTile(v, 0, nTiles, i);
         const k = start + i;
         if (Math.abs(xs[i]! + 0.5) > this.halfWidth || Math.abs(ys[i]! + 0.5) > this.halfHeight) {
           grid.tile[k] = this.voidTile;
@@ -525,8 +603,8 @@ export class MapSurface {
           continue;
         }
         grid.tile[k] = best;
+        if (!this.tiles[best]!.noResources) grid.resource[k] = this.resourceAt(v, nTiles, i) + 1;
         if (this.tiles[best]!.water) continue;
-        grid.resource[k] = this.resourceAt(v, nTiles, i) + 1;
         if (enemyAt >= 0) {
           const p = v[enemyAt]![i]!;
           if (p > 0) grid.enemy[k] = Math.max(1, Math.min(255, Math.round((p / ENEMY_FULL) * 255)));
@@ -554,7 +632,9 @@ export class MapSurface {
     const cx1 = Math.floor((x0 + (cols - 1) * step) / cell);
     const cy1 = Math.floor((y0 + (rows - 1) * step) / cell);
     const ccols = cx1 - cx0 + 1;
-    const pieces = this.cliffs(cx0, cy0, ccols, cy1 - cy0 + 1, cell);
+    // Which pieces an ore patch displaced only shows tile by tile, so
+    // coarser views leave that work out.
+    const pieces = this.cliffs(cx0, cy0, ccols, cy1 - cy0 + 1, cell, step < 2);
     for (let j = 0; j < rows; j++) {
       const y = y0 + j * step;
       const cy = Math.floor(y / cell);
@@ -596,9 +676,7 @@ export class MapSurface {
       if (!any) return chunk;
       const tile = this.evaluate(this.tileRoots, xs, ys);
       for (let i = 0; i < xs.length; i++) {
-        let best = 0;
-        for (let t = 1; t < nTiles; t++) if (tile[t]![i]! > tile[best]![i]!) best = t;
-        if (this.tiles[best]!.water) continue;
+        if (this.tiles[winningTile(tile, 0, nTiles, i)]!.noResources) continue;
         const r = this.resourceAt(res, 0, i);
         if (r < 0) continue;
         // An ore tile holds its richness where the game's roll succeeds: all
@@ -671,7 +749,7 @@ export class MapSurface {
     // A sparse resource is not spread over its field: replay the chunks and
     // report the wells the game actually places in it.
     let wells: PlacedResource[] = [];
-    if (this.resources[target - 1]!.chance < 1) {
+    if (this.resources[target - 1]!.wells) {
       for (let cy = Math.floor(minY / CHUNK); cy <= Math.floor(maxY / CHUNK); cy++) {
         for (let cx = Math.floor(minX / CHUNK); cx <= Math.floor(maxX / CHUNK); cx++) {
           for (const r of this.chunkResources(cx, cy)) {
@@ -693,7 +771,7 @@ export class MapSurface {
         // Only chunks an oil field reaches are worth replaying.
         if (!this.sparseChunks(cx * CHUNK, cy * CHUNK, cx * CHUNK + CHUNK - 1, cy * CHUNK + CHUNK - 1).has(`${cx},${cy}`)) continue;
         for (const r of this.chunkResources(cx, cy)) {
-          if (this.resources[r.resource]!.chance < 1 && Math.abs(r.x - x) <= 1 && Math.abs(r.y - y) <= 1) return r;
+          if (this.resources[r.resource]!.wells && Math.abs(r.x - x) <= 1 && Math.abs(r.y - y) <= 1) return r;
         }
       }
     }
@@ -709,7 +787,7 @@ export class MapSurface {
     const cy0 = Math.floor(minY / CHUNK);
     const cy1 = Math.floor(maxY / CHUNK);
     this.resourceRoots.forEach((root, r) => {
-      if (this.resources[r]!.chance === 1) return;
+      if (!this.resources[r]!.wells) return;
       // A field is its spot, roughened: allow well past the nominal radius.
       const reach = 80;
       for (const spot of this.spotsIn(root, minX - reach, minY - reach, maxX + reach, maxY + reach)) {
@@ -727,7 +805,7 @@ export class MapSurface {
    *  every chunk would cost too much, each field is one mark at its centre. */
   private sampleWells(grid: SampleGrid, x0: number, y0: number, step: number): void {
     const { cols, rows } = grid;
-    const sparse = this.resources.map((r) => r.chance < 1);
+    const sparse = this.resources.map((r) => r.wells);
     if (!sparse.some(Boolean)) return;
     for (let k = 0; k < grid.resource.length; k++) if (grid.resource[k] && sparse[grid.resource[k]! - 1]) grid.resource[k] = 0;
     const maxX = x0 + (cols - 1) * step;
@@ -753,7 +831,7 @@ export class MapSurface {
     if (step > 4) {
       this.resourceRoots.forEach((root, r) => {
         if (!sparse[r]) return;
-        for (const spot of this.spotsIn(root, x0, y0, maxX + step - 1, maxY + step - 1)) if (!this.isWater(spot.x, spot.y)) mark(r, spot.x, spot.y, 0);
+        for (const spot of this.spotsIn(root, x0, y0, maxX + step - 1, maxY + step - 1)) if (!this.tiles[this.tileAt(spot.x, spot.y)]!.noResources) mark(r, spot.x, spot.y, 0);
       });
       return;
     }
@@ -771,11 +849,17 @@ export class MapSurface {
     const nTiles = this.tileRoots.length;
     const nRes = this.resourceRoots.length;
     let best = 0;
-    for (let t = 1; t < nTiles; t++) if (v[1 + t]! > v[1 + best]!) best = t;
+    let bestP = -Infinity;
+    for (let t = 0; t < nTiles; t++) {
+      if (v[1 + t]! > bestP) {
+        bestP = v[1 + t]!;
+        best = t;
+      }
+    }
     const tile = this.tiles[best]!;
     let resource: string | null = null;
     let richness = 0;
-    if (!tile.water) {
+    if (!tile.noResources) {
       let best = -1;
       for (let r = 0; r < nRes; r++) {
         const p = v[1 + nTiles + r]!;
@@ -869,9 +953,7 @@ export class MapSurface {
       for (let i = 0; i < side; i++) {
         const p = v[0]![i]!;
         if (!(p > 0)) continue;
-        let best = 0;
-        for (let t = 1; t < this.tileRoots.length; t++) if (v[2 + t]![i]! > v[2 + best]![i]!) best = t;
-        if (this.tiles[best]!.water) continue;
+        if (this.tiles[winningTile(v, 2, this.tileRoots.length, i)]!.noResources) continue;
         // A sparse resource rolls against `p * (1 - u / chance)`; over a
         // uniform u that succeeds with probability p * chance / 2.
         const chance = (p < 1 ? p : 1) * (sparse < 1 ? sparse * 0.5 : 1);
@@ -896,9 +978,7 @@ export class MapSurface {
     const out: EnemyBase[] = [];
     spots.forEach((s, i) => {
       if (!(v[0]![i]! > 0)) return;
-      let best = 0;
-      for (let t = 1; t < this.tileRoots.length; t++) if (v[1 + t]![i]! > v[1 + best]![i]!) best = t;
-      if (!this.tiles[best]!.water) out.push({ x: s.x, y: s.y, radius: s.radius });
+      if (!this.tiles[winningTile(v, 1, this.tileRoots.length, i)]!.water) out.push({ x: s.x, y: s.y, radius: s.radius });
     });
     return out;
   }

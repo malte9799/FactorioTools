@@ -110,6 +110,20 @@ const PRIMITIVES: Record<string, string> = {
   t_range: "expression_in_range(20, 1, x / 300, y / 300, 0.4, -10, 0.45, 0.25)",
   t_spot_soft:
     "spot_noise{x = x, y = y, density_expression = 0.3, spot_quantity_expression = 5000, spot_radius_expression = 20, spot_favorability_expression = 1, seed0 = map_seed, seed1 = 77, region_size = 256, candidate_spot_count = 8, suggested_minimum_candidate_point_spacing = 30, hard_region_target_quantity = 0, basement_value = -50, maximum_spot_basement_radius = 64}",
+  // Voronoi: every output, every distance, and a jitter on each side of
+  // where the boundary search widens.
+  ...Object.fromEntries(
+    ["spot_noise", "facet_noise", "pyramid_noise", "cell_id"].flatMap((kind) =>
+      ["chebyshev", "manhattan", "euclidean", "minkowski3"]
+        .filter((type) => !(kind === "pyramid_noise" && type === "minkowski3"))
+        .flatMap((type) =>
+          ([[1, 16], [0.2, 7]] as const).map(([jitter, grid]) => [
+            `t_voronoi_${kind}_${type}_${grid}`,
+            `voronoi_${kind}{x = x + y / 7, y = y * 0.8, seed0 = map_seed, seed1 = 'abc', grid_size = ${grid}, distance_type = '${type}', jitter = ${jitter}}`,
+          ]),
+        ),
+    ),
+  ),
   t_spot_hard:
     "spot_noise{x = x, y = y, density_expression = 0.2, spot_quantity_expression = 3000 + x, spot_radius_expression = 11.3 + y / 100, spot_favorability_expression = x, seed0 = map_seed, seed1 = 5, region_size = 256, candidate_point_count = 20, skip_span = 2, skip_offset = 1, hard_region_target_quantity = 1, basement_value = -7, maximum_spot_basement_radius = 40}",
 };
@@ -211,7 +225,7 @@ function planetNames(planet: string): { names: string[]; define: Record<string, 
   for (const [n, a] of Object.entries(data.autoplace.entity)) if (listed.has(n) || (a.control && controls.has(a.control))) add("entity", n);
   return { names, define };
 }
-for (const planet of ["vulcanus", "gleba"]) {
+for (const planet of ["vulcanus", "gleba", "fulgora", "aquilo"]) {
   const p = planetNames(planet);
   record(`${planet}-123.json`, 123, p.names, p.define, [...positions(40, 320, 8), ...positions(60, 6000, 9)], undefined, planet);
 }

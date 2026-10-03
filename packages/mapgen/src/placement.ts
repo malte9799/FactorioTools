@@ -9,8 +9,9 @@
  *    entities sharing an order roll once between them, for whichever has the
  *    highest probability on the tile (the higher richness on a tie).
  *  - A turn walks the chunk's tiles from the last to the first and draws one
- *    number for every tile the entity could stand on (water for fish, land
- *    for the rest), whether or not its probability there is above zero.
+ *    number for every tile the entity could stand on (one it shares no
+ *    collision layer with: water for fish, land for most of the rest),
+ *    whether or not its probability there is above zero.
  *  - A draw below the probability is a placement attempt. An entity that is
  *    not snapped to the grid then draws two more numbers for where in the
  *    tile it lands. The attempt fails if the spot is taken.
@@ -31,8 +32,9 @@ export interface PlacementEntity {
   offGrid: boolean;
   /** Half-extents of its collision box around its position. */
   box: [[number, number], [number, number]];
-  /** Stands on water (fish) rather than on land. */
-  aquatic: boolean;
+  /** By tile type: 1 where the entity cannot stand (water for most, land
+   *  for fish). */
+  blocked: Uint8Array;
 }
 
 /** One successful roll. Whether it became an entity depends on collisions. */
@@ -71,7 +73,7 @@ export function placementGroups(entities: { order: string }[]): number[][] {
 /** Replay one chunk's stream.
  *
  *  `probability[e]` and `richness[e]` hold entity e's values for the chunk's
- *  1024 tiles, row-major; `water[k]` says whether tile k is water. Returns
+ *  1024 tiles, row-major; `tile[k]` is the type of tile k. Returns
  *  every placement attempt in the order the game makes them. */
 export function rollChunk(
   chunkX: number,
@@ -80,15 +82,15 @@ export function rollChunk(
   groups: number[][],
   probability: Float32Array[],
   richness: Float32Array[],
-  water: Uint8Array,
+  tile: Uint8Array,
 ): Attempt[] {
   const rng = new Rng(chunkStreamSeed(chunkX, chunkY));
   const attempts: Attempt[] = [];
   const TO_UNIT = 2 ** -32;
   for (const group of groups) {
-    const aquatic = entities[group[0]!]!.aquatic ? 1 : 0;
+    const blocked = entities[group[0]!]!.blocked;
     for (let k = CHUNK * CHUNK - 1; k >= 0; k--) {
-      if (water[k] !== aquatic) continue;
+      if (blocked[tile[k]!]) continue;
       const u = rng.next() * TO_UNIT;
       let best = group[0]!;
       let p = probability[best]![k]!;

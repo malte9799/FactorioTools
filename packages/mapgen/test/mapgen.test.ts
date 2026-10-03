@@ -104,7 +104,7 @@ interface Fixture {
 }
 
 const fixtureDir = path.join(ROOT, "test/fixtures");
-for (const file of readdirSync(fixtureDir).filter((f) => /^(nauvis|primitives|vulcanus|gleba)-.*\.json$/.test(f)).sort()) {
+for (const file of readdirSync(fixtureDir).filter((f) => /^(nauvis|primitives|vulcanus|gleba|fulgora|aquilo)-.*\.json$/.test(f)).sort()) {
   const fixture = JSON.parse(readFileSync(path.join(fixtureDir, file), "utf8")) as Fixture;
   test(`matches the game bit for bit: ${file} (${Object.keys(fixture.values).length} expressions)`, () => {
     const data = loadData();
@@ -136,7 +136,7 @@ for (const file of readdirSync(fixtureDir).filter((f) => /^(nauvis|primitives|vu
 
 /* ---------- planets ---------- */
 
-test("planets: each has its own seed, and the unfinished ones say what they lack", () => {
+test("planets: each has its own seed, and all five generate", () => {
   assert.equal(surfaceSeed(123, "nauvis"), 123);
   // Map seed plus the CRC32 of the planet's name.
   assert.equal(surfaceSeed(123, "vulcanus"), 1249812914);
@@ -145,8 +145,12 @@ test("planets: each has its own seed, and the unfinished ones say what they lack
   assert.deepEqual(unsupportedFunctions(data, "nauvis"), []);
   assert.deepEqual(unsupportedFunctions(data, "vulcanus"), []);
   assert.deepEqual(unsupportedFunctions(data, "gleba"), []);
-  assert.deepEqual(unsupportedFunctions(data, "aquilo"), ["voronoi_cell_id", "voronoi_facet_noise"]);
-  assert.ok(unsupportedFunctions(data, "fulgora").includes("voronoi_spot_noise"));
+  assert.deepEqual(unsupportedFunctions(data, "aquilo"), []);
+  assert.deepEqual(unsupportedFunctions(data, "fulgora"), []);
+  const fulgora = new MapSurface(data, { seed: 123, planet: "fulgora" });
+  assert.deepEqual(fulgora.resources.map((r) => r.name), ["scrap"]);
+  const aquilo = new MapSurface(data, { seed: 123, planet: "aquilo" });
+  assert.deepEqual(aquilo.resources.map((r) => r.name).sort(), ["crude-oil", "fluorine-vent", "lithium-brine"]);
   const vulcanus = new MapSurface(data, { seed: 123, planet: "vulcanus" });
   assert.deepEqual(vulcanus.resources.map((r) => r.name).sort(), ["calcite", "coal", "sulfuric-acid-geyser", "tungsten-ore"]);
   assert.ok(vulcanus.tiles.some((t) => t.name === "lava" && t.water));
@@ -309,6 +313,14 @@ test("cliffs: a piece runs with the high ground on its left", () => {
   assert.equal(piece(0, 0, 0, 20, [10, 0, 0, 0]), null);
 });
 
+test("cliffs: none form below the first cliff elevation", () => {
+  // One cell whose west side drops through two intervals, all of it below
+  // the first cliff elevation of 10.
+  const cliffy = Float32Array.of(1, 1, 1, 1);
+  assert.equal(cliffPieces(Float32Array.of(-100, 5, -100, 5), cliffy, 1, 1, 10, 40)[0], 0);
+  assert.notEqual(cliffPieces(Float32Array.of(-100, 15, -100, 15), cliffy, 1, 1, 10, 40)[0], 0);
+});
+
 test("cliffs: a line ends where its neighbour is displaced", () => {
   const west = 3;
   const east = 1;
@@ -344,7 +356,7 @@ test("cliffs: match the cliffs the game places", () => {
   assert.ok(same > 300, `${same} cliffs matched`);
   // Not zero: an oil well displaces a cliff too, and where wells stand is a
   // random roll. Everything else is exact.
-  assert.ok(different <= same * 0.02, `${different} cells differ from the game, ${same} match`);
+  assert.ok(different <= same * 0.01, `${different} cells differ from the game, ${same} match`);
 });
 
 test("surface: cliffs and trees appear in the sampled grid when asked for", () => {
@@ -393,8 +405,9 @@ test("placement: groups take their turns in code-unit order of `order`", () => {
 });
 
 test("placement: one draw per eligible tile, two more for an off-grid attempt", () => {
+  // Two tile types: 0 is land, 1 is water.
   const entity = (name: string, offGrid: boolean, aquatic = false): PlacementEntity => ({
-    name, type: "test", probability: 0, richness: 0, offGrid, box: [[-0.1, -0.1], [0.1, 0.1]], aquatic,
+    name, type: "test", probability: 0, richness: 0, offGrid, box: [[-0.1, -0.1], [0.1, 0.1]], blocked: Uint8Array.of(aquatic ? 1 : 0, aquatic ? 0 : 1),
   });
   const entities = [entity("fish", false, true), entity("tree", true), entity("ore", false)];
   const groups = [[0], [1], [2]];

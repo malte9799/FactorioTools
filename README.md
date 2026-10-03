@@ -66,14 +66,18 @@ for; within 2.0 the changelog shows no change to Nauvis generation, so one is
 enough there, and 1.1 and earlier use a different noise system this does not
 implement.
 
-Vulcanus and Gleba generate too, from their own seed (the map seed plus the
-CRC32 of the planet's name), and are held to the game by fixtures like Nauvis.
-Fulgora and Aquilo are listed but cannot be chosen: they are built on the
-game's Voronoi noise, whose point placement has not been worked out.
+All five planets generate, each from its own seed (the map seed plus the
+CRC32 of the planet's name), and each is held to the game by fixtures like
+Nauvis. Fulgora and Aquilo are built on the game's Voronoi noise
+(`packages/mapgen/src/voronoi.ts`), which matches the game bit for bit in
+every distance type.
 
-What it does not do yet: Fulgora and Aquilo; cliffs wherever the game smooths
-them (the Lakes and Island presets, and Vulcanus), by a rule not reproduced
-(none are drawn); resource entities on Gleba beyond stone; and the exact position of individual
+The viewer is an early prototype and says so on the page. What it does not do
+yet: cliffs wherever the game smooths them (the Lakes and Island presets, and
+Vulcanus), by a rule not reproduced (none are drawn); cliffs on Fulgora that
+a ruin displaces (about one in six differs); resource entities on Gleba
+beyond a sixth of its stone, and about a third of Aquilo's wells, whose
+chunks the shoreline straightening shifts; and the exact position of individual
 trees and spawners — the rolls are replayed, but not yet which attempts
 collide, so the viewer shows trees as a scatter of the right density and
 enemy bases as the area they can occupy.

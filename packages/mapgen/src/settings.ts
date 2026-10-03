@@ -23,6 +23,8 @@ export interface AutoplaceEntry extends AutoplaceDef {
   order?: string;
   map_color?: [number, number, number];
   collision_box?: [[number, number], [number, number]];
+  /** Collision layers: an entity cannot stand on a tile it shares one with. */
+  collision_layers?: string[];
   /** Placed anywhere within its tile, not snapped to it. */
   off_grid?: boolean;
   /** Resources: the amount is a yield, with `normal` as 100%. */

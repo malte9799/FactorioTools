@@ -555,8 +555,12 @@ export class Program {
             op: "voronoi",
             args: [node("x"), node("y")],
             p: {
-              kind: name.slice("voronoi_".length), seed0: int("seed0") >>> 0, seed1: layer("seed1") >>> 0,
-              gridSize: int("grid_size"), distanceType, jitter: num("jitter"),
+              kind: name.slice("voronoi_".length),
+              // The layer is added to the seed, not mixed in as elsewhere.
+              seed: (int("seed0") + layer("seed1")) >>> 0,
+              gridSize: Math.max(0, Math.min(65535, int("grid_size"))),
+              distanceType,
+              jitter: Math.fround(num("jitter")),
             },
           }),
         };

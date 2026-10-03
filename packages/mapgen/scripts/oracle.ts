@@ -173,8 +173,8 @@ export function queryEntities(
 }
 
 /** The tiles the game actually generated in an area, row by row. */
-export function queryTiles(seed: number, area: [number, number, number, number]): { names: string[]; rows: number[][] } {
-  queryOracle({ seed, names: ["elevation"], positions: [[0, 0]], entities: { area, types: ["cliff"], tiles: true } });
+export function queryTiles(seed: number, area: [number, number, number, number], planet?: string): { names: string[]; rows: number[][] } {
+  queryOracle({ seed, names: ["elevation"], positions: [[0, 0]], entities: { area, types: ["cliff"], tiles: true }, planet });
   return JSON.parse(readFileSync(path.join(ORACLE_DIR, "write", "script-output", "tiles.json"), "utf8"));
 }
 
