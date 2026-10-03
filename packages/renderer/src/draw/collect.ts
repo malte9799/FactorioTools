@@ -601,7 +601,12 @@ export function collectEntity(
       // after the lane) still paints over it.
       const capPriority = entity.undergroundType === undefined;
       for (const cap of caps) {
-        push(out, sprite, column, cap.row, entity, layer.layer, order, alpha, cap.dx, cap.dy, capPriority, undefined, laneRecenter);
+        // The inset only moves where the cap lands — yBias hands it back to
+        // the sort key, so the cap still ties (and, with capPriority, wins)
+        // against whatever sits on the whole tile it covers.
+        const insetX = -cap.dx * cap.inset;
+        const insetY = -cap.dy * cap.inset;
+        push(out, sprite, column, cap.row, entity, layer.layer, order, alpha, cap.dx + insetX, cap.dy + insetY, capPriority, undefined, laneRecenter, -insetY);
       }
     }
   });
