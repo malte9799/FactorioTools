@@ -3,7 +3,7 @@
  *  have something real-looking to show until phase 2 of the simulation
  *  lands. Machines craft at the engine's calculated speed (modules, beacons
  *  and quality included); inserters are a fixed-time swing derived from
- *  the dataset's chest-to-chest throughput, one item per swing. */
+ *  their arm's rotation speed and quality, carrying a researched hand. */
 import { calculate, type GameData, type PlacedEntity } from "@factoriotools/engine";
 import { BeltSim, beltSpecResolver, buildBeltNetwork, cardOf, DX, DY, laneSide, type BeltLine, type BeltNetwork, type BeltNode, type Card, type Lane, type LaneFeed } from "@factoriotools/sim";
 
@@ -19,17 +19,25 @@ export interface Research {
 
 export const FULL_RESEARCH: Research = { hands: "full", beltStack: 4 };
 
-/** Ticks for one pickup-to-drop-and-back swing at normal quality, from the
- *  dataset's chest-to-chest rates for a one-item hand. Fast, bulk and stack
- *  inserters share one arm speed. */
-const SWING_TICKS: Record<string, number> = {
-  "burner-inserter": 76,
-  inserter: 70,
-  "long-handed-inserter": 48,
-  "fast-inserter": 24,
-  "bulk-inserter": 24,
-  "stack-inserter": 24,
+/** Arm rotation speed at normal quality, revolutions per tick, from the
+ *  prototypes (an inserter's tooltip shows it as degrees per second: 0.014
+ *  is 302°/s). Quality multiplies it like machine speed: legendary is 2.5×.
+ *  Fast, bulk and stack inserters share one arm speed. */
+const ROTATION_SPEED: Record<string, number> = {
+  "burner-inserter": 0.013,
+  inserter: 0.014,
+  "long-handed-inserter": 0.02,
+  "fast-inserter": 0.04,
+  "bulk-inserter": 0.04,
+  "stack-inserter": 0.04,
 };
+
+/** Share of a full revolution one pickup-to-drop-and-back trip takes. The
+ *  hand doesn't have to reach the middle of a tile to pick up or drop: it
+ *  works as soon as it's over the chest or belt, so each half swing is well
+ *  short of 180°. Fitted to in-game chest-to-belt rates for every arm at
+ *  normal and legendary quality with full capacity research. */
+const TRIP_SHARE = 0.7;
 
 /** Approximate hand sizes without and with full inserter capacity research. */
 function handSizeFor(name: string, research: Research): number {
@@ -366,7 +374,8 @@ export class LabFactory {
       const handSize = e.overrideStackSize ?? handSizeFor(e.name, research);
       // Quality speeds the arm's rotation up the same way it speeds up
       // machines. Kept fractional: a legendary stack arm takes 9.6 ticks.
-      const swing = (SWING_TICKS[e.name] ?? Math.round(60 / proto.throughput)) / (data.qualityMachineSpeed[e.quality] ?? 1);
+      const rotation = ROTATION_SPEED[e.name] ?? proto.throughput / 60;
+      const swing = TRIP_SHARE / rotation / (data.qualityMachineSpeed[e.quality] ?? 1);
       const tripTicks = Math.max(4, swing);
       const ins: InserterSim = {
         entity: e,
@@ -454,7 +463,9 @@ export class LabFactory {
     }
     for (const port of this.net.ports) {
       if (port.kind !== "output") continue;
-      const ahead = occupied.get(`${port.x + DX[port.dir]},${port.y + DY[port.dir]}`);
+      const into = occupied.get(`${port.x + DX[port.dir]},${port.y + DY[port.dir]}`);
+      // A loader set to take items off the belt is a way out, not a wall.
+      const ahead = into && !(into.name.includes("loader") && into.undergroundType === "input") ? into : undefined;
       const tail = port.line.nodes[port.line.nodes.length - 1];
       const taken = this.inserters.some((i) => i.pickup.kind === "belt" && i.pickup.node === tail);
       const supply = !productLines.has(port.line) && feedsMachines.has(port.line);
@@ -464,6 +475,7 @@ export class LabFactory {
         ahead ? `Points into the ${(data.items[ahead.name]?.localised ?? ahead.name.replace(/-/g, " ")).toLowerCase()}`
         : taken ? "An inserter takes from its end"
         : supply ? "Supply belt: nothing made here reaches its end"
+        : into ? `Runs into the ${(data.items[into.name]?.localised ?? into.name.replace(/-/g, " ")).toLowerCase()}`
         : "Points into empty space",
       );
       this.applyBeltPort(port.id);
