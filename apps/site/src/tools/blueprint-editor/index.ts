@@ -29,8 +29,9 @@ import { icon } from "./legacy-view/icons.js";
 import { makeFloatingWindow } from "../../window-manager.js";
 import { buildPalette, placeableEntries } from "./edit-palette.js";
 import { appendQualityOptions, QUALITY_TIERS } from "./quality-options.js";
-import { buildPropertiesPanel, buildRecipeMenu, buildModuleMenu, buildFilterItemMenu } from "./edit-properties.js";
-import { buildSignalMenu, type Wildcards } from "./edit-circuit.js";
+import { buildPropertiesPanel, buildRecipeMenu, buildModuleMenu, buildFilterItemMenu, localisedNameOf } from "./edit-properties.js";
+import { buildSignalMenu, circuitWindowKind, type Wildcards } from "./edit-circuit.js";
+import { CircuitSim } from "@factoriotools/sim";
 import type { GridMenuHandle } from "./grid-menu.js";
 import { buildLibrarySidebar } from "./library-sidebar.js";
 import { buildQuickbar, readAltLayers, writeAltLayers, type AltLayers, type QuickbarHandle, type QuickbarItem } from "./quickbar.js";
@@ -267,7 +268,7 @@ const TEMPLATE = `
   <div id="window-toolbar" role="toolbar" aria-label="Windows">
     <button type="button" id="import-menu-button" data-icon="blueprint" title="Import and export" aria-haspopup="menu" aria-expanded="false"><span class="tab-label">Import / Export</span><span class="tab-caret" aria-hidden="true">▾</span></button>
     <select id="bp-picker" hidden aria-label="Blueprint in book"></select>
-    <button type="button" data-toggle="rate-window" data-icon="arithmetic-combinator" title="Rate Calculator"><span class="tab-label">Rates</span></button>
+    <button type="button" data-toggle="rate-window" data-icon="arithmetic-combinator" title="Simulate"><span class="tab-label">Simulate</span></button>
     <span class="toolbar-divider" aria-hidden="true"></span>
     <button type="button" data-toggle="graphics-window" data-icon="small-lamp" title="Graphics"><span class="tab-label">Graphics</span></button>
     <button type="button" data-toggle="debug-window" data-icon="radar" title="Performance stats (F8)"><span class="tab-label">Debug</span></button>
@@ -2374,6 +2375,48 @@ export function mountBlueprintEditor(root: HTMLElement): () => void {
     updateCursorIcon(lastPointerPos.x, lastPointerPos.y);
   }, { signal });
 
+  /** Live parts of the open entity GUI (network numbers, signal grids). */
+  let panelRefresh: (() => void) | undefined;
+  /** The editor's own circuit simulation, for live values in the entity
+   *  GUI while the Simulate overlay is off. Rebuilt after every edit. */
+  let editorCircuits: CircuitSim | undefined;
+  let circuitLoopId = 0;
+  let circuitLast = 0;
+  let circuitAcc = 0;
+  let circuitDrawn = 0;
+
+  /** The circuit state the GUI shows: the Simulate overlay's own while it
+   *  runs, so both agree, else the editor's. */
+  function liveCircuits(): CircuitSim | undefined {
+    const overlay = rateOverlay.isEnabled ? rateOverlay.factory : undefined;
+    if (overlay) return overlay.circuits;
+    editorCircuits ??= new CircuitSim(entities, wires, { stackSizeOf: (n) => getData().items[n]?.stackSize });
+    return editorCircuits;
+  }
+
+  /** Runs the editor's circuit simulation at game speed while an entity
+   *  GUI with live values is open, and redraws those values ten times a
+   *  second. */
+  function circuitLoop(now: number) {
+    if (propertiesWindow.el.hidden || menuState !== "machine-info" || !panelRefresh) {
+      circuitLoopId = 0;
+      return;
+    }
+    if (!(rateOverlay.isEnabled && rateOverlay.factory)) {
+      const sim = liveCircuits()!;
+      circuitAcc += Math.min(0.25, (now - circuitLast) / 1000) * 60;
+      const ticks = Math.floor(circuitAcc);
+      circuitAcc -= ticks;
+      for (let i = 0; i < ticks; i++) sim.step();
+    }
+    circuitLast = now;
+    if (now - circuitDrawn > 100) {
+      circuitDrawn = now;
+      panelRefresh();
+    }
+    circuitLoopId = requestAnimationFrame(circuitLoop);
+  }
+
   function renderPropertiesPanel() {
     if (!selectedEntity) {
       propertiesWindow.hide();
@@ -2388,7 +2431,14 @@ export function mountBlueprintEditor(root: HTMLElement): () => void {
     if (menuState !== "machine-info") return;
     const wasHidden = propertiesWindow.el.hidden;
     const propertiesBody = $<HTMLDivElement>("#properties-body");
-    buildPropertiesPanel(propertiesBody, selectedEntity, getData(), getRenderCatalog(), latestBottlenecks, {
+    const data = getData();
+    const catalog = getRenderCatalog();
+    // The game titles an entity's window with its name.
+    propertiesWindow.el.querySelector(".gui-titlebar span")!.textContent = localisedNameOf(data, catalog, selectedEntity.name);
+    const wide = circuitWindowKind(selectedEntity);
+    if (wide) propertiesWindow.el.dataset.gui = wide;
+    else delete propertiesWindow.el.dataset.gui;
+    panelRefresh = buildPropertiesPanel(propertiesBody, selectedEntity, getData(), getRenderCatalog(), latestBottlenecks, {
       onOpenRecipePicker: () => enterMenuState("recipe"),
       onModuleSlotClick(slotIndex) {
         // With a module in hand, clicking a slot stamps it straight in
@@ -2449,8 +2499,14 @@ export function mountBlueprintEditor(root: HTMLElement): () => void {
           signalPick = { allow, onPick };
           enterMenuState("signal");
         },
+        live: liveCircuits,
+        redraw: renderPropertiesPanel,
       },
     });
+    if (panelRefresh && !circuitLoopId) {
+      circuitLast = performance.now();
+      circuitLoopId = requestAnimationFrame(circuitLoop);
+    }
     propertiesWindow.show();
     propertiesWindow.bringToFront();
     // Opens centered in the viewport every time a NEW selection triggers
@@ -2471,6 +2527,7 @@ export function mountBlueprintEditor(root: HTMLElement): () => void {
     // and the Overlay Lab picks up the same blueprint when it's opened.
     rateOverlay.update(entities, wires);
     setCurrentBlueprint(entities, wires);
+    editorCircuits = undefined;
     const data = getData();
     result = calculate(data, entities, options.researchLevels);
     const throughputCtx: ThroughputContext = {

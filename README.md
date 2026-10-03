@@ -116,7 +116,7 @@ with a rate calculator, a tick-by-tick belt simulation and the game's own art.
 2. In game, copy a blueprint to the clipboard.
 3. Click **Import / Export → Import from clipboard** and paste the string or link.
    No blueprint handy? **Load a random example** picks from 170+ curated builds.
-4. Open **Rates** to see what it produces, where it loses output, and why.
+4. Open **Simulate** to see what it produces, where it loses output, and why.
 
 ## 🧰 Build from source
 

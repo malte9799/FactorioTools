@@ -2963,28 +2963,127 @@ canvas.select-mode {
 .bp-composed-icon-cell .quality-badge { left: 0; bottom: 0; }
 
 /* ---------- circuit GUIs (edit-circuit.ts) ---------- */
+/* Laid out after the game's own combinator, display panel and lamp
+   windows: a dark "Connected to" bar on top, the status line, the preview,
+   then the settings in inset panels with slot grids. */
 
-/* A decider with a few rows outgrows the 300px machine GUI. */
-#properties-window:has(.circuit-section) { width: 380px; }
-#properties-body:has(.circuit-section) { max-height: calc(100vh - 140px); overflow-y: auto; }
-.circuit-heading { font-weight: 600; color: var(--text); margin-bottom: 6px; }
-.circuit-section .circuit-heading:not(:first-child) { margin-top: 8px; }
-.circuit-row { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; margin: 4px 0; }
-.circuit-decider-row { display: flex; flex-direction: column; gap: 2px; }
-.circuit-operand { display: flex; align-items: center; gap: 4px; }
-.circuit-label { color: var(--text-dim); }
-.circuit-note { color: var(--text-dim); font-size: 11.5px; line-height: 1.4; }
-.circuit-number { width: 64px; padding: 3px 4px; font-size: 12px; text-align: right; font-variant-numeric: tabular-nums; }
-.circuit-text { flex: 1 1 120px; min-width: 0; padding: 3px 6px; font-size: 12px; }
-.circuit-select { padding: 3px 4px; font-size: 12px; }
-.circuit-join { align-self: flex-start; }
-.circuit-nets { display: inline-flex; gap: 2px; }
-.circuit-net { width: 20px; height: 20px; padding: 0; font: 600 10px/1 var(--mono); border: 1px solid var(--border); border-radius: 3px; background: var(--panel); color: var(--text-dim); cursor: pointer; opacity: 0.55; }
-.circuit-net.is-on { opacity: 1; color: #111; }
-.circuit-net-red.is-on { background: #e0463a; border-color: #ff7a6e; }
-.circuit-net-green.is-on { background: #3fbf44; border-color: #77e47b; }
-.circuit-constant-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(72px, 1fr)); gap: 6px; margin-top: 6px; }
-.circuit-constant-cell { display: flex; flex-direction: column; align-items: center; gap: 3px; }
-.circuit-constant-cell .circuit-number { width: 68px; }
-.circuit-add, .circuit-remove { padding: 2px 8px; font-size: 12px; cursor: pointer; }
-.circuit-remove { margin-left: auto; padding: 0 6px; line-height: 20px; }
+#properties-window[data-gui="medium"] { width: 460px; }
+#properties-window[data-gui="wide"] { width: 900px; }
+#properties-body { max-height: calc(100vh - 140px); overflow-y: auto; }
+
+.circuit-bar {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  margin: -12px -12px 10px;
+  padding: 9px 14px;
+  background: var(--panel-2);
+  border-bottom: 1px solid var(--border);
+  box-shadow: inset 0 -1px 0 var(--bevel-light);
+  font-size: 14px;
+}
+.circuit-bar-side { display: flex; align-items: center; gap: 6px; }
+.circuit-bar-label { color: var(--gold-strong); font-family: var(--display); }
+.circuit-bar-net { font-variant-numeric: tabular-nums; }
+.circuit-bar-net.is-red { color: #ff5a4a; }
+.circuit-bar-net.is-green { color: #5fe05a; }
+.circuit-info {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 12px; height: 12px; margin-left: -3px;
+  border-radius: 50%; background: #7fb8e8; color: #10202e;
+  font: 700 9px/1 var(--display); cursor: help;
+}
+.circuit-status { background: none; border: none; padding: 2px 4px; font-size: 14px; }
+
+.circuit-heading { margin: 10px 0 4px; font-family: var(--display); font-weight: 700; font-size: 14px; color: var(--text); }
+.circuit-panel { display: flex; flex-direction: column; gap: 4px; padding: 6px; }
+.circuit-columns { display: grid; grid-template-columns: 1fr 1fr; gap: 0 16px; }
+.circuit-col { min-width: 0; }
+.circuit-col .f-slot-grid { --cols: 10; }
+.circuit-grid { padding: 4px; background: var(--panel-2); border: 1px solid var(--border); box-shadow: inset 0 2px 4px var(--bevel-dark); width: max-content; max-width: 100%; }
+.circuit-rule { border: none; border-top: 1px solid var(--border); box-shadow: 0 1px 0 var(--bevel-light); margin: 10px 0 4px; }
+
+.circuit-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 6px;
+  background: var(--frame);
+  border: 1px solid var(--border);
+  border-radius: 2px;
+  box-shadow: inset 0 1px 0 var(--bevel-light);
+}
+.circuit-row .circuit-row { padding: 0; background: none; border: none; box-shadow: none; }
+.circuit-indent { margin-left: 24px; }
+.circuit-label { color: var(--text-dim); font-size: 13px; }
+.circuit-note { color: var(--text-dim); font-size: 12.5px; line-height: 1.4; }
+
+.circuit-slot img, .circuit-slot .icon { pointer-events: none; }
+.circuit-slot .icon { --icon-size: 32px; background-color: transparent; border: none; box-shadow: none; }
+.circuit-slot:disabled { cursor: default; }
+.circuit-slot.is-red { background: #7a2a24; }
+.circuit-slot.is-green { background: #2f6f2a; }
+
+.circuit-value-wrap { position: relative; }
+.circuit-value.is-number { width: 50px; font: 700 15px/1 var(--display); color: var(--text); }
+.circuit-value.is-inline { width: 46px; height: 28px; font-size: 13px; }
+.circuit-popover {
+  position: absolute; top: calc(100% + 4px); left: 0; z-index: 5;
+  display: flex; gap: 6px; padding: 6px;
+  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.5);
+}
+.circuit-number { width: 80px; padding: 4px 6px; text-align: right; font-variant-numeric: tabular-nums; }
+.circuit-select { padding: 4px 6px; font-size: 13px; background: var(--light-button); color: #1d1a14; }
+.circuit-cmp { width: 52px; }
+.circuit-op { width: 70px; }
+.circuit-join { width: 64px; flex: none; }
+.circuit-join-select { width: 64px; }
+
+.circuit-wires { display: flex; flex-direction: column; gap: 1px; flex: none; }
+.circuit-wire { display: flex; align-items: center; gap: 4px; font-size: 12px; color: var(--text); cursor: pointer; }
+.circuit-wires.is-off .circuit-wire { color: var(--text-dim); opacity: 0.6; cursor: default; }
+.circuit-wire input { margin: 0; accent-color: var(--gold); }
+
+.circuit-grip {
+  flex: 1; align-self: stretch; min-width: 12px; margin: 2px 0;
+  background-image: repeating-linear-gradient(90deg, var(--bevel-dark) 0 1px, var(--bevel-light) 1px 2px, transparent 2px 4px);
+  opacity: 0.6;
+}
+.circuit-remove { flex: none; width: 24px; height: 38px; padding: 0; font-size: 14px; }
+.circuit-add { width: 100%; margin-top: 2px; background: var(--light-button); color: #1d1a14; }
+
+.circuit-output-choice { display: flex; flex-direction: column; gap: 3px; }
+.circuit-radio, .circuit-check { display: flex; align-items: center; gap: 6px; font-size: 14px; color: var(--text); cursor: pointer; }
+.circuit-check { margin: 6px 0; }
+.circuit-radio input, .circuit-check input { margin: 0; accent-color: var(--gold); }
+
+.circuit-switch-row { display: flex; align-items: center; gap: 8px; font-size: 14px; color: var(--text-dim); }
+.circuit-switch-row .is-active { color: var(--gold); font-weight: 600; }
+.circuit-switch {
+  position: relative; width: 44px; height: 20px; padding: 0;
+  border-radius: 10px; background: var(--panel-2);
+  box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.6);
+}
+.circuit-switch::after {
+  content: ""; position: absolute; top: 2px; left: 3px; width: 16px; height: 16px;
+  border-radius: 50%; background: #bdbdbd; box-shadow: 0 1px 2px rgba(0, 0, 0, 0.6);
+  transition: left 0.12s;
+}
+.circuit-switch.is-on::after { left: 24px; }
+
+.circuit-section-head { display: flex; align-items: center; gap: 8px; padding: 4px 6px; background: var(--frame); border: 1px solid var(--border); }
+.circuit-section-head input[type="checkbox"] { margin: 0; accent-color: var(--gold); }
+.circuit-group { width: 170px; padding: 3px 6px; font: 600 14px var(--display); color: var(--gold-strong); background: transparent; border: 1px solid transparent; }
+.circuit-group:hover, .circuit-group:focus { border-color: var(--border); background: var(--panel-2); }
+.circuit-group::placeholder { color: var(--gold-strong); opacity: 1; }
+.circuit-trash { padding: 2px 8px; font-size: 14px; }
+.circuit-count-editor .icon { --icon-size: 28px; background-color: transparent; border: none; box-shadow: none; }
+.circuit-count { width: 100px; }
+
+.circuit-message { gap: 10px; }
+.circuit-text-wrap { flex: 1; display: flex; align-items: center; gap: 4px; min-width: 0; }
+.circuit-text { flex: 1; min-width: 0; padding: 4px 6px; font-size: 14px; color: var(--text); background: transparent; border: 1px solid transparent; }
+.circuit-text:hover, .circuit-text:focus { border-color: var(--border); background: var(--panel-2); }
+.circuit-pen { width: 24px; height: 24px; padding: 0; font-size: 13px; background: var(--light-button); color: #1d1a14; }
+.circuit-building { margin-top: 8px; }
+.circuit-building .circuit-heading { margin-top: 0; }

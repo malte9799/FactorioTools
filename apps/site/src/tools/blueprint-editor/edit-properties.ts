@@ -1,7 +1,7 @@
 import type { BottleneckSubgroup, GameData, ModuleStack, PlacedEntity, QualityName, RenderCatalog } from "@factoriotools/engine";
 import { buildVisualLookup, mountEntityPreview } from "@factoriotools/renderer";
 import { icon } from "./legacy-view/icons.js";
-import { buildCircuitSection, hasCircuitGui, type CircuitCallbacks } from "./edit-circuit.js";
+import { buildCircuitSection, buildCircuitStatus, buildConnectionBar, hasCircuitGui, isCircuitFirst, type CircuitCallbacks } from "./edit-circuit.js";
 import { buildGridMenu, type GridMenuEntry, type GridMenuHandle } from "./grid-menu.js";
 
 export interface PropertiesCallbacks {
@@ -49,7 +49,7 @@ export interface PropertiesCallbacks {
  *  otherwise unrated), not an error. */
 export type BottleneckLookup = Map<string, BottleneckSubgroup[]>;
 
-function localisedNameOf(data: GameData, catalog: RenderCatalog, name: string): string {
+export function localisedNameOf(data: GameData, catalog: RenderCatalog, name: string): string {
   return (
     data.machines[name]?.localised ??
     data.beacons[name]?.localised ??
@@ -213,8 +213,16 @@ export function buildPropertiesPanel(
   catalog: RenderCatalog,
   bottlenecks: BottleneckLookup,
   callbacks: PropertiesCallbacks,
-): void {
+): (() => void) | undefined {
   container.replaceChildren();
+  const circuit = callbacks.circuit;
+  // Combinators, lamps and display panels are their circuit GUI, laid out
+  // like the game's: connection bar, status, preview, settings.
+  const circuitFirst = circuit !== undefined && isCircuitFirst(entity.name);
+  const refreshers: (() => void)[] = [];
+  if (circuit && (circuitFirst || circuit.wired)) refreshers.push(buildConnectionBar(container, entity, catalog, circuit));
+  // The game shows a display panel without a status line.
+  if (circuit && circuitFirst && !/display-panel/.test(entity.name)) refreshers.push(buildCircuitStatus(container, entity, circuit));
 
   const localised = localisedNameOf(data, catalog, entity.name);
   const machine = data.machines[entity.name];
@@ -239,7 +247,8 @@ export function buildPropertiesPanel(
   nameEl.className = "entity-gui-name";
   nameEl.textContent = localised;
   header.appendChild(nameEl);
-  container.appendChild(header);
+  // The window's title already names it in a circuit GUI.
+  if (!circuitFirst) container.appendChild(header);
 
   if (machine) {
     const bottleneck = findBottleneck(entity.entityNumber, bottlenecks);
@@ -489,7 +498,7 @@ export function buildPropertiesPanel(
     });
   }
 
-  if (callbacks.circuit && hasCircuitGui(entity, callbacks.circuit.wired)) buildCircuitSection(container, entity, data, catalog, callbacks.circuit);
+  if (circuit && hasCircuitGui(entity, circuit.wired)) refreshers.push(buildCircuitSection(container, entity, data, catalog, circuit));
 
   // mountEntityPreview's teardown fires when this panel is next rebuilt or
   // the container is cleared — matches every other rebuild-on-change spot
@@ -499,4 +508,5 @@ export function buildPropertiesPanel(
   // discarded so it's clear the return value is intentionally unused here,
   // not an oversight.
   void destroyPreview;
+  return refreshers.length ? () => refreshers.forEach((r) => r()) : undefined;
 }
