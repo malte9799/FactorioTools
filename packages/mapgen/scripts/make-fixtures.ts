@@ -5,7 +5,7 @@
  */
 import { writeFileSync } from "node:fs";
 import path from "node:path";
-import type { MapGenData } from "../src/index.js";
+import type { MapGenData, MapGenOptions } from "../src/index.js";
 import { queryEntities, queryOracle } from "./oracle.js";
 import { loadDataset } from "../test/dataset.js";
 
@@ -18,6 +18,10 @@ export interface Fixture {
   planet?: string;
   /** One of the game's presets, applied to Nauvis for this run. */
   preset?: string;
+  /** Settings the map was created with (the game's `--map-gen-settings`),
+   *  and the same thing as options for this package. */
+  mapGenSettings?: Record<string, unknown>;
+  options?: Partial<MapGenOptions>;
   /** Extra noise expressions the game was given for this run. */
   define: Record<string, string>;
   positions: [number, number][];
@@ -49,8 +53,19 @@ for k, v in pairs(preset.property_expression_names or {}) do mgs.property_expres
 for k, v in pairs(preset.cliff_settings or {}) do mgs.cliff_settings[k] = v end
 `;
 
-function record(file: string, seed: number, names: string[], define: Record<string, string>, pos: [number, number][], preset?: string, planet?: string): void {
-  const game = queryOracle({ seed, names, positions: pos, define, planet, finalFixesLua: preset ? applyPreset(preset) : undefined });
+/** `npm run make-fixtures -- <text>` records only the files whose name
+ *  contains the text. */
+const only = process.argv[2];
+const wanted = (file: string): boolean => !only || file.includes(only);
+
+interface Custom {
+  mapGenSettings: Record<string, unknown>;
+  options: Partial<MapGenOptions>;
+}
+
+function record(file: string, seed: number, names: string[], define: Record<string, string>, pos: [number, number][], preset?: string, planet?: string, custom?: Custom): void {
+  if (!wanted(file)) return;
+  const game = queryOracle({ seed, names, positions: pos, define, planet, finalFixesLua: preset ? applyPreset(preset) : undefined, mapGenSettings: custom?.mapGenSettings });
   const values: Record<string, string> = {};
   for (const name of names) {
     const v = game[name];
@@ -60,7 +75,7 @@ function record(file: string, seed: number, names: string[], define: Record<stri
     if (!v) throw new Error(`the game did not return '${name}'`);
     values[name] = Buffer.from(Float32Array.from(v).buffer).toString("base64");
   }
-  const fixture: Fixture = { seed, preset, planet, define, positions: pos, values };
+  const fixture: Fixture = { seed, preset, planet, ...custom, define, positions: pos, values };
   writeFileSync(path.join(ROOT, "test/fixtures", file), JSON.stringify(fixture));
   console.log(`${file}: ${Object.keys(values).length} expressions x ${pos.length} positions`);
 }
@@ -134,6 +149,52 @@ for (const preset of ["rail-world", "ribbon-world", "island"]) {
   record(`nauvis-${preset}-123.json`, 123, key, keyDefine, [...positions(50, 320, 6), ...positions(70, 6000, 7)], preset);
 }
 
+// Settings no preset uses, given to the game as a map-gen-settings file:
+// sliders at both ends of their range, a disabled resource, the starting
+// area, the climate sliders, cliff settings and a bounded map.
+const constants = ["starting_area_radius", "map_width", "map_height", "cliff_elevation_0", "cliff_elevation_interval", "cliff_richness"];
+const settingsDefine = { ...n.define, ...Object.fromEntries(constants.map((name) => [`t_${name}`, `var('${name}')`])) };
+const settingsNames = [...n.names, ...constants.map((name) => `t_${name}`)];
+const sliders = {
+  "iron-ore": { frequency: 6, size: 0.17, richness: 3 },
+  "copper-ore": { frequency: 0.17, size: 6, richness: 0.5 },
+  coal: { size: 0 },
+  "crude-oil": { frequency: 2, size: 2, richness: 6 },
+  water: { frequency: 0.25, size: 4 },
+  trees: { frequency: 3, size: 0.33 },
+  rocks: { frequency: 2, size: 2 },
+  "enemy-base": { frequency: 6, size: 6 },
+  starting_area_moisture: { frequency: 2, size: 3 },
+  nauvis_cliff: { frequency: 4, size: 6 },
+};
+record("nauvis-settings-sliders-123.json", 123, settingsNames, settingsDefine, [...positions(50, 500, 10), ...positions(50, 6000, 11)], undefined, undefined, {
+  mapGenSettings: { starting_area: 0.5, autoplace_controls: sliders },
+  options: { startingArea: 0.5, controls: sliders },
+});
+record("nauvis-settings-terrain-123.json", 123, settingsNames, settingsDefine, [...positions(50, 500, 12), ...positions(50, 6000, 13)], undefined, undefined, {
+  mapGenSettings: {
+    starting_area: 2,
+    width: 3000,
+    height: 500,
+    cliff_settings: { name: "cliff", control: "nauvis_cliff", cliff_elevation_0: 20, cliff_elevation_interval: 25, richness: 0.6, cliff_smoothing: 0 },
+    property_expression_names: {
+      elevation: "elevation_island",
+      "control:moisture:frequency": "2",
+      "control:moisture:bias": "0.25",
+      "control:aux:frequency": "0.5",
+      "control:aux:bias": "-0.3",
+    },
+  },
+  options: {
+    startingArea: 2,
+    width: 3000,
+    height: 500,
+    cliffs: { elevation0: 20, interval: 25, richness: 0.6 },
+    propertyExpressionNames: { elevation: "elevation_island" },
+    climate: { moisture: { frequency: 2, bias: 0.25 }, aux: { frequency: 0.5, bias: -0.3 } },
+  },
+});
+
 /** Every tile and entity rule of another planet. */
 function planetNames(planet: string): { names: string[]; define: Record<string, string> } {
   const mgs = data.planets[planet]!.map_gen_settings;
@@ -157,6 +218,7 @@ for (const planet of ["vulcanus", "gleba"]) {
 
 /** The cliffs the game really places around spawn, as grid cells. */
 function recordCliffs(file: string, seed: number, half: number): void {
+  if (!wanted(file)) return;
   const cliffs = queryEntities(seed, [-half, -half, half, half], ["cliff"]);
   // A cliff entity stands at the centre of its 4x4 cell, half a tile south.
   const cells = cliffs.map((c) => [(c.x - 2) / 4, (c.y - 2.5) / 4, c.o!] as [number, number, string]);
@@ -169,6 +231,7 @@ recordCliffs("cliffs-123.json", 123, 384);
 /** The resource entities the game really places in a few chunks: every ore
  *  tile and oil well with its amount. */
 function recordResources(file: string, seed: number, areas: [number, number, number, number][]): void {
+  if (!wanted(file)) return;
   const chunks: [number, number][] = [];
   const resources: [string, number, number, number][] = [];
   for (const area of areas) {

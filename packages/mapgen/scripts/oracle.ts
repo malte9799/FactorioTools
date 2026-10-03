@@ -83,6 +83,9 @@ export interface OracleRequest {
    *  experiments that need their own prototypes. */
   dataLua?: string;
   finalFixesLua?: string;
+  /** A map-gen-settings file for the new map, as the game's own
+   *  `--map-gen-settings` takes it: sliders, starting area, map size. */
+  mapGenSettings?: Record<string, unknown>;
 }
 
 /** An entity the game placed. `o` is a cliff's orientation, `a` a resource's amount. */
@@ -140,7 +143,13 @@ export function queryOracle(req: OracleRequest): Record<string, number[]> {
   rmSync(ENTITIES_FILE(), { force: true });
 
   const common = ["-c", config, "--mod-directory", path.join(ORACLE_DIR, "mods")];
-  const created = run([...common, "--create", save, "--map-gen-seed", String(req.seed >>> 0)]);
+  const settingsArgs: string[] = [];
+  if (req.mapGenSettings) {
+    const file = path.join(ORACLE_DIR, "map-gen-settings.json");
+    writeFileSync(file, JSON.stringify(req.mapGenSettings));
+    settingsArgs.push("--map-gen-settings", file);
+  }
+  const created = run([...common, "--create", save, "--map-gen-seed", String(req.seed >>> 0), ...settingsArgs]);
   if (!existsSync(save)) throw new Error(`oracle: map creation failed\n${created.slice(-3000)}`);
   const ran = run([...common, "--benchmark", save, "--benchmark-ticks", "2"]);
   if (!existsSync(output)) throw new Error(`oracle: no output\n${ran.slice(-3000)}`);
@@ -157,7 +166,7 @@ export function queryEntities(
   seed: number,
   area: [number, number, number, number],
   types: string[],
-  extra: Pick<OracleRequest, "dataLua" | "finalFixesLua" | "define"> = {},
+  extra: Pick<OracleRequest, "dataLua" | "finalFixesLua" | "define" | "mapGenSettings"> = {},
 ): OracleEntity[] {
   queryOracle({ seed, names: ["elevation"], positions: [[0, 0]], entities: { area, types }, ...extra });
   return JSON.parse(readFileSync(ENTITIES_FILE(), "utf8")) as OracleEntity[];

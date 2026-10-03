@@ -56,8 +56,11 @@ chunks where that moves a tile, every roll in the chunk shifts and its wells
 can come out wrong. And a cliff next to an oil well may differ.
 
 The panel has the game's map-generator settings: its presets (rail world,
-death world, island and the rest), the map type, and frequency, size and
-richness for every control. All nine presets are checked against the game.
+death world, island and the rest), the map type, frequency, size and richness
+for every control, the moisture and terrain-type sliders, the starting area
+and the map size. All nine presets are checked against the game, and so are
+maps created from a settings file with the sliders at both ends of their
+range.
 The game-version list shows whichever versions the data pipeline has been run
 for; within 2.0 the changelog shows no change to Nauvis generation, so one is
 enough there, and 1.1 and earlier use a different noise system this does not

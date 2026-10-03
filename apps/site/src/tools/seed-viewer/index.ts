@@ -8,7 +8,7 @@
  *
  *  The map is drawn the way the game's own map draws it: resources as a
  *  checkerboard over the ground, trees as a scatter, cliffs as lines. */
-import { presetOptions, unsupportedFunctions, type AutoplaceControlValue, type EnemyBase, type LayerColors, type MapGenData, type MapGenOptions, type PatchMeasure, type ResourceLayer, type TileLayer } from "@factoriotools/mapgen";
+import { presetOptions, unsupportedFunctions, type AutoplaceControlValue, type ClimateValue, type EnemyBase, type LayerColors, type MapGenData, type MapGenOptions, type PatchMeasure, type ResourceLayer, type TileLayer } from "@factoriotools/mapgen";
 import type { PatchInfo, WorkerRequest, WorkerResponse } from "./worker.js";
 
 /** Samples along one side of a map tile image. */
@@ -28,6 +28,23 @@ const DATA_DIR = "./data/mapgen";
 
 /** The positions of the game's map-generator sliders. */
 const SLIDER_STEPS = [1 / 6, 0.25, 1 / 3, 0.5, 0.75, 1, 4 / 3, 1.5, 2, 3, 4, 6];
+/** The positions of the moisture and terrain-type bias sliders. */
+const BIAS_STEPS = [-0.5, -0.4, -0.3, -0.2, -0.1, 0, 0.1, 0.2, 0.3, 0.4, 0.5];
+/** Largest map side the game accepts, in tiles. */
+const MAX_MAP_SIZE = 2000000;
+const CLIMATES = ["moisture", "aux"] as const;
+type Climate = (typeof CLIMATES)[number];
+const CLIMATE_LABELS: Record<Climate, string> = { moisture: "Moisture", aux: "Terrain type" };
+/** Names the game shows for controls whose prototype name reads badly. */
+const CONTROL_LABELS: Record<string, string> = { nauvis_cliff: "Cliffs", gleba_cliff: "Cliffs", fulgora_cliff: "Cliffs", "enemy-base": "Enemy bases", gleba_enemy_base: "Enemy bases" };
+/** The sections of the settings panel, by control category. */
+const CONTROL_GROUPS: { title: string; categories: string[]; columns: [string, string, string]; inverse: boolean }[] = [
+  { title: "Resources", categories: ["resource"], columns: ["Frequency", "Size", "Richness"], inverse: false },
+  // The game shows terrain as a scale, which is one over its frequency.
+  { title: "Terrain", categories: ["terrain"], columns: ["Scale", "Coverage", ""], inverse: true },
+  { title: "Cliffs", categories: ["cliff"], columns: ["Frequency", "Continuity", ""], inverse: false },
+  { title: "Enemies", categories: ["enemy"], columns: ["Frequency", "Size", ""], inverse: false },
+];
 const MAP_TYPE_LABELS: Record<string, string> = { elevation: "Normal", elevation_lakes: "Lakes", elevation_island: "Island" };
 
 /** One game version's dataset, as listed in the data directory's index. */
@@ -57,7 +74,7 @@ const TEMPLATE = `
         <label class="seed-field"><span>Map type</span><select id="seed-maptype"></select></label>
       </div>
       <details class="seed-advanced">
-        <summary>Frequency, size and richness</summary>
+        <summary>Map settings</summary>
         <div id="seed-controls" class="seed-controls"></div>
       </details>
 
@@ -140,7 +157,17 @@ function speckle(x: number, y: number): number {
  *  starting area. */
 interface CustomSettings {
   controls: Record<string, AutoplaceControlValue>;
+  climate: Partial<Record<Climate, ClimateValue>>;
   startingArea: number | null;
+  /** Map size in tiles; 0 is unbounded, null follows the preset. */
+  width: number | null;
+  height: number | null;
+}
+
+const noCustom = (): CustomSettings => ({ controls: {}, climate: {}, startingArea: null, width: null, height: null });
+
+function isCustom(c: CustomSettings): boolean {
+  return Object.keys(c.controls).length > 0 || Object.keys(c.climate).length > 0 || c.startingArea !== null || c.width !== null || c.height !== null;
 }
 
 function readUrl(): { seed: number | null; x: number; y: number; scale: number; preset: string; mapType: string | null; custom: CustomSettings } {
@@ -149,10 +176,16 @@ function readUrl(): { seed: number | null; x: number; y: number; scale: number; 
     const v = Number(query.get(key));
     return query.has(key) && Number.isFinite(v) ? v : fallback;
   };
-  const custom: CustomSettings = { controls: {}, startingArea: null };
+  const custom = noCustom();
   try {
     // Shared links are untrusted input: keep only finite numbers.
-    const parsed = JSON.parse(query.get("cfg") ?? "{}") as { c?: Record<string, Record<string, unknown>>; s?: unknown };
+    const parsed = JSON.parse(query.get("cfg") ?? "{}") as {
+      c?: Record<string, Record<string, unknown>>;
+      m?: Record<string, Record<string, unknown>>;
+      s?: unknown;
+      w?: unknown;
+      h?: unknown;
+    };
     for (const [name, value] of Object.entries(parsed.c ?? {})) {
       const clean: AutoplaceControlValue = {};
       for (const field of ["frequency", "size", "richness"] as const) {
@@ -161,7 +194,18 @@ function readUrl(): { seed: number | null; x: number; y: number; scale: number; 
       }
       custom.controls[name] = clean;
     }
+    for (const name of CLIMATES) {
+      const value = parsed.m?.[name];
+      if (!value) continue;
+      const clean: ClimateValue = {};
+      if (typeof value.frequency === "number" && Number.isFinite(value.frequency) && value.frequency > 0 && value.frequency <= 100) clean.frequency = value.frequency;
+      if (typeof value.bias === "number" && Number.isFinite(value.bias) && Math.abs(value.bias) <= 1) clean.bias = value.bias;
+      custom.climate[name] = clean;
+    }
     if (typeof parsed.s === "number" && Number.isFinite(parsed.s) && parsed.s > 0 && parsed.s <= 100) custom.startingArea = parsed.s;
+    const side = (v: unknown): number | null => (typeof v === "number" && Number.isInteger(v) && v >= 0 && v <= MAX_MAP_SIZE ? v : null);
+    custom.width = side(parsed.w);
+    custom.height = side(parsed.h);
   } catch {
     // A mangled link falls back to the preset.
   }
@@ -307,7 +351,13 @@ export function mountSeedViewer(container: HTMLElement): () => void {
     const names = { ...base.propertyExpressionNames };
     const type = mapType ?? presetMapType();
     if (planet === "nauvis" && type !== "elevation") names.elevation = type;
-    return { ...base, seed, planet, controls, propertyExpressionNames: names, startingArea: custom.startingArea ?? base.startingArea };
+    return {
+      ...base, seed, planet, controls, propertyExpressionNames: names,
+      climate: custom.climate,
+      startingArea: custom.startingArea ?? base.startingArea,
+      width: custom.width ?? base.width,
+      height: custom.height ?? base.height,
+    };
   }
 
   function option(value: string, label: string, selected: boolean): HTMLOptionElement {
@@ -320,16 +370,35 @@ export function mountSeedViewer(container: HTMLElement): () => void {
 
   /** A slider as a dropdown of the game's positions. A value between them
    *  (a preset's 141%, a shared link's) gets a position of its own. */
-  function sliderSelect(value: number, allowNone: boolean, label: string, onChange: (v: number) => void): HTMLSelectElement {
+  function sliderSelect(value: number, allowNone: boolean, label: string, onChange: (v: number) => void, bias = false): HTMLSelectElement {
     const select = document.createElement("select");
     select.className = "seed-slider";
     select.setAttribute("aria-label", label);
-    const steps = allowNone ? [0, ...SLIDER_STEPS] : [...SLIDER_STEPS];
+    const steps = bias ? [...BIAS_STEPS] : allowNone ? [0, ...SLIDER_STEPS] : [...SLIDER_STEPS];
     if (!steps.some((step) => Math.abs(step - value) < 1e-3)) steps.push(value);
     steps.sort((a, b) => a - b);
-    for (const step of steps) select.append(option(String(step), step === 0 ? "None" : `${Math.round(step * 100)}%`, Math.abs(step - value) < 1e-3));
+    const text = (step: number): string => (bias ? `${step > 0 ? "+" : ""}${Number(step.toFixed(2))}` : step === 0 ? "None" : `${Math.round(step * 100)}%`);
+    for (const step of steps) select.append(option(String(step), text(step), Math.abs(step - value) < 1e-3));
     select.addEventListener("change", () => onChange(Number(select.value)));
     return select;
+  }
+
+  /** A map side in tiles; empty means the map does not end. */
+  function sizeInput(value: number, label: string, onChange: (v: number) => void): HTMLInputElement {
+    const input = document.createElement("input");
+    input.type = "number";
+    input.className = "seed-size";
+    input.min = "0";
+    input.max = String(MAX_MAP_SIZE);
+    input.step = "1";
+    input.placeholder = "Unlimited";
+    input.setAttribute("aria-label", label);
+    if (value > 0) input.value = String(value);
+    input.addEventListener("change", () => {
+      const v = Math.floor(Number(input.value));
+      onChange(Number.isFinite(v) && v > 0 ? Math.min(MAX_MAP_SIZE, v) : 0);
+    });
+    return input;
   }
 
   function renderSettings(): void {
@@ -355,8 +424,8 @@ export function mountSeedViewer(container: HTMLElement): () => void {
     const type = mapType ?? presetMapType();
     mapTypeSelect.replaceChildren(...(mapData.mapTypes ?? ["elevation"]).map((name) => option(name, MAP_TYPE_LABELS[name] ?? prettyName(name), name === type)));
 
-    // One row per control the planet has: frequency, size, and richness
-    // where the control has one.
+    // One row per control the planet has, in the game's sections. A row
+    // has frequency, size, and richness where the control has one.
     const settings = mapData.planets[planet]?.map_gen_settings ?? {};
     const names = Object.keys(settings.autoplace_controls ?? {}).sort((a, b) => ((mapData!.controls[a]?.order ?? "") < (mapData!.controls[b]?.order ?? "") ? -1 : 1));
     const cell = (text: string, className: string): HTMLElement => {
@@ -365,27 +434,65 @@ export function mountSeedViewer(container: HTMLElement): () => void {
       el.textContent = text;
       return el;
     };
-    const rows: HTMLElement[] = [cell("", "seed-control-head"), cell("Frequency", "seed-control-head"), cell("Size", "seed-control-head"), cell("Richness", "seed-control-head")];
-    const set = (name: string, field: keyof AutoplaceControlValue) => (v: number): void => {
-      custom.controls[name] = { ...custom.controls[name], [field]: v };
+    const heading = (title: string, columns: [string, string, string]): HTMLElement[] => [cell(title, "seed-control-group"), ...columns.map((c) => cell(c, "seed-control-head"))];
+    const set = (name: string, field: keyof AutoplaceControlValue, inverse = false) => (v: number): void => {
+      custom.controls[name] = { ...custom.controls[name], [field]: inverse ? 1 / v : v };
       startGeneration();
     };
-    for (const name of names) {
-      const label = prettyName(name.replace(/_/g, "-"));
-      rows.push(
-        cell(label, "seed-control-name"),
-        sliderSelect(controlValue(name, "frequency"), false, `${label} frequency`, set(name, "frequency")),
-        sliderSelect(controlValue(name, "size"), true, `${label} size`, set(name, "size")),
-        mapData.controls[name]?.richness ? sliderSelect(controlValue(name, "richness"), false, `${label} richness`, set(name, "richness")) : cell("", ""),
-      );
-    }
-    rows.push(
+    const startingArea = (): HTMLElement[] => [
       cell("Starting area", "seed-control-name"),
       cell("", ""),
       sliderSelect(custom.startingArea ?? preset().startingArea ?? 1, false, "Starting area size", (v) => {
         custom.startingArea = v;
         startGeneration();
       }),
+      cell("", ""),
+    ];
+    const rows: HTMLElement[] = [];
+    for (const group of CONTROL_GROUPS) {
+      const members = names.filter((name) => group.categories.includes(mapData!.controls[name]?.category ?? "resource"));
+      // Every planet has a starting area, whether or not it has enemies.
+      if (!members.length && group.title !== "Enemies") continue;
+      rows.push(...heading(group.title, group.columns));
+      for (const name of members) {
+        const label = CONTROL_LABELS[name] ?? prettyName(name.replace(/_/g, "-"));
+        const frequency = controlValue(name, "frequency");
+        rows.push(
+          cell(label, "seed-control-name"),
+          sliderSelect(group.inverse ? 1 / frequency : frequency, false, `${label} ${group.columns[0].toLowerCase()}`, set(name, "frequency", group.inverse)),
+          sliderSelect(controlValue(name, "size"), mapData.controls[name]?.can_be_disabled !== false, `${label} ${group.columns[1].toLowerCase()}`, set(name, "size")),
+          mapData.controls[name]?.richness ? sliderSelect(controlValue(name, "richness"), false, `${label} richness`, set(name, "richness")) : cell("", ""),
+        );
+      }
+      if (group.title === "Enemies") rows.push(...startingArea());
+    }
+
+    // Moisture and terrain type, on the planets whose terrain reads them.
+    const climates = CLIMATES.filter((name) => settings[`${name}_climate_control`]);
+    if (climates.length) rows.push(...heading("Climate", ["Scale", "Bias", ""]));
+    for (const name of climates) {
+      const label = CLIMATE_LABELS[name];
+      const setClimate = (field: keyof ClimateValue, inverse: boolean) => (v: number): void => {
+        custom.climate[name] = { ...custom.climate[name], [field]: inverse ? 1 / v : v };
+        startGeneration();
+      };
+      rows.push(
+        cell(label, "seed-control-name"),
+        sliderSelect(1 / (custom.climate[name]?.frequency ?? 1), false, `${label} scale`, setClimate("frequency", true)),
+        sliderSelect(custom.climate[name]?.bias ?? 0, false, `${label} bias`, setClimate("bias", false), true),
+        cell("", ""),
+      );
+    }
+
+    const setSide = (side: "width" | "height") => (v: number): void => {
+      custom[side] = v;
+      startGeneration();
+    };
+    rows.push(
+      ...heading("Map size", ["Width", "Height", ""]),
+      cell("Tiles", "seed-control-name"),
+      sizeInput(custom.width ?? preset().width ?? 0, "Map width in tiles", setSide("width")),
+      sizeInput(custom.height ?? preset().height ?? 0, "Map height in tiles", setSide("height")),
       cell("", ""),
     );
     controlsEl.replaceChildren(...rows);
@@ -898,7 +1005,19 @@ export function mountSeedViewer(container: HTMLElement): () => void {
       if (planet !== "nauvis") query.set("planet", planet);
       if (presetName !== "default") query.set("preset", presetName);
       if (mapType && mapType !== presetMapType()) query.set("type", mapType);
-      if (Object.keys(custom.controls).length || custom.startingArea !== null) query.set("cfg", JSON.stringify({ c: custom.controls, s: custom.startingArea ?? undefined }));
+      if (isCustom(custom)) {
+        const has = (o: object): boolean => Object.keys(o).length > 0;
+        query.set(
+          "cfg",
+          JSON.stringify({
+            c: has(custom.controls) ? custom.controls : undefined,
+            m: has(custom.climate) ? custom.climate : undefined,
+            s: custom.startingArea ?? undefined,
+            w: custom.width ?? undefined,
+            h: custom.height ?? undefined,
+          }),
+        );
+      }
       // replaceState, not location.hash: a hashchange would remount the tool.
       history.replaceState(null, "", `#/seed-viewer?${query}`);
     }, 250);
@@ -998,7 +1117,7 @@ export function mountSeedViewer(container: HTMLElement): () => void {
   planetSelect.addEventListener("change", () => {
     // Another world: its own controls, and the camera back at its start.
     planet = planetSelect.value;
-    custom = { controls: {}, startingArea: null };
+    custom = noCustom();
     cx = 0;
     cy = 0;
     renderSettings();
@@ -1009,7 +1128,7 @@ export function mountSeedViewer(container: HTMLElement): () => void {
     // type go back to what the preset says.
     presetName = presetSelect.value;
     mapType = null;
-    custom = { controls: {}, startingArea: null };
+    custom = noCustom();
     renderSettings();
     startGeneration();
   });

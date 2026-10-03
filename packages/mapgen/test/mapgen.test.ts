@@ -3,7 +3,7 @@ import { readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 import {
   Evaluator, MapSurface, NO_SIDE, Program, chunkStreamSeed, cliffCode, cliffName, cliffPieces, compileSettings, onCliffLine, parseExpression,
-  placementGroups, presetOptions, rollChunk, startingLakePosition, surfaceSeed, trimCliffs, unsupportedFunctions, type MapGenData, type PlacementEntity,
+  placementGroups, presetOptions, rollChunk, startingLakePosition, surfaceSeed, trimCliffs, unsupportedFunctions, type MapGenData, type MapGenOptions, type PlacementEntity,
 } from "../src/index.js";
 import { Rng } from "../src/rng.js";
 import { loadDataset } from "./dataset.js";
@@ -97,6 +97,7 @@ interface Fixture {
   seed: number;
   planet?: string;
   preset?: string;
+  options?: Partial<MapGenOptions>;
   define: Record<string, string>;
   positions: [number, number][];
   values: Record<string, string>;
@@ -111,7 +112,7 @@ for (const file of readdirSync(fixtureDir).filter((f) => /^(nauvis|primitives|vu
     // A preset was applied to the game through the planet prototype, which
     // has no starting area or map size; drop those to compare like for like.
     const preset = fixture.preset ? { ...presetOptions(data.presets![fixture.preset]), startingArea: 1, height: 0 } : {};
-    const program = new Program(data, compileSettings(data, { seed: fixture.seed, planet: fixture.planet, ...preset }));
+    const program = new Program(data, compileSettings(data, { seed: fixture.seed, planet: fixture.planet, ...preset, ...fixture.options }));
     const evaluator = new Evaluator(program);
     const xs = Float32Array.from(fixture.positions, (p) => p[0]);
     const ys = Float32Array.from(fixture.positions, (p) => p[1]);

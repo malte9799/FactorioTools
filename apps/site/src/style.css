@@ -3006,6 +3006,9 @@ canvas.select-mode {
 .seed-controls { display: grid; grid-template-columns: 1fr repeat(3, 62px); gap: 3px 4px; align-items: center; margin-top: 6px; }
 .seed-control-head { font-size: 11px; color: var(--text-dim); text-align: center; }
 .seed-control-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.seed-control-group { margin-top: 6px; color: var(--gold); font-family: var(--display); font-weight: 600; font-size: 12px; }
+.seed-control-group ~ .seed-control-head { align-self: end; }
+.seed-size { padding: 2px 4px; font-size: 12px; min-width: 0; width: 100%; box-sizing: border-box; }
 .seed-slider { padding: 2px 2px; font-size: 12px; font-family: var(--body); font-weight: 400; min-width: 0; width: 100%; }
 
 .seed-layers { display: grid; grid-template-columns: 1fr 1fr; gap: 2px 10px; }

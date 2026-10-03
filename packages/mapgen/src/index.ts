@@ -3,7 +3,7 @@ export { Program, type CompileSettings, type ExprDef, type FnDef, type NoiseSour
 export { Evaluator } from "./evaluator.js";
 export {
   compileSettings, presetOptions, startingLakePosition, surfaceSeed, type AutoplaceControlValue, type AutoplaceEntry, type CliffOptions, type MapGenData,
-  type MapGenOptions, type MapGenPreset,
+  type ClimateValue, type MapGenOptions, type MapGenPreset,
 } from "./settings.js";
 export {
   MapSurface, unsupportedFunctions, type EnemyBase, type LayerColors, type PatchAmount, type PatchMeasure, type PlacedResource, type Probe, type ResourceLayer, type ResourcePatch,

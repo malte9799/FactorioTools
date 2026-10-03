@@ -11,6 +11,11 @@ export interface AutoplaceControlValue {
   richness?: number;
 }
 
+export interface ClimateValue {
+  frequency?: number;
+  bias?: number;
+}
+
 export interface AutoplaceEntry extends AutoplaceDef {
   /** Prototype type: "tile", "resource", "tree", "unit-spawner", ... */
   type: string;
@@ -68,6 +73,9 @@ export interface MapGenOptions {
   planet?: string;
   /** Per-control sliders; anything omitted is 1. */
   controls?: Record<string, AutoplaceControlValue>;
+  /** The climate sliders: moisture and "terrain type" (aux). Frequency is
+   *  one over the game's "scale"; bias runs from -0.5 to 0.5. */
+  climate?: Partial<Record<"moisture" | "aux", ClimateValue>>;
   /** Starting area slider (1 = default). */
   startingArea?: number;
   peacefulMode?: boolean;
@@ -167,9 +175,10 @@ export function compileSettings(data: MapGenData, options: MapGenOptions): Compi
     constants[`control:${name}:size`] = v?.size ?? 1;
     constants[`control:${name}:richness`] = v?.richness ?? 1;
   }
-  for (const climate of ["moisture", "aux", "temperature"]) {
-    constants[`control:${climate}:frequency`] = 1;
-    constants[`control:${climate}:bias`] = 0;
+  for (const climate of ["moisture", "aux", "temperature"] as const) {
+    const v = climate === "temperature" ? undefined : options.climate?.[climate];
+    constants[`control:${climate}:frequency`] = v?.frequency ?? 1;
+    constants[`control:${climate}:bias`] = v?.bias ?? 0;
   }
 
   // A planet's cliffs are tuned through an autoplace control of their own:
