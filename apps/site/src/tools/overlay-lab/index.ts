@@ -70,7 +70,7 @@ const TEMPLATE = `
   <div id="lab-ports" class="gui-window floating-window lab-window lab-ports-window" hidden>
     <div class="gui-titlebar"><span>Ports</span><span class="grip" aria-hidden="true"></span></div>
     <div class="gui-body">
-      <p class="lab-note">Every open belt end is a port, and so is an inserter connected on one side only. Switch any of them on or off here or by clicking its tab on the map. A belt input takes its items from a constant combinator or display panel next to it, or a requester or infinity chest behind it; a belt that machines in the blueprint fill gets nothing from outside; anything else is guessed from what the machines downstream need.</p>
+      <p class="lab-note">Every open belt end is a port, and so is an inserter connected on one side only. Click a port's tab on the map to edit just that one: switch it on or off, set what it carries, how many per stack or swing, and a rate limit (blank for none). Every port is also listed here. A belt input takes its items from a constant combinator or display panel next to it, or a requester or infinity chest behind it; a belt that machines in the blueprint fill gets nothing from outside; anything else is guessed from what the machines downstream need.</p>
       <div id="lab-port-list" class="lab-port-list"></div>
     </div>
   </div>

@@ -111,6 +111,14 @@ export interface ArmPort {
   items: string[];
 }
 
+/** Hand-set limits on a port, beyond switching it on or off. */
+export interface PortLimit {
+  /** Items/second through the port; unset, as fast as it goes. */
+  rate?: number;
+  /** Arm inputs: items the arm takes per swing; unset, a full hand. */
+  stack?: number;
+}
+
 /** One row of the Ports window: a belt end or an arm. */
 export interface PortInfo {
   id: string;
@@ -127,6 +135,7 @@ export interface PortInfo {
   items: string[];
   /** Items per second through it right now. */
   rate: number;
+  limit: PortLimit;
 }
 
 function bump(map: Map<string, number>, key: string, by: number) {
@@ -656,11 +665,22 @@ export class LabFactory {
    *  output that's off is a dead end. */
   readonly portEnabled = new Map<string, boolean>();
   readonly portReason = new Map<string, string>();
+  /** Rate and stack limits set by hand, per port. */
+  readonly portLimits = new Map<string, PortLimit>();
+  /** Rate-limit buckets for arm ports, in items. */
+  private readonly armTokens = new Map<string, number>();
 
   setInput(portId: string, left: LaneFeed | null, right: LaneFeed | null) {
     this.inputs.set(portId, [left, right]);
     if (!this.portEnabled.has(portId)) this.portEnabled.set(portId, true);
     this.applyBeltPort(portId);
+  }
+
+  setPortLimit(portId: string, limit: PortLimit) {
+    if (limit.rate === undefined && limit.stack === undefined) this.portLimits.delete(portId);
+    else this.portLimits.set(portId, limit);
+    this.armTokens.delete(portId);
+    if (!portId.startsWith("arm-")) this.applyBeltPort(portId);
   }
 
   setPortEnabled(portId: string, on: boolean) {
@@ -711,10 +731,14 @@ export class LabFactory {
     const port = this.net.ports.find((p) => p.id === portId);
     if (!port) return;
     const on = this.portEnabled.get(portId) ?? true;
-    if (port.kind === "output") this.belts.setOutput(portId, on ? "sink" : "blocked");
+    const rate = this.portLimits.get(portId)?.rate;
+    if (port.kind === "output") this.belts.setOutput(portId, !on ? "blocked" : rate === undefined ? "sink" : { rate });
     else {
       const [l, r] = this.inputs.get(portId) ?? [null, null];
-      this.belts.setInput(portId, on ? l : null, on ? r : null);
+      // A limit is for the whole belt, shared between the lanes it feeds.
+      const lanes = (l ? 1 : 0) + (r ? 1 : 0);
+      const limit = (f: LaneFeed | null) => (f && rate !== undefined ? { ...f, rate: rate / lanes } : f);
+      this.belts.setInput(portId, on ? limit(l) : null, on ? limit(r) : null);
     }
   }
 
@@ -740,6 +764,7 @@ export class LabFactory {
         reason: this.portReason.get(p.id) ?? (p.kind === "output" ? "Takes everything away" : ""),
         items: p.kind === "input" ? [...new Set(feed.filter((l): l is LaneFeed => !!l).map((l) => l.item))] : [],
         rate: node ? this.tileRate(node, 0) + this.tileRate(node, 1) : 0,
+        limit: this.portLimits.get(p.id) ?? {},
       };
     });
     const arms = this.armPorts.map((p): PortInfo => ({
@@ -752,6 +777,7 @@ export class LabFactory {
       reason: this.portReason.get(p.id) ?? "",
       items: p.kind === "input" ? p.items : [],
       rate: p.inserter.moved,
+      limit: this.portLimits.get(p.id) ?? {},
     }));
     return [...belt, ...arms];
   }
@@ -762,12 +788,14 @@ export class LabFactory {
     for (const [id, [l, r]] of this.inputs) next.setInput(id, l, r);
     for (const p of this.armPorts) next.setArmPortItems(p.id, p.items);
     for (const [id, on] of this.portEnabled) next.setPortEnabled(id, on);
+    for (const [id, limit] of this.portLimits) next.setPortLimit(id, limit);
   }
 
   step(ticks = 1) {
     for (let i = 0; i < ticks; i++) {
       this.belts.step();
       for (const m of this.machines) this.stepMachine(m);
+      this.fillArmTokens();
       for (const ins of this.inserters) this.stepInserter(ins);
       this.tick++;
       if (this.tick % 30 === 0) {
@@ -775,6 +803,29 @@ export class LabFactory {
         this.sampleFlows();
       }
     }
+  }
+
+  /** Rate-limited arm ports earn items tick by tick, banking up to one
+   *  full hand so the arm can still swing with all it carries. */
+  private fillArmTokens() {
+    for (const p of this.armPorts) {
+      const rate = this.portLimits.get(p.id)?.rate;
+      if (rate === undefined) continue;
+      const have = this.armTokens.get(p.id) ?? 0;
+      this.armTokens.set(p.id, Math.min(Math.max(1, p.inserter.handSize), have + rate / 60));
+    }
+  }
+
+  /** How many items an arm port lets through now: all asked for, or what
+   *  its rate limit has earned. */
+  private armAllowance(portId: string, want: number): number {
+    if (this.portLimits.get(portId)?.rate === undefined) return want;
+    return Math.min(want, Math.floor((this.armTokens.get(portId) ?? 0) + 1e-9));
+  }
+
+  private spendArmTokens(portId: string, n: number) {
+    const have = this.armTokens.get(portId);
+    if (have !== undefined) this.armTokens.set(portId, Math.max(0, have - n));
   }
 
   /** How much of an ingredient arms keep topping a machine up to: a couple
@@ -877,7 +928,9 @@ export class LabFactory {
   private handTarget(ins: InserterSim, item: string): number {
     const d = ins.drop;
     const cap = d.kind === "box" ? d.box.capacity - d.box.total : ins.handSize;
-    return Math.max(1, Math.min(ins.handSize, cap));
+    // An input port set to a smaller stack hands over that many per swing.
+    const stack = ins.pickup.kind === "port" ? (this.portLimits.get(ins.pickup.port.id)?.stack ?? Infinity) : Infinity;
+    return Math.max(1, Math.min(ins.handSize, cap, stack));
   }
 
   private stepInserter(ins: InserterSim) {
@@ -925,7 +978,8 @@ export class LabFactory {
         // the port is on.
         if (this.portEnabled.get(p.port.id)) {
           got = p.port.items.find(accept);
-          if (got) count = room(got);
+          if (got) count = this.armAllowance(p.port.id, room(got));
+          this.spendArmTokens(p.port.id, count);
         }
       } else if (p.kind === "box") {
         for (const [item, have] of p.box.contents) {
@@ -994,9 +1048,13 @@ export class LabFactory {
       } else if (d.kind === "port") {
         // An output port that's off is a dead end: the arm waits.
         if (this.portEnabled.get(d.port.id)) {
-          bump(this.armOut, ins.hand!, ins.handCount);
-          delivered = ins.handCount;
-          ins.handCount = 0;
+          const n = this.armAllowance(d.port.id, ins.handCount);
+          if (n > 0) {
+            this.spendArmTokens(d.port.id, n);
+            bump(this.armOut, ins.hand!, n);
+            delivered = n;
+            ins.handCount -= n;
+          }
         }
       } else {
         delivered = ins.handCount;
