@@ -58,7 +58,7 @@ interface DatasetEntry {
 const TEMPLATE = `
   <canvas id="seed-canvas" class="seed-canvas"></canvas>
   <aside class="gui-window seed-panel">
-    <div class="gui-titlebar"><span>Seed Viewer</span></div>
+    <div class="gui-titlebar"><span>Seed Viewer</span><span class="seed-disclaimer">Early prototype</span></div>
     <div class="gui-body seed-panel-body">
       <form id="seed-form" class="seed-row">
         <input id="seed-input" class="seed-input" type="text" inputmode="numeric" autocomplete="off" spellcheck="false" aria-label="Map seed" />
@@ -66,7 +66,6 @@ const TEMPLATE = `
         <button type="button" id="seed-random" title="Pick a random seed">Random</button>
       </form>
       <p class="seed-note" id="seed-status" role="status"></p>
-      <p class="seed-disclaimer"><strong>Early prototype</strong></p>
 
       <div class="seed-fields">
         <label class="seed-field"><span>Game version</span><select id="seed-version"></select></label>
