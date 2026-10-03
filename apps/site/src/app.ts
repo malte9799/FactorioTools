@@ -12,8 +12,10 @@ const LEGACY_HASHES: Record<string, string> = {
   "#/blueprint-viewer": "#/blueprint-editor",
 };
 
+/** The route part of the hash. A tool may keep its own state after a "?"
+ *  (the Seed Viewer's seed and camera), which is not part of the route. */
 function currentHash(): string {
-  const hash = window.location.hash || ROUTES[0]!.hash;
+  const hash = (window.location.hash || ROUTES[0]!.hash).split("?")[0]!;
   return LEGACY_HASHES[hash] ?? hash;
 }
 
@@ -38,6 +40,14 @@ async function route() {
       const { mountOverlayLab } = await import("./tools/overlay-lab/index.js");
       if (token !== routeToken) return;
       unmountCurrent = mountOverlayLab(toolRoot);
+      break;
+    }
+    // Map generation is a separate package and a worker pool; none of it
+    // belongs in the bundle the Blueprint Editor loads.
+    case "#/seed-viewer": {
+      const { mountSeedViewer } = await import("./tools/seed-viewer/index.js");
+      if (token !== routeToken) return;
+      unmountCurrent = mountSeedViewer(toolRoot);
       break;
     }
     // Dev aid, not a product route — reachable by URL but deliberately not
