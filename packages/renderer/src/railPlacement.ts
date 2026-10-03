@@ -12,6 +12,7 @@ import {
   railEndsAt,
   railKey,
   railName,
+  railTiles,
   signalSlots,
   snapStraightRail,
   trainStopSlots,
@@ -19,7 +20,7 @@ import {
   type RailPiece,
   type RailSlot,
 } from "./railGeometry.js";
-import { piecesWithinLimit, planEnd, planRail, supportsFor } from "./railPlanner.js";
+import { planEnd, planRail, supportsFor } from "./railPlanner.js";
 
 /** Held items that drive the rail planner rather than placing one entity.
  *  The ramp item plans toward the elevated layer, climbing a ramp first
@@ -43,6 +44,10 @@ export interface RailIndex {
   blocked(tx: number, ty: number, elevated: boolean): boolean;
   /** Ends no other piece continues from — where planning can pick up. */
   freeEnds: RailEnd[];
+  /** Placed rails covering each tile, for picking the rail under the cursor. */
+  railsAt: Map<string, RailPiece[]>;
+  /** The piece each free end belongs to. */
+  freeEndOwner: Map<RailEnd, RailPiece>;
   /** railKey of every placed rail, so a plan reuses track already there. */
   existing: Set<string>;
   /** True when a support or ramp top already holds the deck at this point. */
@@ -84,12 +89,21 @@ export function buildRailIndex(entities: PlacedEntity[], footprintOf: (e: Placed
   }
 
   const ends = new Map<string, RailEnd[]>();
+  const endOwner = new Map<RailEnd, RailPiece>();
   const rampTops = new Set<string>();
   for (const r of rails) {
     for (const end of railEndsAt(r)) {
       const key = railEndKey(end.x, end.y, end.elevated);
       (ends.get(key) ?? ends.set(key, []).get(key)!).push(end);
+      endOwner.set(end, r);
       if (r.name === "rail-ramp" && end.elevated) rampTops.add(`${end.x},${end.y}`);
+    }
+  }
+  const railsAt = new Map<string, RailPiece[]>();
+  for (const r of rails) {
+    for (const [tx, ty] of railTiles(r)) {
+      const key = `${tx},${ty}`;
+      (railsAt.get(key) ?? railsAt.set(key, []).get(key)!).push(r);
     }
   }
   const freeEnds: RailEnd[] = [];
@@ -102,6 +116,8 @@ export function buildRailIndex(entities: PlacedEntity[], footprintOf: (e: Placed
   return {
     blocked: (tx, ty, elevated) => !elevated && groundTaken.has(`${tx},${ty}`),
     freeEnds,
+    railsAt,
+    freeEndOwner: endOwner,
     existing: new Set(rails.map(railKey)),
     supported: (x, y) => supports.has(`${x},${y}`) || rampTops.has(`${x},${y}`),
     supportBlocked: (x, y) => {
@@ -144,20 +160,43 @@ export function startPiece(x: number, y: number, direction: number, elevated: bo
 export interface RailPreview {
   /** The whole planned track, from the start outward. */
   pieces: RailPiece[];
-  /** How many leading pieces this placement actually lays. */
-  placeable: number;
-  /** Supports carrying the placeable elevated part. */
+  /** Supports carrying its elevated part. */
   supports: RailPiece[];
   /** Where the next placement continues from. */
   end: RailEnd;
 }
 
-export function previewRail(index: RailIndex, start: RailEnd, target: { x: number; y: number }, targetElevated: boolean, unlimited: boolean): RailPreview {
+export function previewRail(index: RailIndex, start: RailEnd, target: { x: number; y: number }, targetElevated: boolean): RailPreview {
   const pieces = planRail({ start, target, targetElevated, blocked: index.blocked });
-  const placeable = unlimited ? pieces.length : piecesWithinLimit(pieces, index.existing);
-  const laid = pieces.slice(0, placeable);
-  const supports = supportsFor(start, laid, index.supported, (x, y) => index.supportBlocked(x, y)).filter((s) => !index.supported(s.x, s.y));
-  return { pieces, placeable, supports, end: planEnd(start, laid) };
+  const supports = supportsFor(start, pieces, index.supported, (x, y) => index.supportBlocked(x, y)).filter((s) => !index.supported(s.x, s.y));
+  return { pieces, supports, end: planEnd(start, pieces) };
+}
+
+/** Smallest turn between two 16-way directions, in steps. */
+function dirGap(a: number, b: number): number {
+  const d = (((a - b) % 16) + 16) % 16;
+  return Math.min(d, 16 - d);
+}
+
+/** Where a press with the rail item would start planning, and the piece the
+ *  start arrow sits on. Over a placed rail, that rail's end facing closest
+ *  to the held heading — so R picks which way to build on from it, middle
+ *  of the track included. Just past the end of track, that free end.
+ *  Undefined over open ground, where the held piece itself is the start. */
+export function railStartAt(index: RailIndex, x: number, y: number, heading: number): { end: RailEnd; piece: RailPiece } | undefined {
+  const under = index.railsAt.get(`${Math.floor(x)},${Math.floor(y)}`);
+  if (under && under.length > 0) {
+    // Several pieces on one tile (a junction): the one whose centre is
+    // nearest the cursor.
+    const piece = under.reduce((a, b) => (Math.hypot(a.x - x, a.y - y) <= Math.hypot(b.x - x, b.y - y) ? a : b));
+    const ends = railEndsAt(piece);
+    const end = ends.reduce((a, b) => (dirGap(a.dir, heading) <= dirGap(b.dir, heading) ? a : b));
+    return { end, piece };
+  }
+  const free = nearestFreeEnd(index, x, y, 1.5);
+  if (!free) return undefined;
+  const owner = index.freeEndOwner.get(free);
+  return owner ? { end: free, piece: owner } : undefined;
 }
 
 /** The signal or train stop slot a held signal/stop snaps to near a point. */

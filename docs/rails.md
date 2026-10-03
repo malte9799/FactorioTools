@@ -7,22 +7,23 @@ refresh the rail data from the game.
 
 | Held item | What a click does |
 | --- | --- |
-| **Rail** | Starts the rail planner. Press on a free rail end to continue it, or anywhere else to lay the held straight piece and plan on from its end. Drag and release to lay track along the planned path. While a plan is active, the path previews from its end to the cursor and the next click lays it. |
+| **Rail** | Starts the rail planner. A green arrow shows where a press would start and which way. Over placed track, the arrow sits on the rail under the cursor (in the middle of a track too, to branch off); over open ground, it sits on the held straight piece, which gets laid first. Drag and release to lay track along the planned path. While a plan is active, the path previews from its end to the cursor and the next click lays it. |
 | **Rail ramp** | Same planner, but the track finishes on the elevated layer. A ramp is inserted where the track climbs, and rail supports go under the elevated part. |
 | **Rail signal / chain signal** | Snaps to the nearest signal slot beside placed track, facing the trains it stops. Which side of the track it goes on follows the cursor. Away from track the ghost is red and nothing is placed. |
 | **Train stop** | Snaps to the slot beside a straight cardinal rail, on the right-hand side of travel. |
 
-- **Length limit.** One placement lays at most the rail item's
-  `manual_length_limit` of new track (22.5 tiles), which is 11 straight pieces
-  or 3–4 curves (9–12 rail items). Pieces past the limit preview red.
-- **Shift** lifts the limit. The plan previews ghost blue and lays in full.
-- **R** turns the held straight piece in 45° steps before a plan starts.
+- **No length limit.** Every plan lays in full, however long.
+- **R** turns the start arrow in 45° steps (8 ways) before a plan starts.
+  Over placed track, it flips which end of that rail the plan leaves from.
+  **Shift+R** turns it the other way.
 - **Esc** or **right-click** drops the plan and keeps the rail in hand.
 - **Q** over any rail picks up the rail item. Over elevated track or a ramp, it picks up the ramp item.
 - **Undo** reverses each placement in a single step.
 
 The planner routes around buildings. It crosses and reuses existing track, and
-never lays a duplicate piece.
+never lays a duplicate piece. Like the game, it always puts a straight piece
+between two curves, so a full 90° turn is curve A, half-diagonal, curve B,
+diagonal, curve B, half-diagonal, curve A.
 
 ## How it works
 
@@ -34,7 +35,7 @@ never lays a duplicate piece.
 
 **`packages/renderer/src/railPlanner.ts`: the planner.**
 - A* over rail ends. From an end, any piece with an end at the same point facing back can follow, and its far end becomes the next state.
-- Cost is track length plus the prototypes' `extra_planner_penalty`.
+- Cost is track length plus the prototypes' `extra_planner_penalty`. A curve can't directly follow another curve.
 - `supportsFor` places rail supports so that every elevated piece stays within `support_range` of a support or of the ramp it climbed out of.
 
 **`packages/renderer/src/railPlacement.ts`: the link to the blueprint.**

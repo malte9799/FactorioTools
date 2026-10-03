@@ -11,7 +11,6 @@
 import {
   isElevatedRail,
   railEnds,
-  railKey,
   railLength,
   railName,
   railShape,
@@ -20,10 +19,6 @@ import {
   type RailPiece,
   type RailShape,
 } from "./railGeometry.js";
-
-/** The rail item's manual_length_limit: how much track one placement lays
- *  without Shift — 11 straight pieces, or 3–4 curves. */
-export const RAIL_PLAN_LENGTH_LIMIT = 22.5;
 
 /** A support carries elevated track this far either side (rail-support's
  *  support_range); a ramp carries its own top end this far. */
@@ -51,6 +46,7 @@ interface Step {
   heading: number;
   elevated: boolean;
   cost: number;
+  curve: boolean;
 }
 
 /** steps[layer][heading]: every piece that can follow an end heading that
@@ -82,6 +78,7 @@ const STEPS: Step[][][] = [0, 1].map((layer) => {
           heading: far.dir,
           elevated: far.elevated,
           cost: railLength(name, direction) + penalty,
+          curve: name.includes("curved-rail"),
         });
       });
     }
@@ -107,6 +104,10 @@ interface Node {
   y: number;
   heading: number;
   elevated: boolean;
+  /** Reached by a curve: the game always puts a straight piece between two
+   *  curves (a 90° turn is A, half-diagonal, B, diagonal, B, half-diagonal,
+   *  A), so another curve can't follow directly. */
+  afterCurve: boolean;
   g: number;
   f: number;
   parent: Node | undefined;
@@ -169,11 +170,12 @@ export function planRail(req: PlanRequest): RailPiece[] {
   };
 
   const startNode: Node = {
-    key: `${start.x},${start.y},${start.dir},${start.elevated ? 1 : 0}`,
+    key: `${start.x},${start.y},${start.dir},${start.elevated ? 1 : 0},0`,
     x: start.x,
     y: start.y,
     heading: start.dir,
     elevated: start.elevated,
+    afterCurve: false,
     g: 0,
     f: dist(start.x, start.y),
     parent: undefined,
@@ -201,6 +203,7 @@ export function planRail(req: PlanRequest): RailPiece[] {
     if (onLayer && d <= GOAL_RADIUS && node.step) break;
 
     for (const step of STEPS[node.elevated ? 1 : 0]![node.heading]!) {
+      if (step.curve && node.afterCurve) continue;
       const isRamp = step.name === "rail-ramp";
       // A ramp only ever takes the track toward the layer it should end on.
       if (isRamp && node.elevated === targetElevated) continue;
@@ -210,11 +213,11 @@ export function planRail(req: PlanRequest): RailPiece[] {
       if (!pieceFree(piece, isElevatedRail(step.name))) continue;
       const x = node.x + step.ex;
       const y = node.y + step.ey;
-      const key = `${x},${y},${step.heading},${step.elevated ? 1 : 0}`;
+      const key = `${x},${y},${step.heading},${step.elevated ? 1 : 0},${step.curve ? 1 : 0}`;
       const g = node.g + step.cost;
       if ((best.get(key) ?? Infinity) <= g) continue;
       best.set(key, g);
-      open.push({ key, x, y, heading: step.heading, elevated: step.elevated, g, f: g + dist(x, y), parent: node, step });
+      open.push({ key, x, y, heading: step.heading, elevated: step.elevated, afterCurve: step.curve, g, f: g + dist(x, y), parent: node, step });
     }
   }
 
@@ -223,19 +226,6 @@ export function planRail(req: PlanRequest): RailPiece[] {
     pieces.push({ name: n.step.name, x: n.parent!.x + n.step.dx, y: n.parent!.y + n.step.dy, direction: n.step.direction });
   }
   return pieces.reverse();
-}
-
-/** How many of `pieces` fit in one manual placement: new track up to the
- *  rail item's length limit (pieces that already exist are free). */
-export function piecesWithinLimit(pieces: RailPiece[], existing: Set<string>, limit = RAIL_PLAN_LENGTH_LIMIT): number {
-  let used = 0;
-  for (let i = 0; i < pieces.length; i++) {
-    const p = pieces[i]!;
-    if (existing.has(railKey(p))) continue;
-    used += railLength(p.name, p.direction);
-    if (used > limit + 1e-6) return i;
-  }
-  return pieces.length;
 }
 
 /** The end the track leaves off at, heading onward — where the next

@@ -243,13 +243,16 @@ export function drawHoverHighlight(
   w: number,
   h: number,
   style: CursorBoxStyle = "regular",
+  /** Turns the box about its centre, clockwise in radians — rails lie at an
+   *  angle, and their brackets follow them. */
+  angle = 0,
 ): void {
   const tier = CURSOR_BOX_TIERS.find((t) => Math.max(w, h) <= t.maxSide)!;
   const sy = CURSOR_BOX_ROW[style];
-  const left = x - w / 2;
-  const top = y - h / 2;
-  const right = x + w / 2;
-  const bottom = y + h / 2;
+  const left = -w / 2;
+  const top = -h / 2;
+  const right = w / 2;
+  const bottom = h / 2;
 
   const corners: { cx: number; cy: number; rotationDeg: number }[] = [
     { cx: left, cy: top, rotationDeg: 0 },
@@ -259,6 +262,8 @@ export function drawHoverHighlight(
   ];
 
   ctx.save();
+  ctx.translate(x, y);
+  if (angle) ctx.rotate(angle);
   for (const c of corners) {
     ctx.save();
     ctx.translate(c.cx, c.cy);
@@ -266,6 +271,27 @@ export function drawHoverHighlight(
     ctx.drawImage(sheet, tier.x, sy, 64, 64, 0, 0, 1, 1);
     ctx.restore();
   }
+  ctx.restore();
+}
+
+/** The rail planner's start arrow: a rounded green triangle centred on
+ *  (x, y), pointing along the 16-way `dir` — where a press would start
+ *  laying track, and which way. */
+export function drawRailStartArrow(ctx: CanvasRenderingContext2D, x: number, y: number, dir: number): void {
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.rotate((dir * Math.PI) / 8);
+  ctx.beginPath();
+  ctx.moveTo(0, -0.55);
+  ctx.lineTo(0.6, 0.15);
+  ctx.lineTo(-0.6, 0.15);
+  ctx.closePath();
+  ctx.lineJoin = "round";
+  ctx.lineWidth = 0.14;
+  ctx.strokeStyle = "#2e8b2e";
+  ctx.fillStyle = "#55c234";
+  ctx.fill();
+  ctx.stroke();
   ctx.restore();
 }
 

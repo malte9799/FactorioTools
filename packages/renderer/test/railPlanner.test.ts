@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { planEnd, piecesWithinLimit, planRail, supportsFor } from "../src/railPlanner.js";
+import { planEnd, planRail, supportsFor } from "../src/railPlanner.js";
 import { railEndsAt, railTiles, type RailEnd, type RailPiece } from "../src/railGeometry.js";
 
 let passed = 0;
@@ -37,24 +37,33 @@ test("straight ahead plans straight rails only", () => {
   assert.ok(connected(north, pieces));
 });
 
-test("one manual placement lays 11 straight rails", () => {
-  const pieces = planRail({ start: north, target: { x: 1, y: -60 }, targetElevated: false, blocked: open });
-  assert.equal(piecesWithinLimit(pieces, new Set()), 11);
+test("a 90° turn is built the way the game builds it", () => {
+  // The game's own full curve, south then east: a curve never follows a
+  // curve directly, there's always a straight piece of that angle between.
+  const start: RailEnd = { x: 221, y: 256, dir: 8, elevated: false };
+  const pieces = planRail({ start, target: { x: 244, y: 277 }, targetElevated: false, blocked: open });
+  assert.deepEqual(
+    pieces.map((p) => [p.name, p.x, p.y, p.direction]),
+    [
+      ["curved-rail-a", 221, 258, 8],
+      ["half-diagonal-rail", 223, 263, 0],
+      ["curved-rail-b", 225, 267, 8],
+      ["straight-rail", 228, 270, 6],
+      ["curved-rail-b", 231, 273, 14],
+      ["half-diagonal-rail", 235, 275, 6],
+      ["curved-rail-a", 240, 277, 14],
+      ["straight-rail", 243, 277, 4],
+    ],
+  );
 });
 
-test("existing track along the path doesn't count against the limit", () => {
-  const pieces = planRail({ start: north, target: { x: 1, y: -60 }, targetElevated: false, blocked: open });
-  const existing = new Set(pieces.slice(0, 5).map((p) => `${p.name}|${p.x},${p.y}|${p.direction % 8}`));
-  assert.equal(piecesWithinLimit(pieces, existing), 16);
-});
-
-test("a 90° turn is built from curves and the track connects", () => {
-  const pieces = planRail({ start: north, target: { x: 30, y: -20 }, targetElevated: false, blocked: open });
-  assert.ok(pieces.some((p) => p.name === "curved-rail-a"));
-  assert.ok(pieces.some((p) => p.name === "curved-rail-b"));
-  assert.ok(connected(north, pieces));
-  const end = planEnd(north, pieces);
-  assert.ok(Math.hypot(end.x - 30, end.y + 20) <= 1.5, `ended at ${end.x},${end.y}`);
+test("two curves never touch", () => {
+  for (const target of [{ x: 30, y: -20 }, { x: -25, y: -25 }, { x: 15, y: -60 }, { x: 40, y: 10 }]) {
+    const names = planRail({ start: north, target, targetElevated: false, blocked: open }).map((p) => p.name);
+    for (let i = 1; i < names.length; i++) {
+      assert.ok(!(names[i - 1]!.includes("curved") && names[i]!.includes("curved")), names.join(" "));
+    }
+  }
 });
 
 test("a shallow slope uses half-diagonal track", () => {
@@ -72,9 +81,9 @@ test("track routes around an obstacle", () => {
   assert.ok(Math.hypot(end.x - 1, end.y + 40) <= 1.5, `ended at ${end.x},${end.y}`);
 });
 
-test("without the limit a 100-tile run plans in one go", () => {
+test("a 100-tile run plans in one go", () => {
   const pieces = planRail({ start: north, target: { x: 1, y: -100 }, targetElevated: false, blocked: open });
-  assert.equal(piecesWithinLimit(pieces, new Set(), Infinity), pieces.length);
+  assert.ok(connected(north, pieces));
   assert.ok(pieces.length >= 49);
 });
 

@@ -373,3 +373,21 @@ export function nearestSlot(slots: RailSlot[], x: number, y: number, reach: numb
   }
   return best;
 }
+
+/** The box a rail's hover brackets go round, relative to its position:
+ *  centred between its two ends and turned to lie along them. */
+export function railHighlightBox(name: string, direction: number): { cx: number; cy: number; w: number; h: number; angle: number } {
+  const ends = railEnds(name, direction);
+  if (ends.length !== 2) return { cx: 0, cy: 0, w: 2, h: 2, angle: 0 };
+  const [a, b] = ends as [RailEndOffset, RailEndOffset];
+  const chord = Math.hypot(b.dx - a.dx, b.dy - a.dy);
+  const ramp = SHAPE_OF[name] === "ramp";
+  return {
+    cx: (a.dx + b.dx) / 2,
+    cy: (a.dy + b.dy) / 2,
+    w: ramp ? 4 : 2,
+    h: Math.max(chord, 2),
+    // Clockwise from vertical, the way the box's long side runs.
+    angle: Math.atan2(b.dx - a.dx, -(b.dy - a.dy)),
+  };
+}
