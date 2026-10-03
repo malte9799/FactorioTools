@@ -332,6 +332,38 @@ function portRows(f: LabFactory, overlay: RateOverlay) {
   };
 }
 
+/** Swaps a port editor's markup for a fresh render without losing the
+ *  user's place: unchanged markup is left alone, and otherwise the scroll
+ *  position, an open icon grid (its search and scroll too) come back. */
+export function replacePortHtml(el: HTMLElement, html: string) {
+  // The live rate changes all the time; it alone doesn't need a redraw.
+  const key = html.replace(/<b data-port-now>[^<]*<\/b>/, "");
+  if (keyOf.get(el) === key) return;
+  keyOf.set(el, key);
+  const scrollers: [Element, number][] = [];
+  for (let a: Element | null = el; a; a = a.parentElement) if (a.scrollTop) scrollers.push([a, a.scrollTop]);
+  const slots = [...el.querySelectorAll<HTMLElement>("[data-pick]")];
+  const openAt = slots.findIndex((x) => x.classList.contains("is-open"));
+  const picker = el.querySelector<HTMLElement>(".lab-item-picker");
+  const search = picker?.querySelector<HTMLInputElement>("[data-item-search]");
+  const query = search?.value ?? "";
+  const pickerScroll = picker?.scrollTop ?? 0;
+  const searching = !!search && document.activeElement === search;
+  el.innerHTML = html;
+  const again = openAt >= 0 ? el.querySelectorAll<HTMLButtonElement>("[data-pick]")[openAt] : undefined;
+  if (again) {
+    toggleItemPicker(again);
+    const next = el.querySelector<HTMLElement>(".lab-item-picker")!;
+    const box = next.querySelector<HTMLInputElement>("[data-item-search]")!;
+    box.value = query;
+    if (query) box.dispatchEvent(new Event("input", { bubbles: true }));
+    if (!searching) box.blur();
+    next.scrollTop = pickerScroll;
+  }
+  for (const [a, top] of scrollers) a.scrollTop = top;
+}
+const keyOf = new WeakMap<HTMLElement, string>();
+
 /** A port's name for a window title: "Belt input". */
 export function portTitle(p: PortInfo): string {
   return `${p.via === "belt" ? "Belt" : "Arm"} ${p.kind}`;
@@ -350,7 +382,7 @@ export function portEditorHtml(overlay: RateOverlay, id: string): string | undef
 export function renderPortList(el: HTMLElement, overlay: RateOverlay) {
   const f = overlay.factory;
   if (!f) {
-    el.innerHTML = `<p class="lab-empty">No ports.</p>`;
+    replacePortHtml(el, `<p class="lab-empty">No ports.</p>`);
     return;
   }
   const row = portRows(f, overlay);
@@ -364,7 +396,7 @@ export function renderPortList(el: HTMLElement, overlay: RateOverlay) {
       ${main.map((p) => row(p)).join("") || `<p class="lab-empty">None.</p>`}
       ${rest.length ? `<details><summary>${rest.length} belt starts with nothing on them</summary>${rest.map((p) => row(p)).join("")}</details>` : ""}</div>`;
   };
-  el.innerHTML = group("Inputs", "input") + group("Outputs", "output");
+  replacePortHtml(el, group("Inputs", "input") + group("Outputs", "output"));
 }
 
 /** Wires a port list; the overlay's onPortsChange should re-render it. */
@@ -410,8 +442,12 @@ export function wirePortList(el: HTMLElement, overlay: RateOverlay, signal: Abor
     if (slot) return toggleItemPicker(slot);
     const pick = target.closest<HTMLButtonElement>("[data-item]");
     if (pick) {
-      const select = pickerFor.get(pick.closest(".lab-item-picker")!);
+      const picker = pick.closest(".lab-item-picker")!;
+      const select = pickerFor.get(picker);
       if (!select) return;
+      // A pick closes the grid, so the redraw after it doesn't reopen it.
+      picker.remove();
+      for (const open of el.querySelectorAll(".lab-item-slot.is-open")) open.classList.remove("is-open");
       select.value = pick.dataset.item!;
       select.dispatchEvent(new Event("change", { bubbles: true }));
       return;

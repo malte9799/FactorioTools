@@ -223,3 +223,6 @@
 .lab-item-grid { display: grid; grid-template-columns: repeat(auto-fill, 32px); gap: 3px; margin-top: 4px; }
 .lab-item-grid [hidden] { display: none; }
 .lab-item-initials { font: 600 10px var(--mono); color: var(--text); pointer-events: none; }
+/* Its own compositor layer, so dragging it over the animated map moves a
+   finished picture instead of repainting every icon on each step. */
+.lab-port-popup { will-change: transform; contain: layout paint; }

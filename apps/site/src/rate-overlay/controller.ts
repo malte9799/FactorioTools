@@ -10,7 +10,7 @@ import { hoverCardHtml } from "./card.js";
 import { FULL_RESEARCH, LabFactory, type PortLimit, type Research } from "./factory.js";
 import { detectIssues, type Issue } from "./issues.js";
 import { drawOverlay, type HoverTarget, type PortTabRect } from "./overlay.js";
-import { portEditorHtml, portTitle, wirePortList } from "./panels.js";
+import { portEditorHtml, portTitle, replacePortHtml, wirePortList } from "./panels.js";
 import { formatRate, loadSettings, saveSettings, type LabSettings } from "./settings.js";
 import { makeFloatingWindow, type FloatingWindow } from "../window-manager.js";
 
@@ -121,7 +121,7 @@ export class RateOverlay {
     host.appendChild(popup);
     this.portPopupTitle = popup.querySelector(".gui-titlebar span")!;
     this.portPopupBody = popup.querySelector(".gui-body")!;
-    this.portPopup = makeFloatingWindow(popup, { x: 0, y: 0, width: 320, onClose: () => (this.editingPort = undefined) });
+    this.portPopup = makeFloatingWindow(popup, { x: 0, y: 0, width: 320, onClose: () => this.closePortPopup() });
     wirePortList(this.portPopupBody, this, this.abort.signal);
     this.listen();
   }
@@ -276,6 +276,7 @@ export class RateOverlay {
   closePortPopup() {
     this.editingPort = undefined;
     this.portPopup.hide();
+    replacePortHtml(this.portPopupBody, "");
   }
 
   private renderPortPopup() {
@@ -284,8 +285,8 @@ export class RateOverlay {
     const p = this.factory?.ports().find((q) => q.id === id);
     const html = portEditorHtml(this, id);
     if (!p || !html) return this.closePortPopup();
-    this.portPopupTitle.textContent = portTitle(p);
-    this.portPopupBody.innerHTML = html;
+    if (this.portPopupTitle.textContent !== portTitle(p)) this.portPopupTitle.textContent = portTitle(p);
+    replacePortHtml(this.portPopupBody, html);
   }
 
   /** Keeps the popup's live rate current without redrawing its fields. */
@@ -293,7 +294,8 @@ export class RateOverlay {
     const id = this.editingPort;
     const el = id ? this.portPopupBody.querySelector<HTMLElement>("[data-port-now]") : null;
     const p = el ? this.factory?.ports().find((q) => q.id === id) : undefined;
-    if (el && p) el.textContent = formatRate(p.rate, this.settings.style.rateUnit);
+    const text = p && formatRate(p.rate, this.settings.style.rateUnit);
+    if (el && text && el.textContent !== text) el.textContent = text;
   }
 
   /** Simulate ahead: a minute at a time from the Simulation controls. */
