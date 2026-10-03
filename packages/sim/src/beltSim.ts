@@ -105,6 +105,38 @@ class LaneState {
     return false;
   }
 
+  /** Inserts at `p` if the item ahead is a full spacing away, shoving the
+   *  items behind back into the slack behind them as needed. No item moves
+   *  back a whole slot (that would make room on a compressed belt) or off
+   *  the lane's start. A shove back over a segment's midpoint takes that
+   *  crossing back, so the item isn't counted twice. */
+  insertShoving(p: number, slot: number): boolean {
+    let i = 0;
+    while (i < this.pos.length && this.pos[i]! >= p) i++;
+    if (i > 0 && this.pos[i - 1]! - p < SP) return false;
+    const moved: number[] = [];
+    let limit = p;
+    for (let k = i; k < this.pos.length; k++) {
+      const q = this.pos[k]!;
+      const to = Math.min(q, limit - SP);
+      if (to === q) break;
+      if (q - to >= SP || to < 0) return false;
+      moved.push(to);
+      limit = to;
+    }
+    moved.forEach((to, n) => {
+      const k = i + n;
+      const old = this.pos[k]!;
+      for (let s = this.segAt(to); s < this.mids.length && this.starts[s]! <= old; s++) {
+        const m = this.mids[s]!;
+        if (to < m && old >= m) this.crossings[s] = Math.max(0, this.crossings[s]! - countOf(this.item[k]!));
+      }
+      this.pos[k] = to;
+    });
+    this.insert(p, slot);
+    return true;
+  }
+
   hasRoomAt(p: number): boolean {
     for (const q of this.pos) {
       if (Math.abs(q - p) < SP) return false;
@@ -524,7 +556,12 @@ export class BeltSim {
    *  room for one more item right away on a fresh gap, then one each time
    *  the belt carries the last one a slot further: an arm empties its hand
    *  faster on a faster belt. Fitted to in-game chest-to-belt rates on
-   *  yellow and turbo belts. */
+   *  yellow and turbo belts.
+   *
+   *  Items behind the drop spot are shoved back into whatever slack they
+   *  have, so a hand fills the gaps a belt speed-up leaves (a compressed
+   *  red lane runs onto blue at 1.5 spacings apart) — too small for a whole
+   *  item, but enough once the next item gives up the rest. */
   dropOnTile(node: BeltNode, laneIdx: Lane, item: string, count = 1, spread = false): boolean {
     const lane = this.lane(node.line!, laneIdx);
     const seg = node.line!.lanes[laneIdx].segments[this.segmentOf(node, laneIdx)]!;
@@ -533,10 +570,8 @@ export class BeltSim {
     // Front-most first: the middle, then right behind each item in reach.
     const spots = [mid];
     if (spread) for (const q of lane.pos) if (q - SP < mid && q - SP >= back) spots.push(q - SP);
-    const p = spots.find((q) => lane.hasRoomAt(q));
-    if (p === undefined) return false;
-    lane.insert(p, pack(this.itemId(item), Math.max(1, Math.min(MAX_BELT_STACK, count))));
-    return true;
+    const slot = pack(this.itemId(item), Math.max(1, Math.min(MAX_BELT_STACK, count)));
+    return spots.some((q) => lane.insertShoving(q, slot));
   }
 
   /** Slots used on one lane of a belt tile, how many fit, and how many items

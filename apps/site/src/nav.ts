@@ -6,6 +6,7 @@ export interface ToolRoute {
 export const ROUTES: ToolRoute[] = [
   { hash: "#/blueprint-editor", label: "Blueprint Editor" },
   { hash: "#/overlay-lab", label: "Overlay Lab" },
+  { hash: "#/seed-viewer", label: "Seed Viewer" },
 ];
 
 export function renderNav(container: HTMLElement, activeHash: string): void {

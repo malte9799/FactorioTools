@@ -36,6 +36,7 @@ export default defineConfig(({ command }) => ({
       "@factoriotools/engine": path.resolve(__dirname, "../../packages/engine/src/index.ts"),
       "@factoriotools/renderer": path.resolve(__dirname, "../../packages/renderer/src/index.ts"),
       "@factoriotools/sim": path.resolve(__dirname, "../../packages/sim/src/index.ts"),
+      "@factoriotools/mapgen": path.resolve(__dirname, "../../packages/mapgen/src/index.ts"),
     },
   },
 }));
