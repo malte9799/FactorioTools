@@ -124,10 +124,27 @@ export interface Sprite {
  *  behind them. */
 export enum Layer {
   Floor = 0,
+  /** A rail's five pieces each get their own tier, matching the game's own
+   *  rail render layers: every rail's bed paints under every rail's ties,
+   *  and every tie under every rail's metals, so crossings and junctions
+   *  read as one continuous track instead of whichever piece sits lower on
+   *  screen painting its gravel over its neighbour's rails. */
+  RailStonePathLower = 0.1,
+  RailStonePath = 0.2,
+  RailTie = 0.3,
+  RailScrew = 0.4,
+  RailMetal = 0.5,
   Shadow = 1,
   LowerObject = 2,
   Object = 3,
   AboveObject = 4,
+  /** Elevated rails ride above everything on the ground, with the same
+   *  five-tier split as ground rails. */
+  ElevatedRailStonePathLower = 4.1,
+  ElevatedRailStonePath = 4.2,
+  ElevatedRailTie = 4.3,
+  ElevatedRailScrew = 4.4,
+  ElevatedRailMetal = 4.5,
 }
 
 export type Dir4Name = "north" | "east" | "south" | "west";

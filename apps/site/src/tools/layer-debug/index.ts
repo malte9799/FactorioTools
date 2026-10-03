@@ -22,8 +22,18 @@ const LAYER_NAMES: Record<Layer, string> = {
   [Layer.LowerObject]: "LowerObject",
   [Layer.Object]: "Object",
   [Layer.AboveObject]: "AboveObject",
+  [Layer.RailStonePathLower]: "RailStonePathLower",
+  [Layer.RailStonePath]: "RailStonePath",
+  [Layer.RailTie]: "RailTie",
+  [Layer.RailScrew]: "RailScrew",
+  [Layer.RailMetal]: "RailMetal",
+  [Layer.ElevatedRailStonePathLower]: "ElevatedRailStonePathLower",
+  [Layer.ElevatedRailStonePath]: "ElevatedRailStonePath",
+  [Layer.ElevatedRailTie]: "ElevatedRailTie",
+  [Layer.ElevatedRailScrew]: "ElevatedRailScrew",
+  [Layer.ElevatedRailMetal]: "ElevatedRailMetal",
 };
-const LAYER_VALUES = [Layer.Floor, Layer.Shadow, Layer.LowerObject, Layer.Object, Layer.AboveObject];
+const LAYER_VALUES = (Object.values(Layer).filter((v) => typeof v === "number") as Layer[]).sort((a, b) => a - b);
 
 const DIR_BY_LABEL: Record<string, number> = { N: 0, E: 4, S: 8, W: 12 };
 

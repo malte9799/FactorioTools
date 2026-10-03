@@ -570,9 +570,24 @@ function storageTankGraphics(proto: any): EntityGraphics | undefined {
 }
 
 /** A rail's five pieces stack bottom-to-top: ballast, path, ties, backplates,
- *  metals. Only four of the eight facings carry art — the other four are the
- *  same piece seen from the opposite end. */
+ *  metals. Only four of the eight facings carry art for straight and
+ *  half-diagonal rails — the other four are the same piece seen from the
+ *  opposite end. Curves carry all eight.
+ *
+ *  Each piece gets its own render tier (the game's own rail-stone-path-lower
+ *  … rail-metal layers) rather than one shared Floor tier, so where two
+ *  rails cross every bed paints under every rail. Elevated rails use the
+ *  same pieces on the elevated tiers, and their ballast piece is a stack of
+ *  the deck plus the ground shadow it casts. */
 const RAIL_PIECES = ["stone_path_background", "stone_path", "ties", "backplates", "metals"] as const;
+
+const RAIL_PIECE_LAYER: Record<(typeof RAIL_PIECES)[number], { ground: Layer; elevated: Layer }> = {
+  stone_path_background: { ground: Layer.RailStonePathLower, elevated: Layer.ElevatedRailStonePathLower },
+  stone_path: { ground: Layer.RailStonePath, elevated: Layer.ElevatedRailStonePath },
+  ties: { ground: Layer.RailTie, elevated: Layer.ElevatedRailTie },
+  backplates: { ground: Layer.RailScrew, elevated: Layer.ElevatedRailScrew },
+  metals: { ground: Layer.RailMetal, elevated: Layer.ElevatedRailMetal },
+};
 
 const RAIL_MIRROR: Record<(typeof DIR8)[number], (typeof DIR8)[number]> = {
   north: "north",
@@ -585,21 +600,97 @@ const RAIL_MIRROR: Record<(typeof DIR8)[number], (typeof DIR8)[number]> = {
   northwest: "southeast",
 };
 
+/** Each rail type's track bounds in tiles, north facing. The renderer's
+ *  railGeometry works these out per direction; these only seed the catalog. */
+const RAIL_FOOTPRINT: Record<string, [number, number]> = {
+  "straight-rail": [2, 2],
+  "half-diagonal-rail": [4, 4],
+  "curved-rail-a": [4, 6],
+  "curved-rail-b": [4, 6],
+  "elevated-straight-rail": [2, 2],
+  "elevated-half-diagonal-rail": [4, 4],
+  "elevated-curved-rail-a": [4, 6],
+  "elevated-curved-rail-b": [4, 6],
+};
+
 function railGraphics(proto: any): EntityGraphics | undefined {
   const pics = proto.pictures;
+  const elevated = String(proto.name).startsWith("elevated-");
   const layers: GraphicsLayer[] = [];
   for (const piece of RAIL_PIECES) {
-    const sprites = {} as Record<(typeof DIR8)[number], Sprite>;
+    // A piece is either one sprite or a stack (an elevated deck plus its
+    // shadow); each stack slot becomes its own layer.
+    const slots: { shadow: boolean; sprites: Partial<Record<(typeof DIR8)[number], Sprite>> }[] = [];
+    let missing = false;
     for (const dir of DIR8) {
       const own = pics?.[dir];
       const source = own && Object.keys(own).length > 0 ? own : pics?.[RAIL_MIRROR[dir]];
-      const sprite = toSprite(source?.[piece]);
-      if (!sprite) return undefined;
-      sprites[dir] = sprite;
+      const raw = source?.[piece];
+      if (!raw) {
+        missing = true;
+        break;
+      }
+      const parts: any[] = Array.isArray(raw.layers) ? raw.layers : [raw];
+      parts.forEach((part, i) => {
+        const sprite = toSprite(part);
+        if (sprite) (slots[i] ??= { shadow: !!part.draw_as_shadow, sprites: {} }).sprites[dir] = sprite;
+      });
     }
-    layers.push({ layer: Layer.Floor, sprites, per: "dir8" });
+    // Elevated rails have no ties piece; a ground rail missing one is broken.
+    if (missing) {
+      if (!elevated) return undefined;
+      continue;
+    }
+    const tier = RAIL_PIECE_LAYER[piece][elevated ? "elevated" : "ground"];
+    for (const slot of slots) {
+      if (Object.keys(slot.sprites).length !== DIR8.length) continue;
+      layers.push({ layer: slot.shadow ? Layer.Shadow : tier, sprites: slot.sprites, per: "dir8" });
+    }
+  }
+  return layers.length > 0 ? { layers } : undefined;
+}
+
+/** A rail ramp ships one frame per cardinal facing: the ground shadow, the
+ *  ramp's concrete body (`ties`) and the track on top of it (`stone_path`).
+ *  The ramp climbs from ground to deck height, so it sits in the object tier,
+ *  track over body. */
+function railRampGraphics(proto: any): EntityGraphics | undefined {
+  const pics = proto.pictures;
+  const layers: GraphicsLayer[] = [];
+  for (const piece of ["stone_path_background", "ties", "stone_path"]) {
+    const sprites = {} as Record<(typeof DIR4)[number], Sprite>;
+    for (const dir of DIR4) {
+      const sprite = toSprite(pics?.[dir]?.[piece]);
+      if (!sprite) return undefined;
+      // line_length counts this sheet's facings, not animation frames.
+      sprites[dir] = { ...sprite, columns: undefined };
+    }
+    layers.push({ layer: pics?.north?.[piece]?.draw_as_shadow ? Layer.Shadow : Layer.Object, sprites, per: "dir4" });
   }
   return { layers };
+}
+
+/** A rail support's pylon packs its 8 facings into one grid (line_length
+ *  columns per row); each facing gets its own frame rectangle here so the
+ *  renderer's plain dir8 lookup finds it. */
+function railSupportGraphics(proto: any): EntityGraphics | undefined {
+  const layers: GraphicsLayer[] = [];
+  for (const part of proto.graphics_set?.structure?.layers ?? []) {
+    const base = toSprite(part);
+    if (!base) continue;
+    const perRow = part.line_length ?? 1;
+    const sprites = {} as Record<(typeof DIR8)[number], Sprite>;
+    DIR8.forEach((dir, i) => {
+      sprites[dir] = {
+        ...base,
+        columns: undefined,
+        x: (part.x ?? 0) + (i % perRow) * base.frameWidth || undefined,
+        y: (part.y ?? 0) + Math.floor(i / perRow) * base.frameHeight || undefined,
+      };
+    });
+    layers.push({ layer: part.draw_as_shadow ? Layer.Shadow : Layer.Object, sprites, per: "dir8" });
+  }
+  return layers.length > 0 ? { layers } : undefined;
 }
 
 /** Cargo hubs and bays declare an array of random appearance variants, each
@@ -941,7 +1032,7 @@ export function buildRenderCatalog(raw: Raw, locale: LocaleTables, version: stri
 
   // Cutscene set-dressing and map-generated ruins that share a real
   // prototype type but have no placing item, so can't appear in a blueprint.
-  const NOT_PLACEABLE = /^(crash-site-|factorio-logo-|factorio-space-age-logo|fulgoran-ruin-)/;
+  const NOT_PLACEABLE = /^(crash-site-|dummy-|factorio-logo-|factorio-space-age-logo|fulgoran-ruin-)/;
 
   // Every prototype with a fluid box gets its connection points recorded and
   // a pipe-covers layer appended, regardless of which adapter above built
@@ -1059,10 +1150,19 @@ export function buildRenderCatalog(raw: Raw, locale: LocaleTables, version: stri
   for (const proto of Object.values(raw.wall ?? {})) {
     add(proto, wallGraphics(proto));
   }
-  // Rails share one generic selection_box across every rail type, so their
-  // real 2x2 collision box is passed explicitly instead.
-  for (const proto of Object.values(raw["straight-rail"] ?? {})) {
-    add(proto, railGraphics(proto), [2, 2]);
+  // Rails share one generic selection_box across every rail type, so each
+  // type's real track bounds (north facing) are passed explicitly instead —
+  // the renderer's railGeometry turns them per direction.
+  for (const [table, footprint] of Object.entries(RAIL_FOOTPRINT)) {
+    for (const proto of Object.values(raw[table] ?? {})) {
+      add(proto, railGraphics(proto), footprint);
+    }
+  }
+  for (const proto of Object.values(raw["rail-ramp"] ?? {})) {
+    add(proto, railRampGraphics(proto), [4, 16]);
+  }
+  for (const proto of Object.values(raw["rail-support"] ?? {})) {
+    add(proto, railSupportGraphics(proto));
   }
   for (const table of ["cargo-landing-pad", "space-platform-hub", "cargo-bay"]) {
     for (const proto of Object.values(raw[table] ?? {})) {
