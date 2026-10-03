@@ -3035,6 +3035,16 @@ canvas.select-mode {
 }
 .circuit-number { width: 80px; padding: 4px 6px; text-align: right; font-variant-numeric: tabular-nums; }
 .circuit-select { padding: 4px 6px; font-size: 13px; background: var(--light-button); color: #1d1a14; }
+.circuit-dropdown { display: flex; align-items: center; justify-content: space-between; gap: 4px; border: 0; font-family: inherit; cursor: pointer; text-align: left; }
+.circuit-dropdown::after { content: "▾"; font-size: 10px; opacity: 0.7; }
+.circuit-dropdown-list {
+  position: fixed; z-index: 100000; display: flex; flex-direction: column;
+  max-height: 60vh; overflow-y: auto; padding: 2px;
+  background: var(--light-button); border: 1px solid #1d1a14; box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
+}
+.circuit-dropdown-list button { padding: 4px 8px; border: 0; background: none; color: #1d1a14; font: inherit; font-size: 13px; text-align: left; cursor: pointer; }
+.circuit-dropdown-list button:hover { background: rgba(0, 0, 0, 0.12); }
+.circuit-dropdown-list button.is-selected { background: var(--gold); }
 .circuit-cmp { width: 52px; }
 .circuit-op { width: 70px; }
 .circuit-join { width: 64px; flex: none; }

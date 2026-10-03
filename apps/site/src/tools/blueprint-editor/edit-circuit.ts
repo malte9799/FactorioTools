@@ -62,6 +62,61 @@ const el = <K extends keyof HTMLElementTagNameMap>(tag: K, cls?: string, text?: 
   return node;
 };
 
+/** The open dropdown list, if any, and the button it hangs from. */
+let openDropdown: { anchor: HTMLElement; close(): void } | undefined;
+
+/** Opens (or, on its own button, closes) a dropdown list drawn in the page.
+ *  Deliberately not a native <select>: after picking from the browser's own
+ *  popup the page never saw that press end, and the next click on the map
+ *  was lost — it took two clicks to reopen a combinator after changing its
+ *  comparator. */
+function toggleDropdown(anchor: HTMLElement, options: [string, string][], value: string, onPick: (v: string) => void): void {
+  const wasOpenHere = openDropdown?.anchor === anchor;
+  openDropdown?.close();
+  if (wasOpenHere) return;
+
+  const list = el("div", "circuit-dropdown-list");
+  for (const [v, text] of options) {
+    const item = el("button", v === value ? "is-selected" : undefined, text);
+    item.type = "button";
+    item.addEventListener("click", () => {
+      close();
+      if (v !== value) onPick(v);
+    });
+    list.appendChild(item);
+  }
+  const at = anchor.getBoundingClientRect();
+  list.style.left = `${at.left}px`;
+  list.style.top = `${at.bottom}px`;
+  list.style.minWidth = `${at.width}px`;
+  document.body.appendChild(list);
+  // Opens upward when there is no room below.
+  const height = list.getBoundingClientRect().height;
+  if (at.bottom + height > window.innerHeight) list.style.top = `${Math.max(0, at.top - height)}px`;
+
+  const onPointerDown = (e: PointerEvent) => {
+    const target = e.target as Node;
+    // A press on the button itself is left to its own click handler.
+    if (!list.contains(target) && !anchor.contains(target)) close();
+  };
+  // Escape closes just the list, not the window behind it.
+  const onKeyDown = (e: KeyboardEvent) => {
+    if (e.key !== "Escape") return;
+    e.preventDefault();
+    e.stopImmediatePropagation();
+    close();
+  };
+  function close(): void {
+    list.remove();
+    window.removeEventListener("pointerdown", onPointerDown, true);
+    window.removeEventListener("keydown", onKeyDown, true);
+    openDropdown = undefined;
+  }
+  window.addEventListener("pointerdown", onPointerDown, true);
+  window.addEventListener("keydown", onKeyDown, true);
+  openDropdown = { anchor, close };
+}
+
 /** A signal count as the game prints it on a slot: 7, -12, 1.2k, 34M. */
 export function slotCount(v: number): string {
   const a = Math.abs(v);
@@ -231,16 +286,11 @@ export function buildCircuitSection(container: HTMLElement, entity: PlacedEntity
     return input;
   };
 
-  const select = (options: [string, string][], value: string, onChange: (v: string) => void, cls = "circuit-select"): HTMLSelectElement => {
-    const s = el("select", cls);
-    for (const [v, text] of options) {
-      const o = el("option", undefined, text);
-      o.value = v;
-      o.selected = v === value;
-      s.appendChild(o);
-    }
-    s.addEventListener("change", () => onChange(s.value));
-    return s;
+  const select = (options: [string, string][], value: string, onChange: (v: string) => void, cls = "circuit-select"): HTMLButtonElement => {
+    const b = el("button", `${cls} circuit-dropdown`, options.find(([v]) => v === value)?.[1] ?? value);
+    b.type = "button";
+    b.addEventListener("click", () => toggleDropdown(b, options, value, onChange));
+    return b;
   };
 
   const checkbox = (text: string, checked: boolean, onChange: (on: boolean) => void, cls = "circuit-check"): HTMLLabelElement => {
