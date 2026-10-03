@@ -1,4 +1,4 @@
-import{G as R,R as j,a as A,r as T,m as c,w as H,b as w,D as F,c as O,o as q,d as W,e as B,f as D,g as G,l as N,h as Q,i as I,j as U,k as Z,n as _,P as z}from"./index-DF_b8-bz.js";const J=`
+import{G as R,R as j,a as A,r as T,m as c,w as H,b as w,D as F,c as O,o as q,d as W,e as B,f as D,g as G,l as N,h as Q,i as I,j as U,k as Z,n as _,P as z}from"./index-BTNgwSfY.js";const J=`
   <div id="lab-stage" class="schematic-frame"></div>
 
   <div id="window-toolbar">
