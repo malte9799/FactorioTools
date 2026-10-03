@@ -3,7 +3,7 @@ import { Camera } from "./camera.js";
 import { getSharedSpriteAtlas } from "./spriteAtlas.js";
 import { getSharedIconAtlas } from "./iconAtlas.js";
 import { activeFluidConnections, autoUnderground, buildVisualLookup, effectiveFootprint, hasAnimatedLayer, isPoleLike, isTwoDirectionOnly, isUndergroundLike, makeConnectorPredicates, rotateAroundCenter, rotationStep, undergroundPartner, type ResolvedVisual } from "./entityLookup.js";
-import { drawAltModeOverlay, drawQualityBadge } from "./entityDraw.js";
+import { ALL_ALT_MODE_LAYERS, drawAltModeOverlay, drawQualityBadge, type AltModeLayers } from "./entityDraw.js";
 import { buildGrid, NeighbourGrid, step, toCardinal } from "./neighbours/grid.js";
 import { buildFluidNetwork, FluidNetwork } from "./neighbours/fluid.js";
 import { buildHeatNetwork, HeatNetwork } from "./neighbours/heat.js";
@@ -251,6 +251,8 @@ export interface BlueprintRenderer {
   /** Toggles Factorio's own Alt-mode look: recipe icons on crafting
    *  machines, module icons on machines/beacons that have any equipped. */
   setAltMode(enabled: boolean): void;
+  /** Which badges alt mode draws (all of them by default). */
+  setAltModeLayers(layers: AltModeLayers): void;
   /** Changes the render quality while running (resolution, animation,
    *  shadows, frame cap). */
   setQuality(quality: RenderQuality): void;
@@ -519,6 +521,7 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
    *  the hover-highlight overlay always has something to draw from. */
   let hoveredEntityNumber: number | undefined;
   let altMode = false;
+  let altModeLayers: AltModeLayers = ALL_ALT_MODE_LAYERS;
   let animationFrame = 0;
   const pixelRatio = () => Math.min(window.devicePixelRatio || 1, quality.maxPixelRatio);
   let dpr = pixelRatio();
@@ -1288,7 +1291,7 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
     if (altMode) {
       for (const entity of visibleEntities) {
         const visual = visualFor(entity.name);
-        if (visual) drawAltModeOverlay(ctx, iconAtlas, entity, visual);
+        if (visual) drawAltModeOverlay(ctx, iconAtlas, entity, visual, altModeLayers);
       }
     }
 
@@ -2431,6 +2434,10 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
     },
     setAltMode(enabled) {
       altMode = enabled;
+      invalidate();
+    },
+    setAltModeLayers(layers) {
+      altModeLayers = { ...layers };
       invalidate();
     },
     setInteractionMode(newMode) {
