@@ -237,7 +237,7 @@ test("1.1-style module maps still parse", () => {
   close(result.groups[0]!.effects.speed, 2.0, "4 × speed-3");
 });
 
-// The two 240/s builds from the viewer's "Throughput tests" folder, against
+// The two 240/s builds from the editor's "Throughput tests" folder, against
 // the real Space Age data: on paper each has to reach at least what it
 // makes in game.
 {

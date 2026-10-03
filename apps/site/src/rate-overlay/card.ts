@@ -1,5 +1,5 @@
 /** The hover card: what the thing under the cursor is doing, in words. */
-import { escapeHtml } from "../tools/blueprint-viewer/html.js";
+import { escapeHtml } from "../tools/blueprint-editor/html.js";
 import { machineStatus, type LabFactory } from "./factory.js";
 import { itemLabel, recipeLabel, type Issue } from "./issues.js";
 import { laneState, statusColor, type HoverTarget } from "./overlay.js";

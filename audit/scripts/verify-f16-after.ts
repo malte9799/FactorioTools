@@ -2,7 +2,7 @@
  *  Importiert den ECHTEN html-Helfer aus dem Produktivcode und speist die
  *  Payloads durch die real im Code stehenden Template-Formen. Zusätzlich
  *  wird geprüft, ob safeName im Engine-Layer greift. */
-import { html, raw, escapeHtml } from "../../apps/site/src/tools/blueprint-viewer/html.js";
+import { html, raw, escapeHtml } from "../../apps/site/src/tools/blueprint-editor/html.js";
 import { decodeBlueprintString, collectBlueprints, normaliseEntities, encodeBlueprintString } from "../../packages/engine/src/index.js";
 
 const PAYLOADS = [

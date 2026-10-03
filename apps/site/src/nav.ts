@@ -4,14 +4,14 @@ export interface ToolRoute {
 }
 
 export const ROUTES: ToolRoute[] = [
-  { hash: "#/blueprint-viewer", label: "Blueprint Viewer" },
+  { hash: "#/blueprint-editor", label: "Blueprint Editor" },
   { hash: "#/overlay-lab", label: "Overlay Lab" },
 ];
 
 export function renderNav(container: HTMLElement, activeHash: string): void {
   container.innerHTML = `
     <header class="site-nav">
-      <a class="brand" href="#/blueprint-viewer">FactorioTools</a>
+      <a class="brand" href="#/blueprint-editor">FactorioTools</a>
       <nav>
         ${ROUTES.map(
           (r) =>

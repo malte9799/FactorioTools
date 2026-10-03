@@ -1,4 +1,4 @@
-/** Cost of blueprint-viewer/index.ts:463's groupForEntity — a linear
+/** Cost of blueprint-editor/index.ts:463's groupForEntity — a linear
  *  groups.find() over an inner entityNumbers.includes(), run on EVERY hover
  *  pointermove — vs a prebuilt Map lookup. */
 import { readFileSync } from "node:fs";

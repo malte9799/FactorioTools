@@ -1,6 +1,6 @@
 /** Debug-only tool: pick any entity, see its real render-catalog graphics
  *  layers as a reorderable list, and preview changes through the exact same
- *  mountRenderer()/paint.ts pipeline the live Blueprint Viewer uses — so
+ *  mountRenderer()/paint.ts pipeline the live Blueprint Editor uses — so
  *  what you see here is guaranteed to match the real app, unlike a
  *  standalone reimplementation of the paint loop. Reachable at
  *  #/layer-debug (not linked from the nav bar — this is a dev aid, not a
@@ -40,7 +40,7 @@ const TEMPLATE = `
     <div class="ld-row" id="ld-facing"></div>
 
     <h2>Layers (drag to reorder, dropdown to change tier)</h2>
-    <div class="ld-hint">Rendered through the real mountRenderer()/paint.ts — what you see here is exactly what the Blueprint Viewer would draw.</div>
+    <div class="ld-hint">Rendered through the real mountRenderer()/paint.ts — what you see here is exactly what the Blueprint Editor would draw.</div>
     <div id="ld-layer-list"></div>
 
     <h2>Result</h2>

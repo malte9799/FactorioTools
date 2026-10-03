@@ -1,4 +1,4 @@
-/** blueprint-viewer/index.ts:598 pushes a full deep copy of every entity onto
+/** blueprint-editor/index.ts:598 pushes a full deep copy of every entity onto
  *  undoStack for EVERY edit, with no cap (:586). Measures the real heap cost
  *  of a normal editing session on a large blueprint. Also measures how long
  *  each edit's snapshot itself takes, since it is on the interactive path

@@ -1,6 +1,6 @@
 /** The on-map rate calculator: runs a simulation of a blueprint and draws
  *  the overlay on a transparent canvas above the renderer's own, with a
- *  hover card and clickable port tabs. The blueprint viewer and the
+ *  hover card and clickable port tabs. The blueprint editor and the
  *  Overlay Lab both drive one of these; each brings its own windows. */
 import "./rate-overlay.css";
 import { getData, getRenderCatalog, type PlacedEntity } from "@factoriotools/engine";

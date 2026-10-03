@@ -1,6 +1,6 @@
 /** The per-blueprint payload is dominated by a few huge sheets. How much of
  *  each sheet does the renderer actually USE? A sheet holding 64 animation
- *  frames costs its full byte size even if the viewer only ever draws one. */
+ *  frames costs its full byte size even if the editor only ever draws one. */
 import { readFileSync, statSync, existsSync } from "node:fs";
 import type { GameData, RenderCatalog } from "../../packages/engine/src/index.js";
 import { buildVisualLookup } from "../../packages/renderer/src/entityLookup.js";

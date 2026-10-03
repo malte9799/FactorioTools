@@ -1,14 +1,20 @@
 import "./style.css";
 import { renderNav, ROUTES } from "./nav.js";
-import { mountBlueprintViewer } from "./tools/blueprint-viewer/index.js";
+import { mountBlueprintEditor } from "./tools/blueprint-editor/index.js";
 
 const navRoot = document.getElementById("nav-root")!;
 const toolRoot = document.getElementById("tool-root")!;
 
 let unmountCurrent: (() => void) | null = null;
 
+/** Links shared before the tool was renamed from "Blueprint Viewer". */
+const LEGACY_HASHES: Record<string, string> = {
+  "#/blueprint-viewer": "#/blueprint-editor",
+};
+
 function currentHash(): string {
-  return window.location.hash || ROUTES[0]!.hash;
+  const hash = window.location.hash || ROUTES[0]!.hash;
+  return LEGACY_HASHES[hash] ?? hash;
 }
 
 /** Guards against a slow dynamic import landing after the user has already
@@ -23,8 +29,8 @@ async function route() {
   unmountCurrent = null;
 
   switch (hash) {
-    case "#/blueprint-viewer":
-      unmountCurrent = mountBlueprintViewer(toolRoot);
+    case "#/blueprint-editor":
+      unmountCurrent = mountBlueprintEditor(toolRoot);
       break;
     // Design playground for the on-map rate calculator; loaded on demand so
     // the main bundle doesn't carry the simulation.

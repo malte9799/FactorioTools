@@ -48,7 +48,7 @@ for (const ex of targets) {
   try {
     const envelope = decodeBlueprintString(ex.bp);
     const bps = collectBlueprints(envelope);
-    // A book contributes every one of its blueprints; the viewer renders one
+    // A book contributes every one of its blueprints; the editor renders one
     // at a time, so take the largest as the realistic worst case.
     entities = bps.map(normaliseEntities).sort((a, b) => b.length - a.length)[0] ?? [];
   } catch (err) {

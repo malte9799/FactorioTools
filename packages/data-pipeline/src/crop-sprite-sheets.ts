@@ -4,7 +4,7 @@
  * samples, and rewrites the sprite descriptors so nothing else has to change.
  *
  * Why this exists: Factorio ships one sheet per entity holding every
- * animation frame and facing, but this viewer draws a single static frame
+ * animation frame and facing, but this editor draws a single static frame
  * per entity. A recycler sheet is 64 cells; exactly one of them is ever
  * sampled. Across the set that is ~143 MB of pixels that are downloaded,
  * decoded and uploaded to the GPU without ever being drawn.
