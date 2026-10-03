@@ -135,7 +135,7 @@
 
 html { -webkit-text-size-adjust: 100%; height: 100%; }
 
-/* The blueprint viewer is a full-screen canvas with floating windows on
+/* The blueprint editor is a full-screen canvas with floating windows on
    top, not a scrolling document — the page itself never scrolls. */
 body {
   margin: 0;
@@ -1786,7 +1786,7 @@ canvas.select-mode {
 
 /* ---------- icons ---------- */
 /* Sprites are fetched live from FactorioLab's hosted sheet, see
-   tools/blueprint-viewer/legacy-view/icons.ts — this is the M1 placeholder,
+   tools/blueprint-editor/legacy-view/icons.ts — this is the M1 placeholder,
    superseded by a real sprite atlas later. Native size is 64px; scale down
    with background-size instead of shipping a second sheet. */
 

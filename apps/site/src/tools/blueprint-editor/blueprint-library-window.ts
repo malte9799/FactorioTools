@@ -364,7 +364,7 @@ export function openLibraryWindow(options: LibraryWindowOptions): void {
   }
 
   function onKey(e: KeyboardEvent): void {
-    // Nothing reaches the viewer's own shortcuts (E, Q, R, digits…) while
+    // Nothing reaches the editor's own shortcuts (E, Q, R, digits…) while
     // the window is open; typing still works since nothing is prevented.
     e.stopPropagation();
     // E in the icon picker, as in every game menu: confirm the picked

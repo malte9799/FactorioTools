@@ -3,7 +3,7 @@
  *  to zoom); a transparent canvas above it draws the overlay layers from a
  *  live simulation. Every layer can be toggled and restyled, and the whole
  *  look can be copied out as JSON. Reachable at #/overlay-lab; it works on
- *  whatever blueprint is open in the Blueprint Viewer. */
+ *  whatever blueprint is open in the Blueprint Editor. */
 import { getData, getRenderCatalog, loadData } from "@factoriotools/engine";
 import { mountRenderer, type BlueprintRenderer } from "@factoriotools/renderer";
 import { makeFloatingWindow, type FloatingWindow } from "../../window-manager.js";
@@ -77,8 +77,8 @@ const TEMPLATE = `
 
   <div id="lab-loading" class="lab-loading">Loading game data…</div>
   <div id="lab-empty" class="lab-empty-state" hidden>
-    <p>Nothing to look at yet. The lab works on the blueprint open in the Blueprint Viewer.</p>
-    <a href="#/blueprint-viewer">Open the Blueprint Viewer</a>
+    <p>Nothing to look at yet. The lab works on the blueprint open in the Blueprint Editor.</p>
+    <a href="#/blueprint-editor">Open the Blueprint Editor</a>
   </div>
 `;
 

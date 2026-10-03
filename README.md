@@ -2,24 +2,33 @@
 
 ### [malte9799.github.io/](https://malte9799.github.io/FactorioTools)[`FactorioTools`](https://malte9799.github.io/FactorioTools)
 
-A browser-based Factorio blueprint viewer and rate calculator. Paste a
-blueprint string and it renders the factory with real game sprites, then tells
-you what it produces, what it consumes, and where the bottleneck is.
+A browser-based Factorio blueprint editor built for optimising production
+lines. Paste a blueprint string and it calculates what the build produces and
+consumes, simulates the belts tick by tick, and shows where output is being
+lost — then lets you fix it in place and export the result.
 
 Everything runs client-side — no server, no upload, no account. Blueprint
 strings never leave the page.
 
 ## What it does
 
-**Renders blueprints** with the game's own art: belts animate, poles turn to
-face their wires, pipes and walls pick their connection art from their
-neighbours, and machines show their recipe and modules in alt-mode.
-
 **Calculates rates** across the whole blueprint — items per second by machine
 group, module and beacon effects, quality tiers, and productivity research.
 
+**Simulates** the belts tick by tick: per-lane transport lines, curves,
+side-loading, undergrounds and splitters, so lane imbalance and starved
+inputs show up the way they would in game.
+
+**Analyses** the result on the map itself — lane signals, machine uptime, and
+a ranked list of what costs output, each traced from the symptom back to its
+cause.
+
 **Edits** — place, rotate, erase, configure recipes and modules, wire poles and
 combinators, undo/redo, then export the result back to a blueprint string.
+
+**Renders** with the game's own art: belts animate, poles turn to face their
+wires, pipes and walls pick their connection art from their neighbours, and
+machines show their recipe and modules in alt-mode.
 
 ## Requirements
 
@@ -65,7 +74,7 @@ regenerate, regenerate all three.
 `extract-sprites` also copies the shortcut-bar art (every `shortcut`
 prototype: undo, redo, the planners, alt mode, the wires) into
 `public/data/sprites/shortcuts/` with `public/data/shortcut-icons.json`; the
-viewer's quickbar draws its tool buttons from these and shows plain text
+editor's quickbar draws its tool buttons from these and shows plain text
 labels until they exist.
 
 Non-standard install paths are read from `FACTORIO_DATA` and `FACTORIO_DUMP`.

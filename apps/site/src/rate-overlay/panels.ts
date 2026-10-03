@@ -2,7 +2,7 @@
  *  summary and research, and the list of ports. Each host lays these out in
  *  its own windows; the markup and behaviour live here once. */
 import type { LaneFeed } from "@factoriotools/sim";
-import { escapeHtml } from "../tools/blueprint-viewer/html.js";
+import { escapeHtml } from "../tools/blueprint-editor/html.js";
 import type { RateOverlay } from "./controller.js";
 import { machineStatus, type MachineStatus, type PortInfo, type Research } from "./factory.js";
 import { itemLabel } from "./issues.js";

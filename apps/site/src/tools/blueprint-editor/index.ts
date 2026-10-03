@@ -36,7 +36,7 @@ import { buildGridMenu } from "./grid-menu.js";
 import { BlueprintLinkError, looksLikeBlueprintString, parseBlueprintLink, resolveBlueprintLink, SHARE_TARGETS } from "./blueprint-links.js";
 import { saveToLibrary } from "./blueprint-library.js";
 import { RateOverlay } from "../../rate-overlay/controller.js";
-import { setCurrentBlueprint, VIEWER_AUTOSAVE_KEY } from "../../current-blueprint.js";
+import { setCurrentBlueprint, EDITOR_AUTOSAVE_KEY } from "../../current-blueprint.js";
 import { currentQuality, onQualityChange } from "../../render-presets.js";
 import { GRAPHICS_WINDOW_HTML, wireGraphicsPanel } from "../../graphics-panel.js";
 import { clockText, rateUnitHtml, renderLayerList, renderPortList, RESEARCH_HTML, simSummaryHtml, wireLayerList, wirePortList, wireRateUnit, wireResearch } from "../../rate-overlay/panels.js";
@@ -392,7 +392,7 @@ function loadExamplePool(): Promise<ExampleBlueprint[]> {
   return examplePool;
 }
 
-export function mountBlueprintViewer(root: HTMLElement): () => void {
+export function mountBlueprintEditor(root: HTMLElement): () => void {
   root.innerHTML = TEMPLATE;
 
   const $ = <T extends HTMLElement>(selector: string): T => {
@@ -1189,7 +1189,7 @@ export function mountBlueprintViewer(root: HTMLElement): () => void {
   // not a real save-slot feature; silently no-ops if storage is
   // unavailable (private browsing, quota) rather than surfacing an error
   // for what's just a convenience.
-  const AUTOSAVE_KEY = VIEWER_AUTOSAVE_KEY;
+  const AUTOSAVE_KEY = EDITOR_AUTOSAVE_KEY;
   function persistEntities(): void {
     if (!entities.length) return;
     try {

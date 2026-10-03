@@ -32,7 +32,7 @@ import { icon } from "./legacy-view/icons.js";
 import { renderRichLabel } from "./rich-text.js";
 
 export interface LibraryCallbacks {
-  /** Load this blueprint string as the active one in the viewer. */
+  /** Load this blueprint string as the active one in the editor. */
   onLoad(bpString: string): void;
   /** Returns the current blueprint string to save, or null if there's nothing to save yet. */
   getCurrentBpString(): string | null;

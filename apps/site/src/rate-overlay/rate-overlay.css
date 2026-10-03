@@ -133,7 +133,7 @@
 .lab-port-head .lab-port-where { flex: 0 0 auto; }
 .lab-port.is-off { opacity: 0.55; }
 
-/* The blueprint viewer's Rate Calculator window: a summary that folds out
+/* The blueprint editor's Rate Calculator window: a summary that folds out
    into one pane at a time. */
 .rate-window #rate-unit { margin-bottom: 10px; }
 .rate-tabs { display: flex; margin-bottom: 2px; }
