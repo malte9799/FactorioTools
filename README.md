@@ -351,3 +351,13 @@ Factorio, its prototype data and its sprite art are the property of
 [Wube Software](https://factorio.com) and are **not** covered by that licence.
 This project reads them from a Factorio installation at build time and is not
 affiliated with Wube Software.
+
+## Star History
+
+<a href="https://www.star-history.com/?type=date&repos=malte9799%2FFactorioTools">
+ <picture>
+   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=malte9799/FactorioTools&type=date&theme=dark&legend=top-left" />
+   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=malte9799/FactorioTools&type=date&legend=top-left" />
+   <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=malte9799/FactorioTools&type=date&legend=top-left" />
+ </picture>
+</a>
