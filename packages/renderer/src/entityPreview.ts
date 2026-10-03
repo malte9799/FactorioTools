@@ -103,7 +103,13 @@ export function computeFitBox(tileFootprint: [number, number], commands: DrawCom
  *  renderer's SpriteAtlas (see spriteAtlas.ts's getSharedSpriteAtlas) so
  *  opening a properties panel never re-decodes a sheet the main canvas has
  *  already loaded. */
-export function mountEntityPreview(container: HTMLElement, entityName: string, direction: number, visual: ResolvedVisual): () => void {
+export function mountEntityPreview(
+  container: HTMLElement,
+  entityName: string,
+  direction: number,
+  visual: ResolvedVisual,
+  controlBehavior?: PlacedEntity["controlBehavior"],
+): () => void {
   const canvas = document.createElement("canvas");
   canvas.style.display = "block";
   canvas.style.width = "100%";
@@ -123,6 +129,8 @@ export function mountEntityPreview(container: HTMLElement, entityName: string, d
     quality: "normal",
     modules: [],
     filterItems: [],
+    // A combinator's display shows the operation it is set to.
+    controlBehavior,
   };
 
   let destroyed = false;

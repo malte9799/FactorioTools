@@ -668,3 +668,30 @@ export function perDirection<K extends string>(
   }
   return out;
 }
+
+/** A combinator's display: the small glowing symbol on top that shows the
+ *  operation it is set to. The prototype carries one four-facing set per
+ *  symbol (`plus_symbol_sprites`, `greater_symbol_sprites`, a selector's
+ *  `stack_size_sprites`, ...), all cut from the shared combinator-displays
+ *  sheet. Flattened into one `per: "connection"` layer keyed
+ *  `<symbol>-<facing>` — the renderer picks the key from the entity's own
+ *  settings. A symbol's shift sits above the body's on screen, which would
+ *  sort it underneath; the bias lifts every symbol just over `bodyShiftY`,
+ *  the lowest-sorting shift of the entity's own body art. */
+const DISPLAY_SORT_MARGIN = 0.05;
+
+export function combinatorDisplayLayer(proto: any, bodyShiftY: number): GraphicsLayer | undefined {
+  const sprites: Record<string, Sprite> = {};
+  for (const [field, perFacing] of Object.entries<any>(proto)) {
+    if (!field.endsWith("_sprites") || field === "activity_led_sprites") continue;
+    const symbol = field.replace(/(_symbol)?_sprites$/, "");
+    for (const facing of DIR4) {
+      const sprite = toSprite(perFacing?.[facing]);
+      if (sprite) sprites[`${symbol}-${facing}`] = sprite;
+    }
+  }
+  const all = Object.values(sprites);
+  if (all.length === 0) return undefined;
+  const highest = Math.min(...all.map((s) => s.shift?.[1] ?? 0));
+  return { layer: Layer.Object, sprites, per: "connection", ySortBias: bodyShiftY - highest + DISPLAY_SORT_MARGIN };
+}

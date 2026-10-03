@@ -237,7 +237,7 @@ export function buildPropertiesPanel(
   const visualLookup = buildVisualLookup(data, catalog);
   const visual = visualLookup.get(entity.name);
   let destroyPreview: (() => void) | undefined;
-  if (visual) destroyPreview = mountEntityPreview(previewWrap, entity.name, entity.direction, visual);
+  if (visual) destroyPreview = mountEntityPreview(previewWrap, entity.name, entity.direction, visual, entity.controlBehavior);
 
   // Name + status line.
   const header = document.createElement("div");

@@ -3,6 +3,7 @@ import type { ResolvedVisual } from "../entityLookup.js";
 import { dir4Name, dir8Name, toCardinal, opposite, splitterLaneCells, step, Dir, type Cardinal, type NeighbourGrid } from "../neighbours/grid.js";
 import { classifyPipe } from "../neighbours/pipe.js";
 import { classifyWall } from "../neighbours/wall.js";
+import { combinatorSymbol } from "../sprites/combinatorSymbol.js";
 import { classifyBeltCell, undergroundSideLoad, type BeltCap } from "../neighbours/beltGraph.js";
 import { classifyPlatform, type PlatformBox } from "../neighbours/platform.js";
 import type { FluidNetwork } from "../neighbours/fluid.js";
@@ -198,6 +199,10 @@ function resolveFrame(entity: PlacedEntity, visual: ResolvedVisual, ctx: Collect
       break;
     case "wall":
       frame.connectionName = classifyWall(x, y, ctx.grid, ctx.isWallLike);
+      break;
+    case "combinator":
+      // Not a neighbour rule: the display shows the entity's own operation.
+      frame.connectionName = `${combinatorSymbol(entity)}-${dir4Name(entity.direction)}`;
       break;
     case "belt": {
       if (entity.name.includes("splitter")) {
