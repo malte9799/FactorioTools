@@ -10,7 +10,9 @@ import { hoverCardHtml } from "./card.js";
 import { FULL_RESEARCH, LabFactory, type PortLimit, type Research } from "./factory.js";
 import { detectIssues, type Issue } from "./issues.js";
 import { drawOverlay, type HoverTarget, type PortTabRect } from "./overlay.js";
-import { loadSettings, saveSettings, type LabSettings } from "./settings.js";
+import { portEditorHtml, portTitle, wirePortList } from "./panels.js";
+import { formatRate, loadSettings, saveSettings, type LabSettings } from "./settings.js";
+import { makeFloatingWindow, type FloatingWindow } from "../window-manager.js";
 
 type Lanes = [LaneFeed | null, LaneFeed | null];
 
@@ -78,6 +80,11 @@ export class RateOverlay {
   private readonly userEnabled = new Map<string, boolean>();
   private readonly userLimits = new Map<string, PortLimit>();
   private hover: HoverTarget | undefined;
+  /** The port whose popup is open, if any. */
+  private editingPort: string | undefined;
+  private readonly portPopup: FloatingWindow;
+  private readonly portPopupTitle: HTMLSpanElement;
+  private readonly portPopupBody: HTMLDivElement;
   private pointer: { x: number; y: number } | undefined;
   private portTabs: PortTabRect[] = [];
   private tabDown: string | undefined;
@@ -103,7 +110,19 @@ export class RateOverlay {
     this.cardBody = document.createElement("div");
     this.cardBody.className = "gui-body";
     this.card.appendChild(this.cardBody);
-    (options.cardHost ?? stage.parentElement ?? document.body).appendChild(this.card);
+    const host = options.cardHost ?? stage.parentElement ?? document.body;
+    host.appendChild(this.card);
+
+    // Clicking a port's tab on the map opens this to edit that one port.
+    const popup = document.createElement("div");
+    popup.className = "gui-window lab-port-popup";
+    popup.hidden = true;
+    popup.innerHTML = `<div class="gui-titlebar"><span></span><span class="grip" aria-hidden="true"></span></div><div class="gui-body"></div>`;
+    host.appendChild(popup);
+    this.portPopupTitle = popup.querySelector(".gui-titlebar span")!;
+    this.portPopupBody = popup.querySelector(".gui-body")!;
+    this.portPopup = makeFloatingWindow(popup, { x: 0, y: 0, width: 320, onClose: () => (this.editingPort = undefined) });
+    wirePortList(this.portPopupBody, this, this.abort.signal);
     this.listen();
   }
 
@@ -132,6 +151,7 @@ export class RateOverlay {
       cancelAnimationFrame(this.raf);
       this.hover = undefined;
       this.card.hidden = true;
+      this.closePortPopup();
       return;
     }
     if (this.dirty || !this.factory) this.rebuild();
@@ -146,6 +166,7 @@ export class RateOverlay {
     this.userArms.clear();
     this.userEnabled.clear();
     this.userLimits.clear();
+    this.closePortPopup();
     this.justLoaded = entities;
     if (this.enabled) this.rebuild();
     else this.dirty = true;
@@ -188,6 +209,8 @@ export class RateOverlay {
     for (const [id, on] of this.userEnabled) if (ids.has(id)) f.setPortEnabled(id, on);
     for (const [id, limit] of this.userLimits) if (ids.has(id)) f.setPortLimit(id, limit);
     this.factory = f;
+    if (this.editingPort && !ids.has(this.editingPort)) this.closePortPopup();
+    else this.renderPortPopup();
     this.hover = undefined;
     this.issues = [];
     this.warm = WARM_TICKS;
@@ -211,25 +234,66 @@ export class RateOverlay {
   setPortEnabled(id: string, on: boolean) {
     this.factory?.setPortEnabled(id, on);
     this.userEnabled.set(id, on);
+    this.renderPortPopup();
     this.options.onPortsChange?.();
   }
 
   setInput(id: string, left: LaneFeed | null, right: LaneFeed | null) {
     this.factory?.setInput(id, left, right);
     this.userInputs.set(id, [left, right]);
+    this.renderPortPopup();
     this.options.onPortsChange?.();
   }
 
   setArmPortItems(id: string, items: string[]) {
     this.factory?.setArmPortItems(id, items);
     this.userArms.set(id, items);
+    this.renderPortPopup();
     this.options.onPortsChange?.();
   }
 
   setPortLimit(id: string, limit: PortLimit) {
     this.factory?.setPortLimit(id, limit);
     this.userLimits.set(id, limit);
+    this.renderPortPopup();
     this.options.onPortsChange?.();
+  }
+
+  /** Opens the editor for one port, beside its tab (screen pixels): to
+   *  the right, or to the left where there's no room. */
+  openPortPopup(id: string, tab?: { left: number; right: number; top: number }) {
+    this.editingPort = id;
+    this.renderPortPopup();
+    if (this.portPopup.el.hidden || tab) {
+      const w = this.portPopup.el.offsetWidth || 320;
+      const x = !tab ? window.innerWidth / 2 - w / 2 : tab.right + 12 + w <= window.innerWidth - 8 ? tab.right + 12 : tab.left - 12 - w;
+      this.portPopup.setPosition(x, tab ? tab.top - 12 : 120);
+      this.portPopup.show();
+    }
+    this.portPopup.bringToFront();
+  }
+
+  closePortPopup() {
+    this.editingPort = undefined;
+    this.portPopup.hide();
+  }
+
+  private renderPortPopup() {
+    const id = this.editingPort;
+    if (!id) return;
+    const p = this.factory?.ports().find((q) => q.id === id);
+    const html = portEditorHtml(this, id);
+    if (!p || !html) return this.closePortPopup();
+    this.portPopupTitle.textContent = portTitle(p);
+    this.portPopupBody.innerHTML = html;
+  }
+
+  /** Keeps the popup's live rate current without redrawing its fields. */
+  private tickPortPopup() {
+    const id = this.editingPort;
+    const el = id ? this.portPopupBody.querySelector<HTMLElement>("[data-port-now]") : null;
+    const p = el ? this.factory?.ports().find((q) => q.id === id) : undefined;
+    if (el && p) el.textContent = formatRate(p.rate, this.settings.style.rateUnit);
   }
 
   /** Simulate ahead: a minute at a time from the Simulation controls. */
@@ -247,6 +311,8 @@ export class RateOverlay {
     this.abort.abort();
     this.canvas.remove();
     this.card.remove();
+    this.portPopup.destroy();
+    this.portPopup.el.remove();
   }
 
   /* ---------- pointer ---------- */
@@ -277,13 +343,20 @@ export class RateOverlay {
       if (this.tabDown === undefined) return;
       e.stopPropagation();
       const tab = tabAt(e);
-      if (tab && tab.id === this.tabDown && this.factory) this.setPortEnabled(tab.id, !this.factory.portEnabled.get(tab.id));
+      if (tab && tab.id === this.tabDown) {
+        const r = stage.getBoundingClientRect();
+        this.openPortPopup(tab.id, { left: r.left + tab.x, right: r.left + tab.x + tab.w, top: r.top + tab.y });
+      }
     }, { signal, capture: true });
     stage.addEventListener("click", (e) => {
       if (this.tabDown === undefined) return;
       this.tabDown = undefined;
       e.stopPropagation();
     }, { signal, capture: true });
+
+    window.addEventListener("keydown", (e) => {
+      if (e.key === "Escape" && this.editingPort) this.closePortPopup();
+    }, { signal });
 
     stage.addEventListener("pointermove", (e) => {
       if (!this.enabled || !this.renderer) return;
@@ -391,13 +464,14 @@ export class RateOverlay {
         hover: this.settings.layers.hover ? this.hover : undefined,
         icons: getSharedIconAtlas(),
         showPorts: this.settings.layers.ports || this.forcePorts,
-        highlightPort: this.highlightPort,
+        highlightPort: this.highlightPort ?? this.editingPort,
       });
       if (now - this.lastUi > 400 && this.warm === 0) {
         this.lastUi = now;
         this.issues = detectIssues(f);
         this.options.onUpdate?.();
         this.renderCard();
+        this.tickPortPopup();
       }
     }
     this.raf = requestAnimationFrame(this.frame);

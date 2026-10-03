@@ -158,7 +158,7 @@ const TEMPLATE = `
       </div>
       <div class="rate-pane" data-pane="layers" hidden><div id="rate-layer-list" class="lab-layer-list"></div></div>
       <div class="rate-pane" data-pane="ports" hidden>
-        <p class="lab-note">Every open belt end is a port, and so is an inserter connected on one side only. Switch them here or by clicking a tab on the map; set the item, stack size and rate limit here (blank rate for none).</p>
+        <p class="lab-note">Every open belt end is a port, and so is an inserter connected on one side only. Click a tab on the map to edit that port: on/off, item, stack size and rate limit (blank for none). Every port is also listed here.</p>
         <div id="rate-port-list" class="lab-port-list"></div>
       </div>
       <div class="rate-pane" data-pane="sim" hidden>

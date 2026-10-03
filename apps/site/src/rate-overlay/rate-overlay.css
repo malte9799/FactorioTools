@@ -187,4 +187,15 @@
 .rate-flow-max { min-width: 34px; text-align: right; font: 11px var(--mono); color: var(--text-dim); font-variant-numeric: tabular-nums; }
 .rate-flow-tag { margin-left: 5px; padding: 0 4px; font: 10px/14px var(--mono); color: var(--text-dim); border: 1px solid var(--border); border-radius: 2px; }
 .rate-flow-empty { font-size: 12.5px; color: var(--text-dim); }
-.lab-port input[type="number"] { width: 64px; font-size: 12px; }
+.lab-port input[type="number"] { width: 84px; font-size: 12px; }
+
+/* The editor a port's tab opens on the map. */
+.lab-port-popup .gui-titlebar > span:first-child { flex: 1; }
+.lab-port-popup .gui-body { padding: 8px 12px 10px; }
+.lab-port.is-popup { flex-direction: column; align-items: stretch; gap: 8px; padding: 0; border-bottom: 0; }
+.lab-port.is-popup > label:not(.lab-port-head) { justify-content: space-between; }
+.lab-port.is-popup select { max-width: 170px; }
+.lab-port-now { display: flex; justify-content: space-between; font: 12.5px var(--mono); color: var(--text-dim); border-top: 1px solid var(--border); padding-top: 6px; }
+.lab-port-now b { color: var(--text); font-weight: 600; }
+.lab-port.is-popup.is-off { opacity: 1; }
+.lab-port.is-popup.is-off > :not(.lab-port-head) { opacity: 0.55; }

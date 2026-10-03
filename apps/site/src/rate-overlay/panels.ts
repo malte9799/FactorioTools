@@ -5,7 +5,7 @@ import type { LaneFeed } from "@factoriotools/sim";
 import { escapeHtml } from "../tools/blueprint-editor/html.js";
 import { CELL, getIconPosition, getSheetSize, onIconsReady, SHEET_URL } from "../tools/blueprint-editor/legacy-view/icons.js";
 import type { RateOverlay } from "./controller.js";
-import { machineStatus, type MachineStatus, type PortInfo, type Research } from "./factory.js";
+import { machineStatus, type LabFactory, type MachineStatus, type PortInfo, type Research } from "./factory.js";
 import { itemLabel } from "./issues.js";
 import { statusColor } from "./overlay.js";
 import { formatRate, PALETTES, PER, type LabSettings, type LaneState, type Palette, type RateUnit } from "./settings.js";
@@ -275,18 +275,19 @@ export function wireResearch(el: HTMLElement, overlay: RateOverlay, signal: Abor
 
 /* ---------- ports ---------- */
 
-export function renderPortList(el: HTMLElement, overlay: RateOverlay) {
-  const f = overlay.factory;
-  if (!f) {
-    el.innerHTML = `<p class="lab-empty">No ports.</p>`;
-    return;
-  }
+/** Markup for one port's editor: its on/off switch and whatever it can be
+ *  set to. The same row goes in the ports list and in the popup a tab
+ *  opens on the map. */
+function portRows(f: LabFactory, overlay: RateOverlay) {
   const label = (n: string) => escapeHtml(itemLabel(f.data, n));
   // The blueprint's own items first, then every other item to override with.
   const known = new Set(f.knownItems);
+  const seen = new Set(f.knownItems.map((n) => itemLabel(f.data, n)));
   const others = Object.keys(f.data.items)
-    .filter((n) => f.data.items[n]?.kind === "item" && !known.has(n))
-    .sort((a, b) => itemLabel(f.data, a).localeCompare(itemLabel(f.data, b)));
+    .filter((n) => f.data.items[n]?.kind === "item" && !known.has(n) && !NOT_CARGO.test(n))
+    .sort((a, b) => itemLabel(f.data, a).localeCompare(itemLabel(f.data, b)))
+    // Some items share a name (two "Vehicle machine gun"s); offer one.
+    .filter((n) => !seen.has(itemLabel(f.data, n)) && !!seen.add(itemLabel(f.data, n)));
   const opt = (n: string, cur: string | undefined) => `<option value="${escapeHtml(n)}" ${cur === n ? "selected" : ""}>${label(n)}</option>`;
   const options = (cur: string | undefined, empty = "(empty)") =>
     `<option value="">${empty}</option>` +
@@ -295,20 +296,19 @@ export function renderPortList(el: HTMLElement, overlay: RateOverlay) {
   const unit = overlay.settings.style.rateUnit;
   const rateField = (p: PortInfo) => {
     const v = p.limit.rate === undefined ? "" : +(p.limit.rate * PER[unit]).toFixed(3);
-    return `<label>Rate <input type="number" min="0" step="any" data-rate value="${v}" placeholder="max">/${unit}</label>`;
+    return `<label>Rate limit <input type="number" min="0" step="any" data-rate value="${v}" placeholder="none">/${unit}</label>`;
   };
-  const all = f.ports();
-  const head = (p: PortInfo) =>
+  const head = (p: PortInfo, popup: boolean) =>
     `<label class="lab-port-head"><input type="checkbox" data-toggle-port ${p.enabled ? "checked" : ""}>
-      <span class="lab-port-where">${p.via === "belt" ? "Belt" : "Arm"} · ${Math.floor(p.x)}, ${Math.floor(p.y)}</span>
+      ${popup ? `<span>${p.enabled ? "On" : "Off"}</span><span class="lab-port-where">at ${Math.floor(p.x)}, ${Math.floor(p.y)}</span>` : `<span class="lab-port-where">${p.via === "belt" ? "Belt" : "Arm"} · ${Math.floor(p.x)}, ${Math.floor(p.y)}</span>`}
       ${p.reason ? `<span class="lab-port-why">${escapeHtml(p.reason)}</span>` : ""}</label>`;
-  const row = (p: PortInfo) => {
+  return (p: PortInfo, popup = false) => {
     let body = "";
     if (p.kind === "input" && p.via === "belt") {
       const [l, r] = f.inputs.get(p.id) ?? [null, null];
       const stack = (l ?? r)?.stack ?? 1;
-      body = `<label>Left <select data-lane="0">${options(l?.item)}</select></label>
-        <label>Right <select data-lane="1">${options(r?.item)}</select></label>
+      body = `<label>Left lane <select data-lane="0">${options(l?.item)}</select></label>
+        <label>Right lane <select data-lane="1">${options(r?.item)}</select></label>
         <label>Stacked <select data-stack>${[1, 2, 3, 4].map((n) => `<option value="${n}" ${n === stack ? "selected" : ""}>×${n}</option>`).join("")}</select></label>
         ${rateField(p)}`;
     } else if (p.kind === "input") {
@@ -320,16 +320,42 @@ export function renderPortList(el: HTMLElement, overlay: RateOverlay) {
     } else {
       body = rateField(p);
     }
-    return `<div class="lab-port ${p.enabled ? "" : "is-off"}" data-port="${escapeHtml(p.id)}">${head(p)}${body}</div>`;
+    const now = popup ? `<div class="lab-port-now">Now <b data-port-now>${formatRate(p.rate, unit)}</b></div>` : "";
+    return `<div class="lab-port ${popup ? "is-popup" : ""} ${p.enabled ? "" : "is-off"}" data-port="${escapeHtml(p.id)}">${head(p, popup)}${body}${now}</div>`;
   };
+}
+
+/** A port's name for a window title: "Belt input". */
+export function portTitle(p: PortInfo): string {
+  return `${p.via === "belt" ? "Belt" : "Arm"} ${p.kind}`;
+}
+
+/** Items that never ride a belt: planners, remotes and placeholders. */
+const NOT_CARGO = /^(item-unknown|no-item|science|empty-module-slot)$|blueprint|planner|-tool$|-remote$/;
+
+/** One port's editor, for the popup a tab opens on the map. */
+export function portEditorHtml(overlay: RateOverlay, id: string): string | undefined {
+  const f = overlay.factory;
+  const p = f?.ports().find((q) => q.id === id);
+  return f && p ? portRows(f, overlay)(p, true) : undefined;
+}
+
+export function renderPortList(el: HTMLElement, overlay: RateOverlay) {
+  const f = overlay.factory;
+  if (!f) {
+    el.innerHTML = `<p class="lab-empty">No ports.</p>`;
+    return;
+  }
+  const row = portRows(f, overlay);
+  const all = f.ports();
   const group = (title: string, kind: "input" | "output") => {
     const ps = all.filter((p) => p.kind === kind);
     const main = kind === "input" ? ps.filter((p) => p.via === "arm" || p.items.length) : ps;
     const rest = kind === "input" ? ps.filter((p) => p.via === "belt" && !p.items.length) : [];
     return `<div class="lab-port-group"><h3>${title} <span class="lab-port-count">${ps.filter((p) => p.enabled).length} of ${ps.length} on</span></h3>
       <div class="lab-row"><button type="button" data-all="${kind}" data-on="1">All on</button><button type="button" data-all="${kind}" data-on="0">All off</button></div>
-      ${main.map(row).join("") || `<p class="lab-empty">None.</p>`}
-      ${rest.length ? `<details><summary>${rest.length} belt starts with nothing on them</summary>${rest.map(row).join("")}</details>` : ""}</div>`;
+      ${main.map((p) => row(p)).join("") || `<p class="lab-empty">None.</p>`}
+      ${rest.length ? `<details><summary>${rest.length} belt starts with nothing on them</summary>${rest.map((p) => row(p)).join("")}</details>` : ""}</div>`;
   };
   el.innerHTML = group("Inputs", "input") + group("Outputs", "output");
 }
