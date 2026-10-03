@@ -1,0 +1,38 @@
+name: Feature request
+description: Suggest something the tools should do, or do better
+title: "[Feature]: "
+labels: ["enhancement"]
+body:
+  - type: dropdown
+    id: area
+    attributes:
+      label: Which part is this for?
+      options:
+        - Blueprint editor – rendering
+        - Blueprint editor – rate calculator
+        - Blueprint editor – simulation / circuits
+        - Blueprint editor – editing, import or export
+        - Seed Viewer
+        - A new tool
+        - Something else
+    validations:
+      required: true
+  - type: textarea
+    id: problem
+    attributes:
+      label: What are you trying to do?
+      description: The problem or situation behind the request – what you were building or checking, and where the tools fell short.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: What would you like to see?
+      description: How it could look or behave. Sketches, screenshots from the game or links to other tools are welcome.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Workarounds or alternatives
+      description: How you get by today, or other approaches you considered.

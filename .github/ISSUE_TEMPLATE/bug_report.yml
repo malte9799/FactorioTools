@@ -1,0 +1,59 @@
+name: Bug report
+description: Something renders, calculates or simulates wrong, or the page breaks
+title: "[Bug]: "
+labels: ["bug"]
+body:
+  - type: dropdown
+    id: area
+    attributes:
+      label: Where does it happen?
+      options:
+        - Blueprint editor – rendering
+        - Blueprint editor – rate calculator
+        - Blueprint editor – simulation / circuits
+        - Blueprint editor – editing, import or export
+        - Seed Viewer
+        - Something else
+    validations:
+      required: true
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: What you saw, and what you expected instead. For anything visual, a screenshot next to the same spot in game helps a lot.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Import the blueprint below
+        2. Open Simulate
+        3. …
+    validations:
+      required: true
+  - type: textarea
+    id: blueprint
+    attributes:
+      label: Blueprint string
+      description: The smallest blueprint that still shows the problem is best.
+      render: text
+  - type: textarea
+    id: link
+    attributes:
+      label: Share link or map seed
+      description: A share link to the blueprint or map view, if you have one. For the Seed Viewer, give the seed, planet and any settings changed from default.
+  - type: input
+    id: browser
+    attributes:
+      label: Browser and OS
+      placeholder: Firefox 143 on Windows 11
+    validations:
+      required: true
+  - type: textarea
+    id: console
+    attributes:
+      label: Console errors
+      description: Anything red in the browser's developer console (F12), if you can get at it.
+      render: text
