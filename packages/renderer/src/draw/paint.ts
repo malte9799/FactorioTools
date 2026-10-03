@@ -219,8 +219,9 @@ export type CursorBoxStyle = "regular" | "pair";
 const CURSOR_BOX_ROW: Record<CursorBoxStyle, number> = { regular: 0, pair: 192 };
 
 /** cursor_box's size tiers from utility-sprites.lua: the first tier whose
- *  max_side_length fits the entity's larger side wins, so a bigger building
- *  gets longer, thicker brackets. Anything past the last tier uses it. */
+ *  max_side_length fits the entity's SHORTER side wins, so a bigger building
+ *  gets longer, thicker brackets — and a 1x2 one gets the same brackets as a
+ *  1x1. Anything past the last tier uses it. */
 const CURSOR_BOX_TIERS: { maxSide: number; x: number }[] = [
   { maxSide: 0.4, x: 256 },
   { maxSide: 0.7, x: 192 },
@@ -244,7 +245,7 @@ export function drawHoverHighlight(
   h: number,
   style: CursorBoxStyle = "regular",
 ): void {
-  const tier = CURSOR_BOX_TIERS.find((t) => Math.max(w, h) <= t.maxSide)!;
+  const tier = CURSOR_BOX_TIERS.find((t) => Math.min(w, h) <= t.maxSide)!;
   const sy = CURSOR_BOX_ROW[style];
   const left = x - w / 2;
   const top = y - h / 2;
