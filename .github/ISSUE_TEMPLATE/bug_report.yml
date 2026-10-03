@@ -36,9 +36,14 @@ body:
   - type: textarea
     id: blueprint
     attributes:
-      label: Blueprint string, share link or map seed
-      description: The smallest blueprint that still shows the problem is best. For the Seed Viewer, give the seed, planet and any settings changed from default (or the share link).
+      label: Blueprint string
+      description: The smallest blueprint that still shows the problem is best.
       render: text
+  - type: textarea
+    id: link
+    attributes:
+      label: Share link or map seed
+      description: A share link to the blueprint or map view, if you have one. For the Seed Viewer, give the seed, planet and any settings changed from default.
   - type: input
     id: browser
     attributes:
