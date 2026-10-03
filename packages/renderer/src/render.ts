@@ -11,8 +11,8 @@ import type { PlatformBox } from "./neighbours/platform.js";
 import { buildWireNetwork, resolveWires, terminalFor, type ResolvedWire, type WireNetwork } from "./neighbours/wires.js";
 import { drawSupplyAreas, drawWires, type SupplyArea } from "./draw/wireDraw.js";
 import { collectEntity, collectInserterPlatform, type CollectContext } from "./draw/collect.js";
-import { paint, paintPlain, drawOutline, drawHoverHighlight, drawUndergroundLine, type PaintTally } from "./draw/paint.js";
-import { getHoverHighlightSprite, getUndergroundLinesSprite } from "./hoverHighlightSprite.js";
+import { paint, paintPlain, drawOutline, drawHoverHighlight, drawInserterIndication, drawUndergroundLine, type PaintTally } from "./draw/paint.js";
+import { getHoverHighlightSprite, getIndicationSprites, getUndergroundLinesSprite } from "./hoverHighlightSprite.js";
 import { compareDrawCommands, type DrawCommand } from "./draw/commands.js";
 import { planBake, type BakePlan } from "./draw/bake.js";
 import { drawInserter } from "./sprites/inserter.js";
@@ -1237,6 +1237,12 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
         const [fw, fh] = effectiveFootprint(visual, hovered.direction);
         drawUndergroundPair(hovered, corner);
         drawHoverHighlight(ctx, corner, hovered.x, hovered.y, fw, fh);
+        // An inserter also shows where it picks up (bar) and drops (arrow).
+        const indication = visual.inserterGraphics && getIndicationSprites();
+        if (indication) {
+          const reach = hovered.name === "long-handed-inserter" ? 2 : 1;
+          drawInserterIndication(ctx, indication, hovered.x, hovered.y, toCardinal(hovered.direction), reach);
+        }
       }
     }
     // The ghost itself gets no yellow brackets — only its would-be pair.

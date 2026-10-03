@@ -280,3 +280,31 @@ export function drawUndergroundLine(ctx: CanvasRenderingContext2D, sheet: HTMLIm
   ctx.drawImage(sheet, 64, 0, 64, 64, -0.5, -0.5, 1, 1);
   ctx.restore();
 }
+
+/** How far from the inserter's centre its indication line and arrow sit,
+ *  in tiles, for a one-tile reach (measured off an in-game screenshot). */
+const INDICATION_DISTANCE = 0.87;
+
+/** A hovered inserter's own markers, the way the game shows them: the
+ *  indication_line bar across the side it picks up from (`pickup`, a 16-way
+ *  direction) and the indication_arrow pointing out of the side it drops
+ *  to. Both are 64px cells drawn at the game's scale 0.5 (one tile); the
+ *  arrow's own art points north. `reach` is how many tiles out the inserter
+ *  works (2 for a long-handed one). */
+export function drawInserterIndication(
+  ctx: CanvasRenderingContext2D,
+  sprites: { line: HTMLImageElement; arrow: HTMLImageElement },
+  x: number,
+  y: number,
+  pickup: number,
+  reach = 1,
+): void {
+  const distance = INDICATION_DISTANCE + reach - 1;
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.rotate((pickup / 16) * 2 * Math.PI);
+  ctx.drawImage(sprites.line, -0.5, -distance - 0.5, 1, 1);
+  ctx.rotate(Math.PI);
+  ctx.drawImage(sprites.arrow, -0.5, -distance - 0.5, 1, 1);
+  ctx.restore();
+}
