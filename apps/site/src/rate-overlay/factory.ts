@@ -334,9 +334,14 @@ export class LabFactory {
         const node = this.net.nodeAt(Math.floor(p.x), Math.floor(p.y));
         if (node?.line) {
           // An inserter drops on the lane farther from itself. It drops
-          // away from its facing, and picks up toward it.
+          // away from its facing, and picks up toward it. On a curve the
+          // lanes are judged against whichever of the belt's two travel
+          // directions the arm is beside: an arm on the outside of a curve
+          // reaches across to the inner lane, from either side.
           const away = (isDrop ? (facing + 2) % 4 : facing) as Card;
-          const lane: Lane = laneSide(node.dir, 0) === away ? 0 : 1;
+          const inLine = away === node.dir || away === (node.dir + 2) % 4;
+          const travel = node.curveFrom && inLine ? node.curveFrom.dir : node.dir;
+          const lane: Lane = laneSide(travel, 0) === away ? 0 : 1;
           return { kind: "belt", node, lane };
         }
         const chest = chestAt(p.x, p.y);
