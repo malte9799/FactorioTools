@@ -1,0 +1,57 @@
+name: Contribute
+description: Propose a change you would like to work on yourself
+title: "[Contribution]: "
+labels: ["help wanted"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for wanting to help! Opening this before you start lets us agree on the approach, so the pull request does not come as a surprise. Small fixes (typos, an obvious one-line bug) can go straight to a pull request.
+  - type: dropdown
+    id: kind
+    attributes:
+      label: What kind of contribution?
+      options:
+        - Bug fix
+        - New feature
+        - Entity or sprite coverage
+        - Game accuracy (rates, simulation, map generation)
+        - Example blueprints
+        - Documentation
+        - Tests or tooling
+        - Something else
+    validations:
+      required: true
+  - type: dropdown
+    id: package
+    attributes:
+      label: Which part of the repo?
+      multiple: true
+      options:
+        - apps/site
+        - packages/engine
+        - packages/sim
+        - packages/renderer
+        - packages/mapgen
+        - packages/data-pipeline
+        - Not sure
+  - type: textarea
+    id: what
+    attributes:
+      label: What do you want to change?
+      description: Link the related issue if there is one.
+    validations:
+      required: true
+  - type: textarea
+    id: how
+    attributes:
+      label: How do you plan to do it?
+      description: A rough outline is enough. Mention anything you are unsure about or would like input on.
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before you open the pull request
+      options:
+        - label: I can build the project from source (see the README) and will run `npm run check` and `npm test`
+        - label: My contribution can be released under the project's MIT licence
+          required: true
