@@ -226,3 +226,9 @@
 /* Its own compositor layer, so dragging it over the animated map moves a
    finished picture instead of repainting every icon on each step. */
 .lab-port-popup { will-change: transform; contain: layout paint; }
+.lab-item-picker { contain: content; }
+/* Grid cells are flat: no shadows to paint hundreds of times over. */
+.lab-item-grid .lab-item-slot { box-shadow: none; border-radius: 2px; background: #3c3c3c; }
+.lab-item-grid .lab-item-slot:hover { background: #f2b84a; box-shadow: none; }
+.lab-grid-icon { width: 28px; height: 28px; background-repeat: no-repeat; pointer-events: none; }
+.lab-item-more { width: 100%; margin-top: 4px; font-size: 12px; }

@@ -349,11 +349,13 @@ export function replacePortHtml(el: HTMLElement, html: string) {
   const query = search?.value ?? "";
   const pickerScroll = picker?.scrollTop ?? 0;
   const searching = !!search && document.activeElement === search;
+  const expanded = !!picker && !picker.querySelector("[data-lazy]");
   el.innerHTML = html;
   const again = openAt >= 0 ? el.querySelectorAll<HTMLButtonElement>("[data-pick]")[openAt] : undefined;
   if (again) {
     toggleItemPicker(again);
     const next = el.querySelector<HTMLElement>(".lab-item-picker")!;
+    if (expanded) fillLazyGroups(next);
     const box = next.querySelector<HTMLInputElement>("[data-item-search]")!;
     box.value = query;
     if (query) box.dispatchEvent(new Event("input", { bubbles: true }));
@@ -440,6 +442,8 @@ export function wirePortList(el: HTMLElement, overlay: RateOverlay, signal: Abor
     const target = e.target as HTMLElement;
     const slot = target.closest<HTMLButtonElement>("[data-pick]");
     if (slot) return toggleItemPicker(slot);
+    const more = target.closest<HTMLElement>("[data-show-all]");
+    if (more) return fillLazyGroups(more.closest(".lab-item-picker")!);
     const pick = target.closest<HTMLButtonElement>("[data-item]");
     if (pick) {
       const picker = pick.closest(".lab-item-picker")!;
@@ -461,8 +465,9 @@ export function wirePortList(el: HTMLElement, overlay: RateOverlay, signal: Abor
     if (!search) return;
     const q = search.value.trim().toLowerCase();
     const picker = search.closest(".lab-item-picker")!;
+    if (q) fillLazyGroups(picker);
     for (const b of picker.querySelectorAll<HTMLElement>("[data-item]")) b.hidden = !!q && !b.title.toLowerCase().includes(q);
-    for (const g of picker.querySelectorAll<HTMLElement>(".lab-item-group")) g.hidden = !g.querySelector("[data-item]:not([hidden])");
+    for (const g of picker.querySelectorAll<HTMLElement>(".lab-item-group")) g.hidden = !!q && !g.querySelector("[data-item]:not([hidden])");
   }, { signal });
   el.addEventListener("pointerover", (e) => {
     overlay.highlightPort = (e.target as HTMLElement).closest<HTMLElement>("[data-port]")?.dataset.port;
@@ -475,8 +480,48 @@ function slotIcon(name: string, label: string): string {
   return getIconPosition(name) ? iconHtml(name, 28) : `<span class="lab-item-initials">${escapeHtml(label.split(/\s+/).map((w) => w[0]).join("").slice(0, 3))}</span>`;
 }
 
-/** Which select each open icon grid sets. */
+/** Which select each open icon grid sets, and how it draws a cell. */
 const pickerFor = new WeakMap<Element, HTMLSelectElement>();
+const pickerCell = new WeakMap<Element, (value: string, title: string, inner: string) => string>();
+
+/** Draws the grid's deferred groups (every other item) into it. */
+function fillLazyGroups(picker: Element) {
+  const select = pickerFor.get(picker);
+  const cell = pickerCell.get(picker);
+  if (!select || !cell) return;
+  for (const g of picker.querySelectorAll<HTMLElement>("[data-lazy]")) {
+    const group = select.querySelectorAll("optgroup")[Number(g.dataset.lazy)]!;
+    g.innerHTML = `<span class="lab-field-label">${escapeHtml(group.label)}</span><div class="lab-item-grid">${[...group.querySelectorAll("option")].map((o) => cell(o.value, o.text, gridIcon(o.value, o.text))).join("")}</div>`;
+    delete g.dataset.lazy;
+  }
+}
+
+/** The icon sheet shrunk once to the grid's icon size, so painting an
+ *  icon is a plain copy rather than a resample of the whole sheet; a
+ *  grid of hundreds of icons stays smooth to hover and drag. */
+const GRID_ICON = 28;
+let gridSheet: string | undefined;
+onIconsReady(() => {
+  const img = new Image();
+  img.src = SHEET_URL;
+  img.decode().then(() => {
+    const k = GRID_ICON / CELL;
+    const c = document.createElement("canvas");
+    c.width = Math.round(img.naturalWidth * k);
+    c.height = Math.round(img.naturalHeight * k);
+    const ctx = c.getContext("2d")!;
+    ctx.imageSmoothingQuality = "high";
+    ctx.drawImage(img, 0, 0, c.width, c.height);
+    c.toBlob((b) => b && (gridSheet = URL.createObjectURL(b)));
+  }).catch(() => {});
+});
+
+function gridIcon(name: string, label: string): string {
+  const pos = gridSheet ? getIconPosition(name) : undefined;
+  if (!pos) return slotIcon(name, label);
+  const k = GRID_ICON / CELL;
+  return `<span class="lab-grid-icon" style="background-image:url(${gridSheet});background-position:${-Math.round(pos.x * k)}px ${-Math.round(pos.y * k)}px"></span>`;
+}
 
 /** Opens (or closes) the icon grid under an item slot, built from the
  *  options of the select it stands for. One grid open at a time. */
@@ -490,8 +535,15 @@ function toggleItemPicker(slot: HTMLButtonElement) {
   const cell = (value: string, title: string, inner: string) =>
     `<button type="button" class="lab-item-slot ${value === select.value ? "is-chosen" : ""} ${value ? "" : "is-empty"}" data-item="${escapeHtml(value)}" title="${escapeHtml(title)}">${inner}</button>`;
   const none = select.options[0]!;
+  // The blueprint's own items show straight away; the long list of every
+  // other item is only drawn once it's asked for (or searched), so the
+  // grid stays small and cheap to paint.
   const groups = [...select.querySelectorAll("optgroup")]
-    .map((g) => `<div class="lab-item-group"><span class="lab-field-label">${escapeHtml(g.label)}</span><div class="lab-item-grid">${[...g.querySelectorAll("option")].map((o) => cell(o.value, o.text, slotIcon(o.value, o.text))).join("")}</div></div>`)
+    .map((g, i) =>
+      i === 0
+        ? `<div class="lab-item-group"><span class="lab-field-label">${escapeHtml(g.label)}</span><div class="lab-item-grid">${[...g.querySelectorAll("option")].map((o) => cell(o.value, o.text, gridIcon(o.value, o.text))).join("")}</div></div>`
+        : `<div class="lab-item-group" data-lazy="${i}"><button type="button" class="lab-item-more" data-show-all>All items (${g.querySelectorAll("option").length})</button></div>`,
+    )
     .join("");
   const picker = document.createElement("div");
   picker.className = "lab-item-picker";
@@ -499,6 +551,7 @@ function toggleItemPicker(slot: HTMLButtonElement) {
   // Under the whole lane pair when there are two slots side by side.
   (field.closest(".lab-port-lanes") ?? field.closest("label") ?? field).after(picker);
   pickerFor.set(picker, select);
+  pickerCell.set(picker, cell);
   slot.classList.add("is-open");
   picker.querySelector<HTMLInputElement>("[data-item-search]")!.focus();
 }
