@@ -212,7 +212,9 @@ export type GraphicsLayer = {
    *  facing's own entry is missing. */
   | { sprites: Partial<Record<Dir4Name, Sprite>>; per: "dir4" }
   | { sprites: Partial<Record<Dir8Name, Sprite>>; per: "dir8" }
-  /** Keyed by a connector's variant name (pipe/wall connection shapes). */
+  /** Keyed by a connector's variant name (pipe/wall connection shapes, or
+   *  a combinator's display symbol as `<symbol>-<facing>`, e.g.
+   *  `plus-north`). */
   | { sprites: Record<string, Sprite>; per: "connection" }
   /** One cover sprite per cardinal facing, drawn once per unconnected
    *  fluid-box connection point rather than baked into a single per-entity
@@ -274,7 +276,7 @@ export interface EntityGraphics {
 
 /** Names a neighbour-classification rule; the rules live in
  *  packages/renderer/src/neighbours. */
-export type ConnectorKind = "pipe" | "heat-pipe" | "wall" | "belt" | "platform";
+export type ConnectorKind = "pipe" | "heat-pipe" | "wall" | "belt" | "platform" | "combinator";
 
 
 export interface MachineProto {

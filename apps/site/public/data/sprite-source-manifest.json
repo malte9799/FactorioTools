@@ -95,6 +95,7 @@
     "__base__/graphics/entity/chemical-plant/chemical-plant.png",
     "__base__/graphics/entity/combinator/arithmetic-combinator-shadow.png",
     "__base__/graphics/entity/combinator/arithmetic-combinator.png",
+    "__base__/graphics/entity/combinator/combinator-displays.png",
     "__base__/graphics/entity/combinator/constant-combinator-shadow.png",
     "__base__/graphics/entity/combinator/constant-combinator.png",
     "__base__/graphics/entity/combinator/decider-combinator-shadow.png",

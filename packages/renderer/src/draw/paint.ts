@@ -219,8 +219,9 @@ export type CursorBoxStyle = "regular" | "pair";
 const CURSOR_BOX_ROW: Record<CursorBoxStyle, number> = { regular: 0, pair: 192 };
 
 /** cursor_box's size tiers from utility-sprites.lua: the first tier whose
- *  max_side_length fits the entity's larger side wins, so a bigger building
- *  gets longer, thicker brackets. Anything past the last tier uses it. */
+ *  max_side_length fits the entity's SHORTER side wins, so a bigger building
+ *  gets longer, thicker brackets — and a 1x2 one gets the same brackets as a
+ *  1x1. Anything past the last tier uses it. */
 const CURSOR_BOX_TIERS: { maxSide: number; x: number }[] = [
   { maxSide: 0.4, x: 256 },
   { maxSide: 0.7, x: 192 },
@@ -244,7 +245,7 @@ export function drawHoverHighlight(
   h: number,
   style: CursorBoxStyle = "regular",
 ): void {
-  const tier = CURSOR_BOX_TIERS.find((t) => Math.max(w, h) <= t.maxSide)!;
+  const tier = CURSOR_BOX_TIERS.find((t) => Math.min(w, h) <= t.maxSide)!;
   const sy = CURSOR_BOX_ROW[style];
   const left = x - w / 2;
   const top = y - h / 2;
@@ -278,5 +279,47 @@ export function drawUndergroundLine(ctx: CanvasRenderingContext2D, sheet: HTMLIm
   ctx.translate(x, y);
   ctx.rotate((travel / 16) * 2 * Math.PI);
   ctx.drawImage(sheet, 64, 0, 64, 64, -0.5, -0.5, 1, 1);
+  ctx.restore();
+}
+
+/** How far from the inserter's centre its indication line and arrow sit,
+ *  in tiles, for a one-tile reach (measured off an in-game screenshot). */
+const INDICATION_DISTANCE = 0.87;
+
+/** A hovered inserter's own markers, the way the game shows them: the
+ *  indication_line bar across the side it picks up from (`pickup`, a 16-way
+ *  direction) and the indication_arrow pointing out of the side it drops
+ *  to. Both are 64px cells drawn at the game's scale 0.5 (one tile); the
+ *  arrow's own art points north. `reach` is how many tiles out the inserter
+ *  works (2 for a long-handed one). */
+export function drawInserterIndication(
+  ctx: CanvasRenderingContext2D,
+  sprites: { line: HTMLImageElement; arrow: HTMLImageElement },
+  x: number,
+  y: number,
+  pickup: number,
+  reach = 1,
+): void {
+  const distance = INDICATION_DISTANCE + reach - 1;
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.rotate((pickup / 16) * 2 * Math.PI);
+  ctx.drawImage(sprites.line, -0.5, -distance - 0.5, 1, 1);
+  ctx.rotate(Math.PI);
+  ctx.drawImage(sprites.arrow, -0.5, -distance - 0.5, 1, 1);
+  ctx.restore();
+}
+
+/** A hovered combinator's two direction arrows, the way the game shows
+ *  them: one indication_arrow over the input half and one over the output
+ *  half, both pointing the way signals flow (`facing`, a 16-way direction).
+ *  Each sits 0.75 tiles from the centre of the 1x2 body (measured off an
+ *  in-game screenshot). */
+export function drawDirectionArrows(ctx: CanvasRenderingContext2D, arrow: HTMLImageElement, x: number, y: number, facing: number): void {
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.rotate((facing / 16) * 2 * Math.PI);
+  ctx.drawImage(arrow, -0.5, -0.75 - 0.5, 1, 1);
+  ctx.drawImage(arrow, -0.5, 0.75 - 0.5, 1, 1);
   ctx.restore();
 }
