@@ -230,12 +230,18 @@ export function drawOverlay(fr: OverlayFrame): PortTabRect[] {
         const x = ins.pickupAt.x + (ins.dropAt.x - ins.pickupAt.x) * t;
         const y = ins.pickupAt.y + (ins.dropAt.y - ins.pickupAt.y) * t;
         const icon = fr.icons.get(ins.hand);
-        if (icon && S.itemStyle === "icons") ctx.drawImage(icon.sheet, icon.cell.x, icon.cell.y, icon.cell.w, icon.cell.h, x - 0.24, y - 0.24, 0.48, 0.48);
-        else {
-          ctx.fillStyle = itemColor(ins.hand);
-          ctx.beginPath();
-          ctx.arc(x, y, 0.13, 0, Math.PI * 2);
-          ctx.fill();
+        // A full hand draws as the same pile a stacked belt slot does, capped
+        // at four copies so a big bulk-inserter hand stays readable.
+        const pile = Math.max(1, Math.min(4, ins.handCount));
+        for (let k = 0; k < pile; k++) {
+          const yk = y - k * 0.07;
+          if (icon && S.itemStyle === "icons") ctx.drawImage(icon.sheet, icon.cell.x, icon.cell.y, icon.cell.w, icon.cell.h, x - 0.24, yk - 0.24, 0.48, 0.48);
+          else {
+            ctx.fillStyle = itemColor(ins.hand);
+            ctx.beginPath();
+            ctx.arc(x, yk, 0.13, 0, Math.PI * 2);
+            ctx.fill();
+          }
         }
       }
     }
