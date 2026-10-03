@@ -450,6 +450,35 @@ test("a spread drop also fits one item just upstream of the middle, then waits f
   assert.equal(s.dropOnTile(tile, 1, "iron-gear-wheel", 1, true), true, "once the belt moves on there's room again");
 });
 
+test("a drop tops up the gaps a belt speed-up leaves, shoving the items behind back", () => {
+  // Compressed red onto blue: items arrive 1.5 spacings apart, too close
+  // for a whole item, yet in the game an arm still fills the lane.
+  const { net, sim: s } = sim([...row(0, 3, 0, E, "fast-transport-belt"), ...row(4, 9, 0, E, "express-transport-belt")]);
+  s.setInput(inputAt(net, 0, 0), FULL(), null);
+  const tile = net.nodeAt(6, 0)!;
+  const out = outputAt(net, 9, 0);
+  s.step(600);
+  s.resetCounters();
+  for (let t = 0; t < 3600; t++) {
+    s.dropOnTile(tile, 0, "iron-gear-wheel", 1, true);
+    s.step();
+    assertInvariants(s, net);
+  }
+  near(s.portRate(out), 22.5);
+  near(s.portRate(inputAt(net, 0, 0)), 15);
+});
+
+test("a drop can't shove a compressed lane back a whole slot", () => {
+  const { net, sim: s } = sim(row(0, 5, 0, E));
+  s.setInput(inputAt(net, 0, 0), FULL(), null);
+  s.step(600);
+  const tile = net.nodeAt(3, 0)!;
+  for (let t = 0; t < 60; t++) {
+    assert.equal(s.dropOnTile(tile, 0, "iron-gear-wheel", 1, true), false);
+    s.step();
+  }
+});
+
 /* ---------- belt stacking ---------- */
 
 test("stacked turbo belts carry four times as many items (240/s)", () => {
