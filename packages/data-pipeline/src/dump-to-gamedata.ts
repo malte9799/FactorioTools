@@ -480,7 +480,7 @@ function graphicsForBeacon(proto: any): EntityGraphics | undefined {
 
 
 function graphicsForBelt(proto: any): EntityGraphics | undefined {
-  return beltGraphics(proto.belt_animation_set);
+  return beltGraphics(proto);
 }
 
 /* ---------- mapping ---------- */

@@ -334,10 +334,21 @@ export function animationListGraphics(list: any[] | undefined): EntityGraphics |
   return layers.length > 0 ? { layers } : undefined;
 }
 
+/** The column axis of a belt-like entity's moving lane. The game advances
+ *  that animation `speed * animation_speed_coefficient` frames a tick, so a
+ *  red belt steps two columns of its sheet each tick and a blue one three —
+ *  every tier at one column a tick made the faster belts look slower than
+ *  they are. Every vanilla belt, underground, splitter and loader sets the
+ *  coefficient to 32. */
+export function beltAnimationAxis(proto: any): GraphicsLayer["column"] {
+  const speedup = (proto.speed ?? 0) * (proto.animation_speed_coefficient ?? 32);
+  return speedup > 0 && speedup !== 1 ? { by: "animation", speedup } : { by: "animation" };
+}
+
 /** A belt's sheet holds every connection shape as one of 20 rows; the column
  *  is the animation frame. */
-export function beltGraphics(animationSet: any): EntityGraphics | undefined {
-  const sprite = toSprite(animationSet?.animation_set);
+export function beltGraphics(proto: any): EntityGraphics | undefined {
+  const sprite = toSprite(proto.belt_animation_set?.animation_set);
   if (!sprite) return undefined;
   return {
     connector: "belt",
@@ -345,7 +356,7 @@ export function beltGraphics(animationSet: any): EntityGraphics | undefined {
       {
         layer: Layer.LowerObject,
         sprites: sprite,
-        column: { by: "animation" },
+        column: beltAnimationAxis(proto),
         row: { by: "connection" },
       },
     ],
