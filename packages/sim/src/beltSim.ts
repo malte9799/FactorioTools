@@ -473,12 +473,17 @@ export class BeltSim {
   }
 
   /** Puts a stack of up to four items down in the middle of one lane of a
-   *  belt tile, if there is room — an inserter's drop. */
-  dropOnTile(node: BeltNode, laneIdx: Lane, item: string, count = 1): boolean {
+   *  belt tile, if there is room — an inserter's drop. With `spread`, a spot
+   *  a quarter tile either side of the middle will do too: a hand sweeping
+   *  over the belt lets go wherever there's a gap, so it can empty several
+   *  slots in one tick. */
+  dropOnTile(node: BeltNode, laneIdx: Lane, item: string, count = 1, spread = false): boolean {
     const lane = this.lane(node.line!, laneIdx);
     const seg = node.line!.lanes[laneIdx].segments[this.segmentOf(node, laneIdx)]!;
-    const p = seg.start + seg.length / 2;
-    if (!lane.hasRoomAt(p)) return false;
+    const mid = seg.start + seg.length / 2;
+    const spots = spread ? [mid, mid + seg.length / 4, mid - seg.length / 4] : [mid];
+    const p = spots.find((q) => lane.hasRoomAt(q));
+    if (p === undefined) return false;
     lane.insert(p, pack(this.itemId(item), Math.max(1, Math.min(MAX_BELT_STACK, count))));
     return true;
   }

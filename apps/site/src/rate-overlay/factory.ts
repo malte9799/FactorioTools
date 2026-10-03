@@ -22,7 +22,8 @@ export const FULL_RESEARCH: Research = { hands: "full", beltStack: 4 };
 /** Arm rotation speed at normal quality, revolutions per tick, from the
  *  prototypes (an inserter's tooltip shows it as degrees per second: 0.014
  *  is 302°/s). Quality multiplies it like machine speed: legendary is 2.5×.
- *  Fast, bulk and stack inserters share one arm speed. */
+ *  Fast, bulk and stack inserters share one arm speed. Pickup to drop and
+ *  back is one full revolution. */
 const ROTATION_SPEED: Record<string, number> = {
   "burner-inserter": 0.013,
   inserter: 0.014,
@@ -32,19 +33,12 @@ const ROTATION_SPEED: Record<string, number> = {
   "stack-inserter": 0.04,
 };
 
-/** Share of a full revolution one pickup-to-drop-and-back trip takes. The
- *  hand doesn't have to reach the middle of a tile to pick up or drop: it
- *  works as soon as it's over the chest or belt, so each half swing is well
- *  short of 180°. Fitted to in-game chest-to-belt rates for every arm at
- *  normal and legendary quality with full capacity research. */
-const TRIP_SHARE = 0.7;
-
-/** Approximate hand sizes without and with full inserter capacity research. */
+/** Hand sizes without and with full inserter capacity research. */
 function handSizeFor(name: string, research: Research): number {
   const full = research.hands === "full";
   if (name.includes("stack")) return full ? 16 : 4;
   if (name.includes("bulk")) return full ? 12 : 2;
-  return full ? 3 : 1;
+  return full ? 4 : 1;
 }
 
 export interface MachineSim {
@@ -373,9 +367,9 @@ export class LabFactory {
       };
       const handSize = e.overrideStackSize ?? handSizeFor(e.name, research);
       // Quality speeds the arm's rotation up the same way it speeds up
-      // machines. Kept fractional: a legendary stack arm takes 9.6 ticks.
+      // machines. Kept fractional: a normal inserter's trip is 71.4 ticks.
       const rotation = ROTATION_SPEED[e.name] ?? proto.throughput / 60;
-      const swing = TRIP_SHARE / rotation / (data.qualityMachineSpeed[e.quality] ?? 1);
+      const swing = 1 / rotation / (data.qualityMachineSpeed[e.quality] ?? 1);
       const tripTicks = Math.max(4, swing);
       const ins: InserterSim = {
         entity: e,
@@ -907,12 +901,13 @@ export class LabFactory {
         delivered = ins.handCount;
         ins.handCount = 0;
       } else if (d.kind === "belt") {
-        // One slot per tick as space opens up under the hand: a whole stack
-        // for a stack inserter, a single item for anything else.
-        const n = ins.stacksOnBelt ? Math.min(ins.handCount, this.research.beltStack) : 1;
-        if (this.belts.dropOnTile(d.node, d.lane, ins.hand!, n)) {
+        // Every slot with room under the hand, each tick: a whole stack for
+        // a stack inserter, a single item for anything else.
+        while (ins.handCount > 0) {
+          const n = ins.stacksOnBelt ? Math.min(ins.handCount, this.research.beltStack) : 1;
+          if (!this.belts.dropOnTile(d.node, d.lane, ins.hand!, n, true)) break;
           ins.handCount -= n;
-          delivered = n;
+          delivered += n;
         }
       } else if (d.kind === "box") {
         // As much of the hand as fits; the rest waits for space.

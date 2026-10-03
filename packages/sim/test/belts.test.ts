@@ -440,6 +440,14 @@ test("dropping on a belt tile needs a gap, and the item then travels on", () => 
   assert.equal(s.portRate(outputAt(net, 5, 0)) * 300 / 60, 1);
 });
 
+test("a spread drop fills the gaps either side of the middle, then stops", () => {
+  const { net, sim: s } = sim(row(0, 5, 0, E));
+  const tile = net.nodeAt(2, 0)!;
+  for (let k = 0; k < 3; k++) assert.equal(s.dropOnTile(tile, 1, "iron-gear-wheel", 1, true), true);
+  assert.equal(s.dropOnTile(tile, 1, "iron-gear-wheel", 1, true), false, "all three spots taken");
+  assert.equal(s.tileLoad(tile, 1).count, 3);
+});
+
 /* ---------- belt stacking ---------- */
 
 test("stacked turbo belts carry four times as many items (240/s)", () => {
