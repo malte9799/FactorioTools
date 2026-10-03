@@ -3093,3 +3093,16 @@ canvas.select-mode {
 .circuit-placeholder { color: var(--text-dim); }
 .bp-edit-description-preview { margin-top: 6px; padding: 6px 8px; white-space: pre-wrap; font-size: 13px; line-height: 1.5; background: var(--panel-2); border: 1px solid var(--border); }
 .bp-edit-description-preview .icon { --icon-size: 16px; vertical-align: -3px; background-color: transparent; border: none; box-shadow: none; }
+/* Compact output choice: two one-line radios beside a slot, as in game. */
+.circuit-output-choice.is-compact { gap: 0; }
+.circuit-output-choice.is-compact .circuit-radio { min-height: 19px; font-size: 13.5px; }
+.circuit-const { min-width: 14px; font-variant-numeric: tabular-nums; }
+.circuit-const-input { width: 70px; padding: 1px 4px; font-size: 13px; }
+.circuit-output-row .circuit-pen { width: 18px; height: 18px; font-size: 11px; }
+.circuit-wires.is-inline { flex-direction: row; gap: 8px; margin-left: 4px; }
+.circuit-output-row { padding-top: 2px; padding-bottom: 2px; }
+.circuit-output-row .circuit-remove { height: 34px; }
+/* A condition that holds lights green, as in game. */
+.circuit-row.is-met { background: #5fb85a; border-color: #2e6e2a; box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.25); }
+.circuit-row.is-met .circuit-wire, .circuit-row.is-met .circuit-text-view { color: #10240e; }
+.circuit-row.is-met .circuit-grip { opacity: 0.35; }

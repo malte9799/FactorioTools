@@ -258,8 +258,8 @@ export function buildCircuitSection(container: HTMLElement, entity: PlacedEntity
   };
 
   /** The game's stacked R / G checkboxes: which wires an operand reads. */
-  const wires = (nets: BpNetworks | undefined, onChange: ((n: BpNetworks | undefined) => void) | undefined): HTMLElement => {
-    const wrap = el("div", `circuit-wires${onChange ? "" : " is-off"}`);
+  const wires = (nets: BpNetworks | undefined, onChange: ((n: BpNetworks | undefined) => void) | undefined, inline = false): HTMLElement => {
+    const wrap = el("div", `circuit-wires${onChange ? "" : " is-off"}${inline ? " is-inline" : ""}`);
     for (const color of ["red", "green"] as const) {
       const row = el("label", `circuit-wire is-${color}`);
       const box = el("input");
@@ -331,6 +331,13 @@ export function buildCircuitSection(container: HTMLElement, entity: PlacedEntity
     return b;
   };
 
+  /** Keeps a row green while `holds` says its condition is met. */
+  const lightWhile = (holds: () => boolean, target: () => HTMLElement) => {
+    const refresh = () => target().classList.toggle("is-met", holds());
+    refreshers.push(refresh);
+    queueMicrotask(refresh);
+  };
+
   /** [signal] [comparator] [value], the plain condition row. */
   const conditionRow = (cond: BpCircuitCondition | undefined, allow: Wildcards, onChange: (c: BpCircuitCondition) => void): HTMLElement => {
     const c: BpCircuitCondition = cond ?? {};
@@ -342,6 +349,9 @@ export function buildCircuitSection(container: HTMLElement, entity: PlacedEntity
       delete next.second_signal;
       onChange(next);
     }));
+    // Green while the condition holds, as in game; a display panel's
+    // message lights its whole row.
+    lightWhile(() => cb.live()?.test(n, c) ?? false, () => (row.parentElement?.classList.contains("circuit-message") ? row.parentElement : row));
     return row;
   };
 
@@ -542,6 +552,7 @@ export function buildCircuitSection(container: HTMLElement, entity: PlacedEntity
           list[i]!.constant = v;
         })));
         row.append(el("span", "circuit-grip"), removeButton(() => edit((list) => list.splice(i, 1))));
+        lightWhile(() => cb.live()?.rowHolds(n, c) ?? false, () => row);
         cbox.appendChild(row);
       });
       fullButton(cbox, "+ Add condition", () => edit((list) => list.push(list.length ? { comparator: "<", constant: 0, compare_type: "and" } : { comparator: "<", constant: 0 })));
@@ -566,19 +577,31 @@ export function buildCircuitSection(container: HTMLElement, entity: PlacedEntity
           }
         });
         const copy = o.copy_count_from_input !== false;
-        const choice = el("div", "circuit-output-choice");
+        const choice = el("div", "circuit-output-choice is-compact");
+        // "◯ 1 ✎": the constant, edited in place behind the pencil.
         const constRow = radio(`out${i}`, "", !copy, () => edit((_, list) => (list[i]!.copy_count_from_input = false)));
-        constRow.appendChild(valueBox(undefined, o.constant ?? 1, [], () => {}, (v) => edit((_, list) => {
-          list[i]!.constant = v;
-          list[i]!.copy_count_from_input = false;
-        })));
-        // A constant output has no signal to pick: only the number.
-        constRow.querySelector(".circuit-value")?.classList.add("is-inline");
+        const value = el("span", "circuit-const", String(o.constant ?? 1));
+        const pen = el("button", "circuit-pen", "✎");
+        pen.type = "button";
+        pen.title = "Set the value";
+        pen.addEventListener("click", (e) => {
+          e.preventDefault();
+          const input = numberInput(o.constant ?? 1, (v) => edit((_, list) => {
+            list[i]!.constant = v;
+            list[i]!.copy_count_from_input = false;
+          }), "circuit-number circuit-const-input");
+          value.replaceWith(input);
+          pen.hidden = true;
+          input.focus();
+          input.select();
+        });
+        constRow.append(value, pen);
+        // "◯ Input count ☑R ☑G" on one line.
         const copyRow = radio(`out${i}`, "Input count", copy, () => edit((_, list) => delete list[i]!.copy_count_from_input));
         copyRow.appendChild(wires(o.networks, copy ? (nets) => edit((_, list) => {
           if (nets) list[i]!.networks = nets;
           else delete list[i]!.networks;
-        }) : undefined));
+        }) : undefined, true));
         choice.append(constRow, copyRow);
         row.append(choice, el("span", "circuit-grip"), removeButton(() => edit((_, list) => list.splice(i, 1))));
         obox.appendChild(row);

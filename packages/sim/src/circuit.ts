@@ -324,6 +324,28 @@ export class CircuitSim {
     return testCondition(cond, this.merged(n));
   }
 
+  /** Whether one decider row holds on its own, as the game lights it in
+   *  the GUI: with Each or Anything, when any input signal passes; with
+   *  Everything, when all do. */
+  rowHolds(n: number, cond: BpDeciderCondition): boolean {
+    if (!cond.first_signal?.name) return false;
+    const left = this.merged(n, 1, cond.first_signal_networks);
+    const right = cond.second_signal?.name && !wildcard(cond.second_signal) ? (this.merged(n, 1, cond.second_signal_networks).get(signalKey(cond.second_signal)) ?? 0) : (cond.constant ?? 0);
+    const wild = wildcard(cond.first_signal);
+    if (wild === EVERYTHING) {
+      for (const v of left.values()) if (!compare(cond.comparator, v, right)) return false;
+      return true;
+    }
+    if (wild) {
+      for (const [k, v] of left) {
+        const r = wildcard(cond.second_signal) === EACH ? (this.merged(n, 1, cond.second_signal_networks).get(k) ?? 0) : right;
+        if (compare(cond.comparator, v, r)) return true;
+      }
+      return false;
+    }
+    return compare(cond.comparator, left.get(signalKey(cond.first_signal)) ?? 0, right);
+  }
+
   lamp(n: number): LampState {
     const e = this.entities.get(n);
     const cb = e?.controlBehavior;

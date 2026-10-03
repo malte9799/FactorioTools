@@ -237,4 +237,17 @@ test("display panel shows the first message whose condition holds", () => {
   assert.deepEqual(sim.display(panel.entityNumber), { icon: v("signal-check"), text: "ok" });
 });
 
+test("a decider row lights on its own: named, Each, Everything", () => {
+  const cc = constant([[item("coal"), 5], [item("stone"), 9]]);
+  const d = ent("decider-combinator", { decider_conditions: { conditions: [], outputs: [] } });
+  const sim = new CircuitSim([cc, d], [wire("red", cc, 1, d, 1)]);
+  sim.step();
+  const n = d.entityNumber;
+  assert.equal(sim.rowHolds(n, { first_signal: item("coal"), comparator: "=", constant: 5 }), true);
+  assert.equal(sim.rowHolds(n, { first_signal: item("coal"), comparator: "=", constant: 5, first_signal_networks: { red: false } }), false);
+  assert.equal(sim.rowHolds(n, { first_signal: EACH, comparator: ">", constant: 8 }), true);
+  assert.equal(sim.rowHolds(n, { first_signal: ALL, comparator: ">", constant: 8 }), false);
+  assert.equal(sim.rowHolds(n, {}), false);
+});
+
 console.log(`\n${passed} passing`);
