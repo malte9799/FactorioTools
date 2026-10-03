@@ -473,15 +473,21 @@ export class BeltSim {
   }
 
   /** Puts a stack of up to four items down in the middle of one lane of a
-   *  belt tile, if there is room — an inserter's drop. With `spread`, a spot
-   *  a quarter tile either side of the middle will do too: a hand sweeping
-   *  over the belt lets go wherever there's a gap, so it can empty several
-   *  slots in one tick. */
+   *  belt tile, if there is room — an inserter's drop. With `spread`, the
+   *  hand can also let go anywhere up to 3/8 of a tile upstream of the
+   *  middle, as close behind the items already there as fits. That's
+   *  room for one more item right away on a fresh gap, then one each time
+   *  the belt carries the last one a slot further: an arm empties its hand
+   *  faster on a faster belt. Fitted to in-game chest-to-belt rates on
+   *  yellow and turbo belts. */
   dropOnTile(node: BeltNode, laneIdx: Lane, item: string, count = 1, spread = false): boolean {
     const lane = this.lane(node.line!, laneIdx);
     const seg = node.line!.lanes[laneIdx].segments[this.segmentOf(node, laneIdx)]!;
     const mid = seg.start + seg.length / 2;
-    const spots = spread ? [mid, mid + seg.length / 4, mid - seg.length / 4] : [mid];
+    const back = mid - Math.round((seg.length * 3) / 8);
+    // Front-most first: the middle, then right behind each item in reach.
+    const spots = [mid];
+    if (spread) for (const q of lane.pos) if (q - SP < mid && q - SP >= back) spots.push(q - SP);
     const p = spots.find((q) => lane.hasRoomAt(q));
     if (p === undefined) return false;
     lane.insert(p, pack(this.itemId(item), Math.max(1, Math.min(MAX_BELT_STACK, count))));

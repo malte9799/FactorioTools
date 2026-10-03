@@ -440,12 +440,14 @@ test("dropping on a belt tile needs a gap, and the item then travels on", () => 
   assert.equal(s.portRate(outputAt(net, 5, 0)) * 300 / 60, 1);
 });
 
-test("a spread drop fills the gaps either side of the middle, then stops", () => {
+test("a spread drop also fits one item just upstream of the middle, then waits for the belt", () => {
   const { net, sim: s } = sim(row(0, 5, 0, E));
   const tile = net.nodeAt(2, 0)!;
-  for (let k = 0; k < 3; k++) assert.equal(s.dropOnTile(tile, 1, "iron-gear-wheel", 1, true), true);
-  assert.equal(s.dropOnTile(tile, 1, "iron-gear-wheel", 1, true), false, "all three spots taken");
-  assert.equal(s.tileLoad(tile, 1).count, 3);
+  for (let k = 0; k < 2; k++) assert.equal(s.dropOnTile(tile, 1, "iron-gear-wheel", 1, true), true);
+  assert.equal(s.dropOnTile(tile, 1, "iron-gear-wheel", 1, true), false, "the next spot is out of the hand's reach");
+  assert.equal(s.tileLoad(tile, 1).count, 2);
+  s.step(16);
+  assert.equal(s.dropOnTile(tile, 1, "iron-gear-wheel", 1, true), true, "once the belt moves on there's room again");
 });
 
 /* ---------- belt stacking ---------- */
