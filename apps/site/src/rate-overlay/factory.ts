@@ -617,7 +617,10 @@ export class LabFactory {
     for (const e of labs) {
       const proto = data.machines[e.name]!;
       const r = resolveMachine(data, proto, e, beacons);
-      const speed = r.baseSpeed * Math.max(0.2, 1 + r.totalEffects.speed + (research.labSpeed === "full" ? LAB_SPEED_BONUS : 0));
+      // Unlike most bonuses, the research one multiplies with module and
+      // beacon speed rather than adding to it.
+      const researchSpeed = research.labSpeed === "full" ? 1 + LAB_SPEED_BONUS : 1;
+      const speed = r.baseSpeed * researchSpeed * Math.max(0.2, 1 + r.totalEffects.speed);
       const unitsPerCraft = 1 / (proto.packDrain ?? 1);
       const [w, h] = proto.tileFootprint ?? proto.size;
       this.machines.push({
