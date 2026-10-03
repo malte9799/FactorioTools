@@ -5,7 +5,7 @@
   "type": "module",
   "main": "src/index.ts",
   "scripts": {
-    "test": "tsx test/calc.test.ts && tsx test/throughput.test.ts && tsx test/scale.test.ts && tsx test/blueprint-roundtrip.test.ts && tsx test/blueprint-tree.test.ts",
+    "test": "tsx test/calc.test.ts && tsx test/throughput.test.ts && tsx test/scale.test.ts && tsx test/blueprint-roundtrip.test.ts && tsx test/blueprint-tree.test.ts && tsx test/richtext.test.ts",
     "check": "tsc --noEmit"
   },
   "dependencies": {

@@ -10,7 +10,7 @@ import { makeFloatingWindow, type FloatingWindow } from "../../window-manager.js
 import { RateOverlay } from "../../rate-overlay/controller.js";
 import { clockText, overviewHtml, renderLayerList, renderPortList, RESEARCH_HTML, wireLayerList, wirePortList, wireResearch } from "../../rate-overlay/panels.js";
 import { DEFAULTS, PALETTES, type LabSettings } from "../../rate-overlay/settings.js";
-import { getCurrentBlueprint } from "../../current-blueprint.js";
+import { getCurrentBlueprint, getCurrentWires } from "../../current-blueprint.js";
 import { currentQuality, onQualityChange } from "../../render-presets.js";
 import { GRAPHICS_WINDOW_HTML, wireGraphicsPanel } from "../../graphics-panel.js";
 
@@ -260,8 +260,9 @@ export function mountOverlayLab(root: HTMLElement): () => void {
     $("#lab-loading").hidden = true;
     const entities = getCurrentBlueprint();
     $("#lab-empty").hidden = entities.length > 0;
-    renderer.loadBlueprint(entities);
-    overlay.load(entities);
+    const wires = getCurrentWires();
+    renderer.loadBlueprint(entities, wires);
+    overlay.load(entities, wires);
   })();
 
   return () => {

@@ -55,6 +55,11 @@ Plus a live map seed viewer.
       splitters — so lane imbalance and starved inputs show up the way they
       would in game. Run at 1×, 4× or 16×, skip ahead a minute, and toggle
       inserter capacity research and belt stacking.
+      <br><br>
+      <b>Circuits run too:</b> constant, arithmetic, decider and selector
+      combinators on separate red and green networks — Each, Anything and
+      Everything included — switch belts, inserters and machines on and off,
+      read their contents, and light lamps and display panels.
     </td>
   </tr>
   <tr>
@@ -192,7 +197,7 @@ tiles and oil wells are the ones the game places, with their amounts.
 2. In game, copy a blueprint to the clipboard.
 3. Click **Import / Export → Import from clipboard** and paste the string or link.
    No blueprint handy? **Load a random example** picks from 170+ curated builds.
-4. Open **Rates** to see what it produces, where it loses output, and why.
+4. Open **Simulate** to see what it produces, where it loses output, and why.
 
 ## 🧰 Build from source
 
@@ -315,7 +320,7 @@ flowchart LR
 | Workspace | What it holds |
 |---|---|
 | [`packages/engine`](packages/engine) | Blueprint decode/encode, the rate calculator, prototype types. No DOM. |
-| [`packages/sim`](packages/sim) | Tick-by-tick belt simulation: per-lane transport lines, curves, side-loading, undergrounds, splitters. No DOM. |
+| [`packages/sim`](packages/sim) | Tick-by-tick belt simulation: per-lane transport lines, curves, side-loading, undergrounds, splitters; and the circuit network. No DOM. |
 | [`packages/mapgen`](packages/mapgen) | Factorio 2.0 map generation: noise expressions, spot and Voronoi noise, cliffs, entity placement. No DOM. |
 | [`packages/renderer`](packages/renderer) | Canvas renderer: sprite atlas, neighbour classification, camera, draw passes. |
 | [`packages/data-pipeline`](packages/data-pipeline) | One-time scripts that turn a Factorio install into the dataset. |

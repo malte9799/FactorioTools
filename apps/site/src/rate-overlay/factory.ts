@@ -4,8 +4,8 @@
  *  lands. Machines craft at the engine's calculated speed (modules, beacons
  *  and quality included); inserters are a fixed-time swing derived from
  *  their arm's rotation speed and quality, carrying a researched hand. */
-import { calculate, type GameData, type PlacedEntity } from "@factoriotools/engine";
-import { BeltSim, beltSpecResolver, buildBeltNetwork, cardOf, DX, DY, laneSide, type BeltLine, type BeltNetwork, type BeltNode, type Card, type Lane, type LaneFeed } from "@factoriotools/sim";
+import { calculate, type BpControlBehavior, type GameData, type PlacedEntity, type WireLink } from "@factoriotools/engine";
+import { BeltSim, beltSpecResolver, buildBeltNetwork, cardOf, CircuitSim, DX, DY, laneSide, parseSignalKey, signalKey, type BeltLine, type BeltNetwork, type BeltNode, type Card, type Lane, type LaneFeed, type Signals } from "@factoriotools/sim";
 
 const EMA = 1 / 300; // ~5 s at 60 ticks/s
 
@@ -63,6 +63,8 @@ export interface MachineSim {
   missing?: string;
   feeders: InserterSim[];
   takers: InserterSim[];
+  /** Switched off by its circuit condition this tick. */
+  circuitOff: boolean;
 }
 
 export type Target =
@@ -149,6 +151,9 @@ const CONTAINER = /chest|container|wagon/;
 
 /** Chests whose blueprint settings say what they hold. */
 const KNOWN_CHEST = /requester|buffer|infinity|creative/;
+/** Shown by the circuit layer even when unwired. */
+const CIRCUIT_SHOWN = /lamp|display-panel|combinator/;
+
 /** Entities players put next to a belt to label what's on it. */
 const LABELS = /constant-combinator|display-panel/;
 
@@ -171,7 +176,27 @@ export interface InserterSim {
   handCount: number;
   busy: number;
   moved: number;
+  /** Switched off by its circuit condition this tick: the arm freezes. */
+  circuitOff: boolean;
+  /** Picked up this tick, for a pulse hand read. */
+  picked?: { item: string; count: number };
 }
+
+/** A belt tile with circuit settings: an enable condition, a read, or both. */
+interface BeltControl {
+  entity: PlacedEntity;
+  node: BeltNode;
+  cb: BpControlBehavior;
+  /** Last tick's contents, for a pulse read. */
+  last: Map<string, number>;
+  off: boolean;
+}
+
+const itemSignals = (counts: Iterable<[string, number]>): Signals => {
+  const out: Signals = new Map();
+  for (const [name, n] of counts) if (n) out.set(`item:${name}`, (out.get(`item:${name}`) ?? 0) + n);
+  return out;
+};
 
 export type MachineStatus = "working" | "arm" | "starved" | "output" | "idle";
 
@@ -202,6 +227,7 @@ export interface Efficiency {
 const FLOW_WINDOW_SAMPLES = 60; // one sample per 30 ticks: 30 s, long enough to smooth stack-sized bursts
 
 export function machineStatus(m: MachineSim): MachineStatus {
+  if (m.circuitOff) return "idle";
   if (m.uptime > 0.94) return "working";
   const worst = Math.max(m.armBound, m.starved, m.outFull);
   if (worst < 0.02) return "idle";
@@ -284,10 +310,19 @@ export class LabFactory {
     /** Tiles an entity covers (width, height at direction 0), for anything
      *  the dataset doesn't size itself; 1×1 when unknown. */
     footprintOf: (name: string) => [number, number] | undefined = () => undefined,
+    /** The blueprint's wires: red and green ones make circuit networks. */
+    readonly wires: WireLink[] = [],
   ) {
     this.net = buildBeltNetwork(entities, beltSpecResolver(data));
     this.belts = new BeltSim(this.net);
     this.meter = new LaneMeter(this.belts, this.net.lines);
+    this.circuits = new CircuitSim(entities, wires, { stackSizeOf: (n) => data.items[n]?.stackSize });
+    this.circuitEntities = entities.filter((e) => this.circuits.isWired(e.entityNumber) || CIRCUIT_SHOWN.test(e.name));
+    for (const e of entities) {
+      if (!e.controlBehavior || !e.name.includes("transport-belt") || !this.circuits.isWired(e.entityNumber)) continue;
+      const node = this.net.nodeAt(Math.floor(e.x), Math.floor(e.y));
+      if (node?.line) this.beltControls.push({ entity: e, node, cb: e.controlBehavior, last: new Map(), off: false });
+    }
 
     const calc = calculate(data, entities);
     const byNumber = new Map(entities.map((e) => [e.entityNumber, e] as const));
@@ -320,6 +355,7 @@ export class LabFactory {
           outFull: 0,
           feeders: [],
           takers: [],
+          circuitOff: false,
         });
       }
     }
@@ -421,6 +457,7 @@ export class LabFactory {
         handCount: 0,
         busy: 0,
         moved: 0,
+        circuitOff: false,
       };
       // An arm connected on one side only is a port on its open side.
       const tile = (p: { x: number; y: number }) => ({ x: Math.floor(p.x) + 0.5, y: Math.floor(p.y) + 0.5 });
@@ -656,6 +693,14 @@ export class LabFactory {
     return undefined;
   }
 
+  /** The red and green wire networks, run each tick before everything
+   *  else so buildings act on what the wires carried. */
+  readonly circuits: CircuitSim;
+  /** Entities the circuit layer draws and the hover card describes: every
+   *  wired one, plus lamps and display panels. */
+  readonly circuitEntities: PlacedEntity[];
+  private readonly beltControls: BeltControl[] = [];
+
   /** What each belt input feeds when it's on; kept while it's off. */
   readonly inputs = new Map<string, [LaneFeed | null, LaneFeed | null]>();
   readonly armPorts: ArmPort[] = [];
@@ -793,16 +838,89 @@ export class LabFactory {
 
   step(ticks = 1) {
     for (let i = 0; i < ticks; i++) {
+      const wired = this.circuits.networks.length > 0;
+      if (wired) this.readCircuits();
       this.belts.step();
       for (const m of this.machines) this.stepMachine(m);
       this.fillArmTokens();
       for (const ins of this.inserters) this.stepInserter(ins);
+      if (wired) this.writeCircuits();
       this.tick++;
       if (this.tick % 30 === 0) {
         this.meter.sample(this.tick);
         this.sampleFlows();
       }
     }
+  }
+
+  /** Steps the networks and switches buildings on or off by their
+   *  conditions. */
+  private readCircuits() {
+    const c = this.circuits;
+    c.step();
+    for (const b of this.beltControls) {
+      const off = c.enabled(b.entity.entityNumber) === false;
+      if (off !== b.off) this.belts.setTileEnabled(b.node, !off);
+      b.off = off;
+    }
+    for (const m of this.machines) m.circuitOff = c.enabled(m.entity.entityNumber) === false;
+    for (const ins of this.inserters) ins.circuitOff = c.enabled(ins.entity.entityNumber) === false;
+  }
+
+  /** What buildings read onto their wires this tick; on the networks from
+   *  the next. */
+  private writeCircuits() {
+    const c = this.circuits;
+    for (const b of this.beltControls) {
+      if (!b.cb.circuit_read_hand_contents) continue;
+      const mode = b.cb.circuit_contents_read_mode ?? 0;
+      const now = this.belts.tileContents(b.node, mode === 2);
+      if (mode === 0) {
+        // Pulse: what arrived on the tile this tick.
+        const fresh: [string, number][] = [...now].map(([k, n]) => [k, Math.max(0, n - (b.last.get(k) ?? 0))]);
+        c.setOutput(b.entity.entityNumber, itemSignals(fresh));
+      } else c.setOutput(b.entity.entityNumber, itemSignals(now));
+      b.last = now;
+    }
+    for (const ins of this.inserters) {
+      const cb = ins.entity.controlBehavior;
+      if (!cb?.circuit_read_hand_contents) continue;
+      const hold = (cb.circuit_hand_read_mode ?? 0) === 1;
+      const shown = hold ? (ins.hand ? { item: ins.hand, count: ins.handCount } : undefined) : ins.picked;
+      c.setOutput(ins.entity.entityNumber, shown ? itemSignals([[shown.item, shown.count]]) : undefined);
+    }
+    for (const m of this.machines) {
+      const cb = m.entity.controlBehavior;
+      if (!cb || !c.isWired(m.entity.entityNumber)) continue;
+      const out: Signals = cb.read_contents ? itemSignals([...m.buffer, ...m.out]) : new Map();
+      if (cb.read_working && m.crafting) out.set(signalKey(cb.working_signal?.name ? cb.working_signal : { type: "virtual", name: "signal-W" }), 1);
+      c.setOutput(m.entity.entityNumber, out);
+    }
+    // A chest always reads its contents onto its wires.
+    for (const box of this.boxes) {
+      if (box.entity && c.isWired(box.entity.entityNumber)) c.setOutput(box.entity.entityNumber, itemSignals(box.contents));
+    }
+  }
+
+  /** Items an inserter set to take its filters from the circuit takes:
+   *  every item signal above zero. Undefined when it doesn't. */
+  private circuitFilters(ins: InserterSim): Set<string> | undefined {
+    const n = ins.entity.entityNumber;
+    if (!ins.entity.controlBehavior?.circuit_set_filters || !this.circuits.isWired(n)) return undefined;
+    const out = new Set<string>();
+    for (const [k, v] of this.circuits.merged(n)) {
+      const s = parseSignalKey(k);
+      if (s.type === "item" && v > 0) out.add(s.name);
+    }
+    return out;
+  }
+
+  /** Hand size an inserter's circuit stack-size signal sets, if any. */
+  private circuitStack(ins: InserterSim): number | undefined {
+    const cb = ins.entity.controlBehavior;
+    if (!cb?.circuit_set_stack_size || !cb.stack_control_input_signal?.name) return undefined;
+    const v = this.circuits.merged(ins.entity.entityNumber).get(signalKey(cb.stack_control_input_signal)) ?? 0;
+    return v > 0 ? v : undefined;
   }
 
   /** Rate-limited arm ports earn items tick by tick, banking up to one
@@ -848,6 +966,14 @@ export class LabFactory {
   }
 
   private stepMachine(m: MachineSim) {
+    if (m.circuitOff) {
+      // Switched off: the craft pauses where it is.
+      m.uptime -= m.uptime * EMA;
+      m.armBound -= m.armBound * EMA;
+      m.starved -= m.starved * EMA;
+      m.outFull -= m.outFull * EMA;
+      return;
+    }
     const tryStart = () => {
       if (this.outputFull(m)) return false;
       for (const ing of m.ingredients) {
@@ -907,7 +1033,11 @@ export class LabFactory {
 
   private wants(ins: InserterSim, item: string): boolean {
     const e = ins.entity;
-    if (e.useFilters && e.filterItems.some(Boolean)) {
+    const fromCircuit = this.circuitFilters(ins);
+    if (fromCircuit) {
+      const listed = fromCircuit.has(item);
+      if (e.filterMode === "blacklist" ? listed : !listed) return false;
+    } else if (e.useFilters && e.filterItems.some(Boolean)) {
       const listed = e.filterItems.includes(item);
       if (e.filterMode === "blacklist" ? listed : !listed) return false;
     }
@@ -930,12 +1060,19 @@ export class LabFactory {
     const cap = d.kind === "box" ? d.box.capacity - d.box.total : ins.handSize;
     // An input port set to a smaller stack hands over that many per swing.
     const stack = ins.pickup.kind === "port" ? (this.portLimits.get(ins.pickup.port.id)?.stack ?? Infinity) : Infinity;
-    return Math.max(1, Math.min(ins.handSize, cap, stack));
+    return Math.max(1, Math.min(ins.handSize, cap, stack, this.circuitStack(ins) ?? Infinity));
   }
 
   private stepInserter(ins: InserterSim) {
     const half = ins.tripTicks / 2;
     let delivered = 0;
+    ins.picked = undefined;
+    if (ins.circuitOff) {
+      // Switched off: the arm stops wherever it is.
+      ins.busy -= ins.busy * EMA;
+      ins.moved -= ins.moved * EMA;
+      return;
+    }
     // Travel first. Arriving at either end picks up or drops in the same
     // tick, and the unused part of the tick carries into the next leg, so a
     // round trip takes exactly tripTicks rather than rounding up.
@@ -1013,6 +1150,7 @@ export class LabFactory {
         if (p.kind === "chest" || p.kind === "port") bump(this.armIn, got, count);
       }
       if (ins.hand !== undefined && ins.handCount >= this.handTarget(ins, ins.hand)) {
+        ins.picked = { item: ins.hand, count: ins.handCount };
         ins.phase = "out";
         ins.t += half;
       } else ins.t = 0;

@@ -306,12 +306,12 @@ export interface BlueprintRenderer {
    *  (InteractionMode's 'wire' kind), INSTEAD of onSelect — the app pairs
    *  two of these into one connect/disconnect. Clicks that hit no entity
    *  never fire it, and never cancel anything (see onPointerDown). */
-  onWireClick(callback: (entityNumber: number) => void): void;
+  onWireClick(callback: (entityNumber: number, world: { x: number; y: number }) => void): void;
   /** Arms (or disarms, with null) the entity an in-progress wire trails
    *  from, so the renderer can draw the dangling end to the cursor while a
    *  two-click connect is half-finished. The app owns the pick itself; this
    *  only tells the renderer what to draw. */
-  setPendingWire(entityNumber: number | null): void;
+  setPendingWire(entityNumber: number | null, side?: 1 | 2): void;
   /** Fires when a box drawn in 'deleteBox' mode completes (drag-release or
    *  a plain click) and hits at least one entity — the app deletes them
    *  immediately. Mode stays 'deleteBox' afterward; the renderer does not
@@ -510,6 +510,7 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
    *  armed. The app owns the pick itself; this is only what the renderer
    *  needs to draw the dangling end. */
   let pendingWireFrom: number | null = null;
+  let pendingWireSide: 1 | 2 = 1;
   let grid = new NeighbourGrid();
   let fluidNetwork = new FluidNetwork();
   let heatNetwork = new HeatNetwork();
@@ -1185,7 +1186,7 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
     const trailing: ResolvedWire[] = [];
     if (mode.kind === "wire" && pendingWireFrom !== null) {
       const from = entityById.get(pendingWireFrom);
-      const start = from && terminalFor(from, visualFor(from.name), directionOf(from), mode.color);
+      const start = from && terminalFor(from, visualFor(from.name), directionOf(from), mode.color, pendingWireSide);
       if (start) {
         const cursor = worldAtScreenPoint(lastPointer.x, lastPointer.y);
         trailing.push({ color: mode.color, x1: start.x, y1: start.y, x2: cursor.x, y2: cursor.y, reaches: true });
@@ -2059,7 +2060,7 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
     if (mode.kind === "wire") {
       const world = worldAtPointer(e);
       const hit = spatialIndex.hitTest(world.x, world.y);
-      if (hit !== undefined) wireClickCallback?.(hit);
+      if (hit !== undefined) wireClickCallback?.(hit, world);
       return;
     }
 
@@ -2231,7 +2232,7 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
   let selectCallback: ((entityNumber: number) => void) | null = null;
   let eraseCallback: ((entityNumber: number) => void) | null = null;
   let altRightClickCallback: ((entityNumber: number) => void) | null = null;
-  let wireClickCallback: ((entityNumber: number) => void) | null = null;
+  let wireClickCallback: ((entityNumber: number, world: { x: number; y: number }) => void) | null = null;
   let deleteBoxCallback: ((entityNumbers: ReadonlySet<number>) => void) | null = null;
   let cutBoxCallback: ((entityNumbers: ReadonlySet<number>) => void) | null = null;
   let copyBoxCallback: ((entityNumbers: ReadonlySet<number>) => void) | null = null;
@@ -2537,9 +2538,10 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
     onWireClick(callback) {
       wireClickCallback = callback;
     },
-    setPendingWire(entityNumber) {
-      if (pendingWireFrom === entityNumber) return;
+    setPendingWire(entityNumber, side = 1) {
+      if (pendingWireFrom === entityNumber && pendingWireSide === side) return;
       pendingWireFrom = entityNumber;
+      pendingWireSide = side;
       invalidate();
     },
     onDeleteBox(callback) {

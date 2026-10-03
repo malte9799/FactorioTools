@@ -4,6 +4,7 @@ import {
   denormaliseEntities,
   encodeBlueprintString,
   normaliseEntities,
+  normaliseWires,
   toBlueprint,
 } from "../src/blueprint.js";
 import type { BpEntity, BlueprintEnvelope, PlacedEntity } from "../src/types.js";
@@ -266,6 +267,30 @@ test("item hints come from combinators, display panels, infinity and requester c
   assert.deepEqual(inf!.signalItems, ["coal"]);
   assert.deepEqual(req!.signalItems, ["stone", "sulfur"]);
   assert.equal(belt!.signalItems, undefined);
+});
+
+test("circuit settings and wires round-trip unchanged (a decider clock)", () => {
+  const clock = "0eNqNUv1qgzAQf5f7O5bqtGuFPUkRiXquB5q4JLaT4rvvErt1LTJGQEwu9/u6XKHqRhwMKQf5FajWykJ+vIKldyU7f6Zkj5BDgzU1aKJa9xUp6bSBWQCpBj8hj2ex0uLBnFRuvSeZCwGoHDnChTNsplKNfYWGQcVfQAIGbblXK8/IeOnLbpMJmCCP9ttNxkTc5ozuygpP8kzcwxct1r7HPv4z+bcTAS11Ds3z6U3KResGVVSf0DrW8DHKjjVzQWnTs3vP2g/SBI05vIWD0acbzwWv2Sf1ZDQRf4S84vPw4LIhs/jg0rrnG2rJtYZ+3P/esdOWjHXlfYZuGryiMxk3Bl83icuNCGV9giXjMBp2sfUD1aMbRvf8hv4FtvqGHvIOfMNUhkTL1ui+JMV0kLeysxjiZQ0XTsQrOMYiFomIC3FMhF9pwVVy2DPw/d0LOPO4Q4DZLjmkh0O2T3ev/JnnL6V9ELU=";
+  const original = decodeBlueprintString(clock).blueprint!;
+  const entities = normaliseEntities(original);
+  const out = toBlueprint(entities, original, normaliseWires(original));
+  assert.deepEqual(out.entities!.map((e) => e.control_behavior), original.entities!.map((e) => e.control_behavior));
+  assert.deepEqual(out.wires, original.wires);
+  // Editing the copy never touches the decoded blueprint.
+  entities[0]!.controlBehavior!.is_on = false;
+  assert.equal(original.entities![0]!.control_behavior!.is_on, undefined);
+});
+
+test("display panel text, icon and lamp colour round-trip", () => {
+  const entities: BpEntity[] = [
+    { entity_number: 1, name: "display-panel", position: { x: 0.5, y: 0.5 }, text: "Hi", icon: { type: "virtual", name: "signal-A" }, always_show: true },
+    { entity_number: 2, name: "small-lamp", position: { x: 1.5, y: 0.5 }, color: { r: 1, g: 0, b: 0, a: 1 } },
+  ];
+  const back = denormaliseEntities(normaliseEntities({ item: "blueprint", entities }));
+  assert.equal(back[0]!.text, "Hi");
+  assert.deepEqual(back[0]!.icon, { type: "virtual", name: "signal-A" });
+  assert.equal(back[0]!.always_show, true);
+  assert.deepEqual(back[1]!.color, { r: 1, g: 0, b: 0, a: 1 });
 });
 
 console.log(`\n${passed} passing`);

@@ -1,11 +1,30 @@
 /** The hover card: what the thing under the cursor is doing, in words. */
+import { getRenderCatalog } from "@factoriotools/engine";
 import { escapeHtml } from "../tools/blueprint-editor/html.js";
+import { circuitCardHtml } from "./circuit-card.js";
 import { machineStatus, type LabFactory } from "./factory.js";
 import { itemLabel, recipeLabel, type Issue } from "./issues.js";
 import { laneState, statusColor, type HoverTarget } from "./overlay.js";
 import { formatRate, PALETTES, type LabSettings } from "./settings.js";
 
 export function hoverCardHtml(f: LabFactory, hover: HoverTarget, settings: LabSettings, issues: Issue[]): string {
+  const base = baseCardHtml(f, hover, settings, issues);
+  const entity =
+    hover.kind === "circuit" ? hover.entity
+    : hover.kind === "machine" ? hover.machine.entity
+    : hover.kind === "inserter" ? hover.inserter.entity
+    : hover.kind === "box" ? hover.box.entity
+    : hover.kind === "belt" ? f.entities.find((e) => Math.floor(e.x) === hover.node.x && Math.floor(e.y) === hover.node.y)
+    : undefined;
+  const circuit = entity ? circuitCardHtml(f, entity) : "";
+  return base + circuit;
+}
+
+function baseCardHtml(f: LabFactory, hover: HoverTarget, settings: LabSettings, issues: Issue[]): string {
+  if (hover.kind === "circuit") {
+    const e = hover.entity;
+    return `<div class="lab-card-title">${escapeHtml(getRenderCatalog().entities[e.name]?.localised ?? f.data.items[e.name]?.localised ?? e.name)}</div>`;
+  }
   const pal = PALETTES[settings.style.palette];
   const row = (a: string, b: string) => `<div class="lab-card-row"><span>${a}</span><span>${b}</span></div>`;
   const rate = (perSecond: number) => formatRate(perSecond, settings.style.rateUnit);

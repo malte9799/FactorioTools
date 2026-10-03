@@ -3,7 +3,7 @@
  *  hover card and clickable port tabs. The blueprint editor and the
  *  Overlay Lab both drive one of these; each brings its own windows. */
 import "./rate-overlay.css";
-import { getData, getRenderCatalog, type PlacedEntity } from "@factoriotools/engine";
+import { getData, getRenderCatalog, type PlacedEntity, type WireLink } from "@factoriotools/engine";
 import { getSharedIconAtlas, type BlueprintRenderer } from "@factoriotools/renderer";
 import type { LaneFeed } from "@factoriotools/sim";
 import { hoverCardHtml } from "./card.js";
@@ -13,11 +13,12 @@ import { drawOverlay, type HoverTarget, type PortTabRect } from "./overlay.js";
 import { portEditorHtml, portTitle, replacePortHtml, wirePortList } from "./panels.js";
 import { formatRate, loadSettings, saveSettings, type LabSettings } from "./settings.js";
 import { makeFloatingWindow, type FloatingWindow } from "../window-manager.js";
+import { SimClock } from "../sim-clock.js";
 
 type Lanes = [LaneFeed | null, LaneFeed | null];
 
 /** Every layer off: what the ports-only mode draws under its tabs. */
-const NO_LAYERS: LabSettings["layers"] = { dim: false, lanes: false, rings: false, hover: false, items: false, ports: false };
+const NO_LAYERS: LabSettings["layers"] = { dim: false, lanes: false, rings: false, hover: false, items: false, ports: false, circuits: false };
 
 /** Ticks simulated before the overlay counts as settled: a factory that
  *  has been running for a minute rather than one just switched on, so the
@@ -74,6 +75,7 @@ export class RateOverlay {
   private readonly cardBody: HTMLDivElement;
   private readonly abort = new AbortController();
   private entities: PlacedEntity[] = [];
+  private wires: WireLink[] = [];
   private justLoaded: PlacedEntity[] | undefined;
   /** What the user set on ports by hand, by port id. Port ids come from
    *  tile positions, so these survive an edit to the blueprint and are laid
@@ -98,8 +100,7 @@ export class RateOverlay {
   private dirty = false;
   private rebuildTimer = 0;
   private raf = 0;
-  private last = 0;
-  private acc = 0;
+  private readonly clock = new SimClock();
   private lastUi = 0;
   private lastDraw = 0;
 
@@ -148,7 +149,27 @@ export class RateOverlay {
 
   /** Running and drawing: the full overlay, or only its port tabs. */
   private get active() {
-    return this.enabled || this.portsOnly;
+    return this.enabled || this.portsOnly || (this.altDisplays && this.hasAltDisplays);
+  }
+
+  /** Alt mode is on: draw display panels set to "Always show in Alt-mode".
+   *  The model only runs for it while such a panel exists. */
+  setAltDisplays(on: boolean) {
+    if (on === this.altDisplays) return;
+    const was = this.active;
+    this.altDisplays = on;
+    this.activeChanged(was);
+  }
+
+  private altDisplays = false;
+  private hasAltDisplays = false;
+
+  /** Picks up a display panel's alt-mode setting appearing or going away
+   *  with an edit. */
+  private checkAltDisplays() {
+    const was = this.active;
+    this.hasAltDisplays = this.entities.some((e) => /display-panel/.test(e.name) && e.panel?.alwaysShow);
+    this.activeChanged(was);
   }
 
   /** Shows or hides the overlay. Hidden, nothing is simulated or drawn; an
@@ -183,32 +204,36 @@ export class RateOverlay {
       return;
     }
     if (this.dirty || !this.factory) this.rebuild();
-    this.last = performance.now();
+    this.clock.reset(performance.now());
     this.raf = requestAnimationFrame(this.frame);
   }
 
   /** A new blueprint: forget hand-made port settings and start over. */
-  load(entities: PlacedEntity[]) {
+  load(entities: PlacedEntity[], wires: WireLink[] = []) {
     this.entities = entities;
+    this.wires = wires;
     this.userInputs.clear();
     this.userArms.clear();
     this.userEnabled.clear();
     this.userLimits.clear();
     this.closePortPopup();
     this.justLoaded = entities;
-    if (this.active) this.rebuild();
-    else this.dirty = true;
+    this.dirty = true;
+    this.checkAltDisplays();
+    if (this.active && this.dirty) this.rebuild();
   }
 
   /** The same blueprint, edited: rebuild shortly, keeping port settings. */
-  update(entities: PlacedEntity[]) {
+  update(entities: PlacedEntity[], wires: WireLink[] = []) {
     // The host's usual "something changed" call right after a load.
-    if (entities === this.justLoaded) {
+    if (entities === this.justLoaded && wires === this.wires) {
       this.justLoaded = undefined;
       return;
     }
     this.justLoaded = undefined;
     this.entities = entities;
+    this.wires = wires;
+    this.checkAltDisplays();
     if (!this.active) {
       this.dirty = true;
       return;
@@ -230,7 +255,7 @@ export class RateOverlay {
       return;
     }
     const footprint = (name: string) => getRenderCatalog().entities[name]?.tileFootprint;
-    const f = new LabFactory(getData(), this.entities, this.research, footprint);
+    const f = new LabFactory(getData(), this.entities, this.research, footprint, this.wires);
     const ids = new Set(f.ports().map((p) => p.id));
     for (const [id, [l, r]] of this.userInputs) if (ids.has(id)) f.setInput(id, l, r);
     for (const [id, items] of this.userArms) if (ids.has(id)) f.setArmPortItems(id, items);
@@ -413,7 +438,17 @@ export class RateOverlay {
     if (box) return { kind: "box", box };
     const node = f.net.nodeAt(Math.floor(wx), Math.floor(wy));
     if (node?.line) return { kind: "belt", node };
-    return undefined;
+    // Combinators, lamps, poles…: the nearest within reach of the cursor.
+    let best: HoverTarget | undefined;
+    let bestD = 0.8;
+    for (const e of f.circuitEntities) {
+      const d = Math.max(Math.abs(e.x - wx), Math.abs(e.y - wy));
+      if (d < bestD) {
+        bestD = d;
+        best = { kind: "circuit", entity: e };
+      }
+    }
+    return best;
   }
 
   /** True while the pointer rests on something the card describes. */
@@ -448,9 +483,14 @@ export class RateOverlay {
 
   private readonly frame = (now: number) => {
     if (!this.active) return;
-    const dt = Math.min(0.1, (now - this.last) / 1000);
-    this.last = now;
     const f = this.factory;
+    // Same limits as the renderer underneath: its render preset caps the
+    // pixel ratio and the frame rate, and the overlay follows suit.
+    const quality = this.renderer?.getQuality();
+    const mayDraw = !quality || now - this.lastDraw >= 1000 / quality.maxFps - 2;
+    // With circuits on the map, every tick is drawn: one tick per drawn
+    // frame at normal speed, so no circuit value is skipped.
+    const everyTick = !!f && f.circuits.networks.length > 0;
     if (f && this.warm > 0) {
       // Catch up in slices so a big blueprint doesn't freeze the page.
       const until = performance.now() + WARM_BUDGET_MS;
@@ -464,15 +504,10 @@ export class RateOverlay {
         this.options.onUpdate?.();
       }
     } else if (f && this.playing) {
-      this.acc += dt * 60 * this.speed;
-      const n = Math.min(600, Math.floor(this.acc));
-      this.acc -= n;
-      f.step(n);
-    }
-    // Same limits as the renderer underneath: its render preset caps the
-    // pixel ratio and the frame rate, and the overlay follows suit.
-    const quality = this.renderer?.getQuality();
-    const mayDraw = !quality || now - this.lastDraw >= 1000 / quality.maxFps - 2;
+      // Ticking every tick, the clock only runs on frames that are drawn;
+      // the frames in between leave it alone, so their time still counts.
+      if (mayDraw || !everyTick) f.step(this.clock.advance(now, this.speed, everyTick));
+    } else this.clock.advance(now, 0);
     if (f && this.renderer && mayDraw) {
       this.lastDraw = now;
       const dpr = Math.min(window.devicePixelRatio || 1, quality?.maxPixelRatio ?? Infinity);
@@ -494,13 +529,16 @@ export class RateOverlay {
         hover: this.enabled && this.settings.layers.hover ? this.hover : undefined,
         icons: getSharedIconAtlas(),
         showPorts: this.settings.layers.ports || this.forcePorts || this.portsOnly,
+        altDisplays: this.altDisplays && this.hasAltDisplays,
         highlightPort: this.highlightPort ?? this.editingPort,
       });
+      // The hover card follows every drawn frame, so its signals do too;
+      // it only touches the DOM when its text changed.
+      if (this.hover && this.warm === 0) this.renderCard();
       if (now - this.lastUi > 400 && this.warm === 0) {
         this.lastUi = now;
         this.issues = detectIssues(f);
         this.options.onUpdate?.();
-        this.renderCard();
         this.tickPortPopup();
       }
     }

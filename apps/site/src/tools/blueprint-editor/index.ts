@@ -20,15 +20,20 @@ import {
   boxOf,
   overlaps,
   remapSelectionForPaste,
+  refreshSignalItems,
+  stripRichText,
 } from "@factoriotools/engine";
-import type { CalculationResult, Timescale, Blueprint, BlueprintTreeNode, PlacedEntity, QualityName, MachineGroup, ModuleStack, ThroughputContext, BottleneckSubgroup, WireColor, WireLink } from "@factoriotools/engine";
-import { mountRenderer, isPoleLike, isUndergroundLike, autoUnderground, undergroundPartner, isTwoDirectionOnly, rotationStep, effectiveFootprint, rotateAroundCenter, summariseRecording, slowestFrames, worstPhase, autoConnectPole, canWire, dropWiresFor, toggleWire, type BlueprintRenderer, type HighlightRole } from "@factoriotools/renderer";
+import type { CalculationResult, Timescale, Blueprint, BlueprintTreeNode, PlacedEntity, QualityName, MachineGroup, ModuleStack, ThroughputContext, BottleneckSubgroup, BpSignalId, WireColor, WireLink } from "@factoriotools/engine";
+import { mountRenderer, isPoleLike, isUndergroundLike, autoUnderground, undergroundPartner, isTwoDirectionOnly, rotationStep, effectiveFootprint, rotateAroundCenter, summariseRecording, slowestFrames, worstPhase, autoConnectPole, canWire, dropWiresFor, terminalSideAt, toggleWire, type BlueprintRenderer, type HighlightRole } from "@factoriotools/renderer";
 import { buildRecipeCard, renderResults, type ViewOptions } from "./legacy-view/panels.js";
 import { icon } from "./legacy-view/icons.js";
 import { makeFloatingWindow } from "../../window-manager.js";
 import { buildPalette, placeableEntries } from "./edit-palette.js";
 import { appendQualityOptions, QUALITY_TIERS } from "./quality-options.js";
-import { buildPropertiesPanel, buildRecipeMenu, buildModuleMenu, buildFilterItemMenu } from "./edit-properties.js";
+import { buildPropertiesPanel, buildRecipeMenu, buildModuleMenu, buildFilterItemMenu, localisedNameOf } from "./edit-properties.js";
+import { buildSignalMenu, circuitWindowKind, type Wildcards } from "./edit-circuit.js";
+import { CircuitSim } from "@factoriotools/sim";
+import { SimClock } from "../../sim-clock.js";
 import type { GridMenuHandle } from "./grid-menu.js";
 import { buildLibrarySidebar } from "./library-sidebar.js";
 import { buildQuickbar, readAltLayers, writeAltLayers, type AltLayers, type QuickbarHandle, type QuickbarItem } from "./quickbar.js";
@@ -36,7 +41,7 @@ import { buildGridMenu } from "./grid-menu.js";
 import { BlueprintLinkError, looksLikeBlueprintString, parseBlueprintLink, resolveBlueprintLink, SHARE_TARGETS } from "./blueprint-links.js";
 import { saveToLibrary } from "./blueprint-library.js";
 import { RateOverlay } from "../../rate-overlay/controller.js";
-import { setCurrentBlueprint, EDITOR_AUTOSAVE_KEY } from "../../current-blueprint.js";
+import { setCurrentBlueprint, EDITOR_AUTOSAVE_KEY, readAutosave } from "../../current-blueprint.js";
 import { currentQuality, onQualityChange } from "../../render-presets.js";
 import { GRAPHICS_WINDOW_HTML, wireGraphicsPanel } from "../../graphics-panel.js";
 import { clockText, overviewHtml, rateUnitHtml, renderLayerList, renderPortList, RESEARCH_HTML, wireLayerList, wirePortList, wireRateUnit, wireResearch } from "../../rate-overlay/panels.js";
@@ -240,6 +245,16 @@ const TEMPLATE = `
     </div>
   </div>
 
+  <div id="signal-window" class="gui-window floating-window menu-window" hidden>
+    <div class="gui-titlebar">
+      <span>Select signal</span>
+      <span class="grip" aria-hidden="true"></span>
+    </div>
+    <div class="gui-body">
+      <div id="signal-body"></div>
+    </div>
+  </div>
+
   <div id="quickbar" role="toolbar" aria-label="Quickbar"></div>
 
   <div id="hotbar-pick-window" class="gui-window floating-window menu-window" hidden>
@@ -255,7 +270,7 @@ const TEMPLATE = `
   <div id="window-toolbar" role="toolbar" aria-label="Windows">
     <button type="button" id="import-menu-button" data-icon="blueprint" title="Import and export" aria-haspopup="menu" aria-expanded="false"><span class="tab-label">Import / Export</span><span class="tab-caret" aria-hidden="true">▾</span></button>
     <select id="bp-picker" hidden aria-label="Blueprint in book"></select>
-    <button type="button" data-toggle="rate-window" data-icon="arithmetic-combinator" title="Rate Calculator"><span class="tab-label">Rates</span></button>
+    <button type="button" data-toggle="rate-window" data-icon="arithmetic-combinator" title="Simulate"><span class="tab-label">Simulate</span></button>
     <span class="toolbar-divider" aria-hidden="true"></span>
     <button type="button" data-toggle="graphics-window" data-icon="small-lamp" title="Graphics"><span class="tab-label">Graphics</span></button>
     <button type="button" data-toggle="debug-window" data-icon="radar" title="Performance stats (F8)"><span class="tab-label">Debug</span></button>
@@ -502,6 +517,16 @@ export function mountBlueprintEditor(root: HTMLElement): () => void {
     y: 66,
     onClose: () => enterMenuState("machine-info"),
   });
+  const signalWindow = makeFloatingWindow($("#signal-window"), {
+    x: Math.max(16, window.innerWidth - 900),
+    y: 66,
+    onClose: () => enterMenuState("machine-info"),
+  });
+  /** What the open signal picker fills, and which wildcards it offers. */
+  let signalPick: { allow: Wildcards; onPick: (signal: BpSignalId) => void } | undefined;
+  /** The signal picker's last tab, kept while one building's GUI stays
+   *  open so every slot opens where the last pick was made. */
+  let signalTab: { entity: number; group: string } | undefined;
 
   // All floating windows start hidden so the blueprint fills the screen
   // uninterrupted — the toolbar below (bottom-of-template, always visible)
@@ -975,6 +1000,9 @@ export function mountBlueprintEditor(root: HTMLElement): () => void {
    *  next click starts a fresh pair. Cleared by the first 'q' press; a
    *  second 'q' leaves wire mode entirely (see the 'q' handler). */
   let pendingWireFrom: number | null = null;
+  /** Which terminal of pendingWireFrom the wire leaves from: 2 for a
+   *  combinator's output, else 1. */
+  let pendingWireSide: 1 | 2 = 1;
 
   /** Arms or clears the half-finished wire pick, keeping the renderer in
    *  step so it can trail the in-progress wire to the cursor. Every write
@@ -983,9 +1011,10 @@ export function mountBlueprintEditor(root: HTMLElement): () => void {
    *  completing a wire, 'q'), and one of them forgetting to notify would
    *  leave a wire dangling from an entity the app no longer considers
    *  armed. */
-  function setPendingWireFrom(entityNumber: number | null): void {
+  function setPendingWireFrom(entityNumber: number | null, side: 1 | 2 = 1): void {
     pendingWireFrom = entityNumber;
-    renderer.setPendingWire(entityNumber);
+    pendingWireSide = side;
+    renderer.setPendingWire(entityNumber, side);
   }
   /** Which wire colour is on the cursor (Alt+C/R/G), or null outside wire
    *  mode. Mirrors the renderer's own 'wire' InteractionMode so the app can
@@ -1049,6 +1078,7 @@ export function mountBlueprintEditor(root: HTMLElement): () => void {
     renderer.setAltMode(altModeOn);
     renderer.setAltModeLayers(altLayers);
     rateOverlay.setPortsOnly(altModeOn && altLayers.ports);
+    rateOverlay.setAltDisplays(altModeOn);
   }
 
   /** Mirrors the editor state onto the quickbar: undo/redo availability,
@@ -1307,7 +1337,7 @@ export function mountBlueprintEditor(root: HTMLElement): () => void {
     const savedCamera = restoreCameraFromSave ? readSavedCamera() : null;
     renderer.loadBlueprint(entities, wires);
     restoreCamera(savedCamera);
-    rateOverlay.load(entities);
+    rateOverlay.load(entities, wires);
     recalculate();
     persistEntities();
     syncQuickbar();
@@ -1849,7 +1879,7 @@ export function mountBlueprintEditor(root: HTMLElement): () => void {
     // terminal of the held colour is refused outright rather than armed, so
     // the gesture never strands the user half-way through a wire that could
     // not exist (a belt has no circuit terminals at all).
-    renderer.onWireClick((entityNumber) => {
+    renderer.onWireClick((entityNumber, world) => {
       if (wireColorInHand === null) return;
       const entity = entities.find((e) => e.entityNumber === entityNumber);
       if (!entity) return;
@@ -1857,18 +1887,25 @@ export function mountBlueprintEditor(root: HTMLElement): () => void {
         setStatus(`A ${entity.name.replace(/-/g, " ")} has no ${wireColorInHand} wire terminal.`, "error");
         return;
       }
+      // A combinator's click picks the terminal nearer the cursor: its
+      // input or its output side.
+      const visual = visualLookup().get(entity.name);
+      const side = wireColorInHand === "copper" ? 1 : terminalSideAt(entity, visual, entity.direction, wireColorInHand, world);
+      const sideWord = visual?.outputWireConnections && wireColorInHand !== "copper" ? (side === 2 ? " output" : " input") : "";
       if (pendingWireFrom === null) {
-        setPendingWireFrom(entityNumber);
-        setStatus(`Picked one end — click another entity to connect or disconnect the ${wireColorInHand} wire.`);
+        setPendingWireFrom(entityNumber, side);
+        setStatus(`Picked one end${sideWord} — click another entity to connect or disconnect the ${wireColorInHand} wire.`);
         return;
       }
-      // Re-clicking the same entity is inert, per the user's own design:
-      // only 'q' clears a pick, never a click.
-      if (pendingWireFrom === entityNumber) return;
+      // Re-clicking the same terminal is inert, per the user's own design:
+      // only 'q' clears a pick, never a click. The other side of the same
+      // combinator is a real wire (input to output).
+      if (pendingWireFrom === entityNumber && pendingWireSide === side) return;
       const from = pendingWireFrom;
+      const fromSide = pendingWireSide;
       setPendingWireFrom(null);
       applyEdit(() => {
-        const result = toggleWire(wires, wireColorInHand!, from, entityNumber);
+        const result = toggleWire(wires, wireColorInHand!, from, entityNumber, fromSide, side);
         wires = result.wires;
         setStatus(result.connected ? `Connected with a ${wireColorInHand} wire.` : `Disconnected the ${wireColorInHand} wire.`);
       });
@@ -2012,7 +2049,7 @@ export function mountBlueprintEditor(root: HTMLElement): () => void {
    * function is what stops the four windows from being shown/hidden
    * ad-hoc from a dozen call sites and drifting into impossible
    * combinations. */
-  type MenuState = "default" | "build" | "hotbar" | "machine-info" | "recipe" | "module" | "filter";
+  type MenuState = "default" | "build" | "hotbar" | "machine-info" | "recipe" | "module" | "filter" | "signal";
   let menuState: MenuState = "default";
   /** The open menu's handle, for 'E' to confirm/cancel through. Undefined in
    *  the two states that aren't a grid menu (default, machine-info). */
@@ -2057,6 +2094,7 @@ export function mountBlueprintEditor(root: HTMLElement): () => void {
     recipeWindow.hide();
     moduleWindow.hide();
     filterWindow.hide();
+    signalWindow.hide();
     hotbarPickWindow.hide();
     // The properties window is the machine-info state itself, so it closes
     // for every other state — including while a picker it launched is open,
@@ -2065,6 +2103,7 @@ export function mountBlueprintEditor(root: HTMLElement): () => void {
 
     switch (next) {
       case "default":
+        signalTab = undefined;
         deselect();
         return;
       case "build":
@@ -2085,6 +2124,20 @@ export function mountBlueprintEditor(root: HTMLElement): () => void {
       case "filter":
         openMenuWindow(filterWindow, buildFilterMenuForSlot(activeFilterSlot));
         return;
+      case "signal": {
+        const pick = signalPick;
+        if (!pick) return enterMenuState("machine-info");
+        const owner = selectedEntity!.entityNumber;
+        openMenuWindow(signalWindow, buildSignalMenu($<HTMLDivElement>("#signal-body"), getRenderCatalog(), pick.allow, (signal) => {
+          signalPick = undefined;
+          pick.onPick(signal);
+          enterMenuState("machine-info");
+        }, () => enterMenuState("machine-info"), {
+          initial: signalTab?.entity === owner ? signalTab.group : undefined,
+          onChange: (group) => (signalTab = { entity: owner, group }),
+        }));
+        return;
+      }
     }
   }
 
@@ -2103,6 +2156,7 @@ export function mountBlueprintEditor(root: HTMLElement): () => void {
         return;
       case "module":
       case "filter":
+      case "signal":
         enterMenuState("machine-info");
         return;
       case "default":
@@ -2332,6 +2386,46 @@ export function mountBlueprintEditor(root: HTMLElement): () => void {
     updateCursorIcon(lastPointerPos.x, lastPointerPos.y);
   }, { signal });
 
+  /** Live parts of the open entity GUI (network numbers, signal grids). */
+  let panelRefresh: (() => void) | undefined;
+  /** The editor's own circuit simulation, for live values in the entity
+   *  GUI while the Simulate overlay is off. Rebuilt after every edit. */
+  let editorCircuits: CircuitSim | undefined;
+  let circuitLoopId = 0;
+  const circuitClock = new SimClock();
+  /** The tick the open GUI last showed, so a frame without a new tick
+   *  costs nothing. */
+  let shownTick = -1;
+
+  /** The circuit state the GUI shows: the Simulate overlay's own while it
+   *  runs, so both agree, else the editor's. */
+  function liveCircuits(): CircuitSim | undefined {
+    const overlay = rateOverlay.isEnabled ? rateOverlay.factory : undefined;
+    if (overlay) return overlay.circuits;
+    editorCircuits ??= new CircuitSim(entities, wires, { stackSizeOf: (n) => getData().items[n]?.stackSize });
+    return editorCircuits;
+  }
+
+  /** While an entity GUI with live values is open: runs the editor's
+   *  circuit simulation one tick per frame (SimClock), or follows the
+   *  Simulate overlay's while that runs, and shows every tick. */
+  function circuitLoop(now: number) {
+    if (propertiesWindow.el.hidden || menuState !== "machine-info" || !panelRefresh) {
+      circuitLoopId = 0;
+      return;
+    }
+    const sim = liveCircuits()!;
+    if (!(rateOverlay.isEnabled && rateOverlay.factory)) {
+      const ticks = circuitClock.advance(now, 1, true);
+      for (let i = 0; i < ticks; i++) sim.step();
+    }
+    if (sim.tick !== shownTick) {
+      shownTick = sim.tick;
+      panelRefresh();
+    }
+    circuitLoopId = requestAnimationFrame(circuitLoop);
+  }
+
   function renderPropertiesPanel() {
     if (!selectedEntity) {
       propertiesWindow.hide();
@@ -2346,7 +2440,14 @@ export function mountBlueprintEditor(root: HTMLElement): () => void {
     if (menuState !== "machine-info") return;
     const wasHidden = propertiesWindow.el.hidden;
     const propertiesBody = $<HTMLDivElement>("#properties-body");
-    buildPropertiesPanel(propertiesBody, selectedEntity, getData(), getRenderCatalog(), latestBottlenecks, {
+    const data = getData();
+    const catalog = getRenderCatalog();
+    // The game titles an entity's window with its name.
+    propertiesWindow.el.querySelector(".gui-titlebar span")!.textContent = localisedNameOf(data, catalog, selectedEntity.name);
+    const wide = circuitWindowKind(selectedEntity);
+    if (wide) propertiesWindow.el.dataset.gui = wide;
+    else delete propertiesWindow.el.dataset.gui;
+    panelRefresh = buildPropertiesPanel(propertiesBody, selectedEntity, getData(), getRenderCatalog(), latestBottlenecks, {
       onOpenRecipePicker: () => enterMenuState("recipe"),
       onModuleSlotClick(slotIndex) {
         // With a module in hand, clicking a slot stamps it straight in
@@ -2391,7 +2492,31 @@ export function mountBlueprintEditor(root: HTMLElement): () => void {
       onSetSpoilPriority(priority) {
         updateSelectedEntity((e) => { e.spoilPriority = priority; });
       },
+      circuit: {
+        wired: wires.some((w) => w.color !== "copper" && (w.from === selectedEntity!.entityNumber || w.to === selectedEntity!.entityNumber)),
+        commit(mutate) {
+          updateSelectedEntity((e) => {
+            // Copy on write: undo snapshots share nested objects.
+            const cb = structuredClone(e.controlBehavior ?? {});
+            if (e.panel) e.panel = { ...e.panel };
+            mutate(cb, e);
+            e.controlBehavior = Object.keys(cb).length ? cb : undefined;
+            if (/combinator|display-panel/.test(e.name)) refreshSignalItems(e);
+          });
+        },
+        pickSignal(allow, onPick) {
+          signalPick = { allow, onPick };
+          enterMenuState("signal");
+        },
+        live: liveCircuits,
+        redraw: renderPropertiesPanel,
+      },
     });
+    shownTick = -1;
+    if (panelRefresh && !circuitLoopId) {
+      circuitClock.reset(performance.now());
+      circuitLoopId = requestAnimationFrame(circuitLoop);
+    }
     propertiesWindow.show();
     propertiesWindow.bringToFront();
     // Opens centered in the viewport every time a NEW selection triggers
@@ -2402,7 +2527,9 @@ export function mountBlueprintEditor(root: HTMLElement): () => void {
     if (wasHidden) {
       requestAnimationFrame(() => {
         const rect = propertiesWindow.el.getBoundingClientRect();
-        propertiesWindow.setPosition((window.innerWidth - rect.width) / 2, (window.innerHeight - rect.height) / 2);
+        // Never under the toolbar, even when the window is taller than half
+        // the screen (a display panel with many messages).
+        propertiesWindow.setPosition((window.innerWidth - rect.width) / 2, Math.max(110, (window.innerHeight - rect.height) / 2));
       });
     }
   }
@@ -2410,8 +2537,9 @@ export function mountBlueprintEditor(root: HTMLElement): () => void {
   function recalculate() {
     // Every edit lands here; the overlay rebuilds its model shortly after,
     // and the Overlay Lab picks up the same blueprint when it's opened.
-    rateOverlay.update(entities);
-    setCurrentBlueprint(entities);
+    rateOverlay.update(entities, wires);
+    setCurrentBlueprint(entities, wires);
+    editorCircuits = undefined;
     const data = getData();
     result = calculate(data, entities, options.researchLevels);
     const throughputCtx: ThroughputContext = {
@@ -2590,7 +2718,8 @@ export function mountBlueprintEditor(root: HTMLElement): () => void {
       blueprints.forEach((bp, i) => {
         const option = document.createElement("option");
         option.value = String(i);
-        option.textContent = bp.label || `Blueprint ${i + 1}`;
+        // An <option> can only hold plain text: the label without markup.
+        option.textContent = (bp.label && stripRichText(bp.label)) || `Blueprint ${i + 1}`;
         picker.appendChild(option);
       });
       picker.hidden = blueprints.length < 2;
@@ -3200,6 +3329,27 @@ export function mountBlueprintEditor(root: HTMLElement): () => void {
       return;
     }
 
+    // An item in a circuit GUI slot, or in the signal picker: into the
+    // cursor as a ghost to build, like the game's pipette over a slot.
+    const signalItem =
+      underPointer?.closest<HTMLElement>(".circuit-slot[data-signal]")?.dataset.signal ??
+      underPointer?.closest<HTMLElement>("#signal-window .palette-cell")?.dataset.value;
+    if (signalItem) {
+      const data = getData();
+      if (data.modules[signalItem]) {
+        setHeldModule({ name: signalItem, quality: "normal" });
+      } else if (placeableEntries(data, getRenderCatalog()).some((en) => en.name === signalItem)) {
+        setHeldModule(null);
+        setMode({ place: signalItem, quality: paletteQuality });
+        enterMenuState("default");
+        updateCursorIcon(lastPointerPos.x, lastPointerPos.y);
+      } else {
+        const catalog = getRenderCatalog();
+        setStatus(`${catalog.itemNames[signalItem] ?? catalog.signals?.[signalItem]?.localised ?? signalItem} can't be built.`, "error");
+      }
+      return;
+    }
+
     const hoveredCell = !paletteWindow.el.hidden
       ? document.elementFromPoint(lastPalettePointer.x, lastPalettePointer.y)?.closest<HTMLElement>(".palette-cell")
       : null;
@@ -3358,7 +3508,7 @@ export function mountBlueprintEditor(root: HTMLElement): () => void {
   // working on beats replacing it with something else every reload.
   let autosaved: string | null = null;
   try {
-    autosaved = localStorage.getItem(AUTOSAVE_KEY);
+    autosaved = readAutosave();
   } catch {
     /* storage unavailable — fall through to the random example below */
   }
@@ -3400,7 +3550,7 @@ export function mountBlueprintEditor(root: HTMLElement): () => void {
     else if (paletteSelection) renderer.setInteractionMode({ kind: "place", entityName: paletteSelection, quality: paletteQuality });
     // A fresh renderer knows nothing of a half-finished pick either, so an
     // armed wire would stop trailing to the cursor across the swap.
-    if (pendingWireFrom !== null) renderer.setPendingWire(pendingWireFrom);
+    if (pendingWireFrom !== null) renderer.setPendingWire(pendingWireFrom, pendingWireSide);
     if (entities.length) {
       const savedCamera = readSavedCamera();
       renderer.loadBlueprint(entities, wires);
