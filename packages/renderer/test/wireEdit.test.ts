@@ -225,11 +225,16 @@ test("a combinator accepts circuit wires but not copper", () => {
   assert.equal(canWire(c, "copper"), false, "copper is poles and power switches only");
 });
 
-test("a plain belt accepts no wires at all", () => {
+test("a belt takes circuit wires but no copper", () => {
   const belt = visualFor("transport-belt");
-  for (const color of ["copper", "red", "green"] as const) {
-    assert.equal(canWire(belt, color), false);
-  }
+  assert.equal(canWire(belt, "copper"), false);
+  assert.equal(canWire(belt, "red"), true);
+  assert.equal(canWire(belt, "green"), true);
+});
+
+test("a wall takes no wires at all", () => {
+  const wall = visualFor("stone-wall");
+  for (const color of ["copper", "red", "green"] as const) assert.equal(canWire(wall, color), false);
 });
 
 test("an unknown entity accepts nothing rather than throwing", () => {

@@ -16,6 +16,9 @@ export interface LabSettings {
     /** Items on belts and in inserter hands, plus how busy each arm is. */
     items: boolean;
     ports: boolean;
+    /** Lamps, display panels, combinator outputs, wires carrying signals
+     *  and buildings a circuit switched off. */
+    circuits: boolean;
   };
   style: {
     dimAmount: number;
@@ -72,7 +75,7 @@ export const PALETTES: Record<PaletteName, Palette> = {
 };
 
 export const DEFAULTS: LabSettings = {
-  layers: { dim: true, lanes: true, rings: true, hover: true, items: false, ports: false },
+  layers: { dim: true, lanes: true, rings: true, hover: true, items: false, ports: false, circuits: true },
   style: {
     dimAmount: 0.45,
     palette: "factorio",

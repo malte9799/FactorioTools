@@ -44,6 +44,10 @@ export interface GridMenuOptions {
    *  stays disabled until something is actually clicked, so confirming can
    *  never silently re-apply what was already there. */
   initialSelection?: string;
+  /** Item-group tab to open on when no initial selection picks one. */
+  initialTab?: string;
+  /** Called when the user switches tabs. */
+  onTabChange?: (group: string) => void;
   onConfirm: (selection: { name: string; quality: QualityName }) => void;
   /** Fired by the X button, Escape, or 'E' with nothing selected. */
   onCancel: () => void;
@@ -135,10 +139,8 @@ export function buildGridMenu(container: HTMLElement, options: GridMenuOptions):
 
   let selected: string | undefined;
   let quality: QualityName = options.initialQuality ?? "normal";
-  let activeTab = Math.max(
-    0,
-    tabGroups.findIndex((g) => byGroup.get(g.name)?.some((e) => e.name === options.initialSelection)),
-  );
+  const selectionTab = tabGroups.findIndex((g) => byGroup.get(g.name)?.some((e) => e.name === options.initialSelection));
+  let activeTab = Math.max(0, selectionTab >= 0 ? selectionTab : tabGroups.findIndex((g) => g.name === options.initialTab));
 
   const filterInput = document.createElement("input");
   filterInput.type = "text";
@@ -255,6 +257,7 @@ export function buildGridMenu(container: HTMLElement, options: GridMenuOptions):
       );
       tab.addEventListener("click", () => {
         activeTab = i;
+        options.onTabChange?.(group.name);
         filterInput.value = "";
         renderTabs();
         renderGrid(byGroup.get(group.name) ?? [], true);

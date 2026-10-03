@@ -8,7 +8,7 @@ import { buildGrid, NeighbourGrid, step, toCardinal } from "./neighbours/grid.js
 import { buildFluidNetwork, FluidNetwork } from "./neighbours/fluid.js";
 import { buildHeatNetwork, HeatNetwork } from "./neighbours/heat.js";
 import type { PlatformBox } from "./neighbours/platform.js";
-import { buildWireNetwork, resolveWires, terminalFor, wireSideAt, type ResolvedWire, type WireNetwork } from "./neighbours/wires.js";
+import { buildWireNetwork, resolveWires, terminalFor, terminalSideAt, type ResolvedWire, type WireNetwork } from "./neighbours/wires.js";
 import { drawSupplyAreas, drawWires, type SupplyArea } from "./draw/wireDraw.js";
 import { collectEntity, collectInserterPlatform, type CollectContext } from "./draw/collect.js";
 import { paint, paintPlain, drawOutline, drawDirectionArrows, drawHoverHighlight, drawInserterIndication, drawUndergroundLine, type PaintTally } from "./draw/paint.js";
@@ -306,12 +306,11 @@ export interface BlueprintRenderer {
    *  (InteractionMode's 'wire' kind), INSTEAD of onSelect — the app pairs
    *  two of these into one connect/disconnect. Clicks that hit no entity
    *  never fire it, and never cancel anything (see onPointerDown). */
-  onWireClick(callback: (entityNumber: number, side: 1 | 2) => void): void;
+  onWireClick(callback: (entityNumber: number, world: { x: number; y: number }) => void): void;
   /** Arms (or disarms, with null) the entity an in-progress wire trails
    *  from, so the renderer can draw the dangling end to the cursor while a
    *  two-click connect is half-finished. The app owns the pick itself; this
-   *  only tells the renderer what to draw. `side` is the half that was
-   *  picked (2 for a combinator's output). */
+   *  only tells the renderer what to draw. */
   setPendingWire(entityNumber: number | null, side?: 1 | 2): void;
   /** Fires when a box drawn in 'deleteBox' mode completes (drag-release or
    *  a plain click) and hits at least one entity — the app deletes them
@@ -818,10 +817,13 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
     return visualLookup.get(name);
   }
 
-  /** The wire side of entity `entityNumber` under a world point. */
+  /** Which terminal of entity `entityNumber` a held wire would attach to
+   *  at a world point — the same question the app's wire click asks, so the
+   *  half that is highlighted is the half that gets wired. */
   function sideAt(entityNumber: number, world: { x: number; y: number }): 1 | 2 {
     const entity = entityById.get(entityNumber);
-    return entity ? wireSideAt(entity, visualFor(entity.name), entity.direction, world.x, world.y) : 1;
+    if (!entity || mode.kind !== "wire" || mode.color === "copper") return 1;
+    return terminalSideAt(entity, visualFor(entity.name), entity.direction, mode.color, world);
   }
 
   /** Factorio snaps placement so the footprint's edges land on the tile
@@ -2088,7 +2090,7 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
     if (mode.kind === "wire") {
       const world = worldAtPointer(e);
       const hit = spatialIndex.hitTest(world.x, world.y);
-      if (hit !== undefined) wireClickCallback?.(hit, sideAt(hit, world));
+      if (hit !== undefined) wireClickCallback?.(hit, world);
       return;
     }
 
@@ -2260,7 +2262,7 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
   let selectCallback: ((entityNumber: number) => void) | null = null;
   let eraseCallback: ((entityNumber: number) => void) | null = null;
   let altRightClickCallback: ((entityNumber: number) => void) | null = null;
-  let wireClickCallback: ((entityNumber: number, side: 1 | 2) => void) | null = null;
+  let wireClickCallback: ((entityNumber: number, world: { x: number; y: number }) => void) | null = null;
   let deleteBoxCallback: ((entityNumbers: ReadonlySet<number>) => void) | null = null;
   let cutBoxCallback: ((entityNumbers: ReadonlySet<number>) => void) | null = null;
   let copyBoxCallback: ((entityNumbers: ReadonlySet<number>) => void) | null = null;

@@ -55,6 +55,9 @@ class LaneState {
   /** Items that crossed each segment's midpoint since the last reset. */
   readonly crossings: Uint32Array;
   readonly joins: SideloadPoint[] = [];
+  /** Stretches of the lane on a belt a circuit has switched off: items on
+   *  them stand still and nothing moves onto them. [start, end) pairs. */
+  stopped: [number, number][] = [];
 
   constructor(readonly geo: LaneGeometry, speed: number) {
     this.length = geo.length;
@@ -95,6 +98,11 @@ class LaneState {
     this.item.splice(i, 0, slot);
     const k = this.segAt(p);
     if (this.mids[k] === p) this.crossings[k]! += countOf(slot);
+  }
+
+  isStopped(p: number): boolean {
+    for (const [a, b] of this.stopped) if (p >= a && p < b) return true;
+    return false;
   }
 
   /** Inserts at `p` if the item ahead is a full spacing away, shoving the
@@ -308,6 +316,7 @@ export class BeltSim {
         const feed = cfg.lanes[lane];
         if (!feed) continue;
         const dst = this.lane(line, lane);
+        if (dst.stopped.length && dst.isStopped(0)) continue;
         const n = dst.pos.length;
         const rear = n ? dst.pos[n - 1]! : Infinity;
         if (feed.rate === "full") {
@@ -351,11 +360,18 @@ export class BeltSim {
     const { pos, speed, length } = lane;
     const capAt = (p: number, cap: number) => {
       for (const j of lane.joins) if (j.reserved && p <= j.pos - SP) cap = Math.min(cap, j.pos - SP);
+      // A stopped tile ahead is a wall: wait just short of it.
+      for (const [a] of lane.stopped) if (a > p) cap = Math.min(cap, a - 1);
       return cap;
     };
+    const stopped = lane.stopped.length > 0;
     let i = 0;
     while (i < pos.length) {
       const p = pos[i]!;
+      if (stopped && lane.isStopped(p)) {
+        i++;
+        continue;
+      }
       const want = p + speed;
       if (i === 0) {
         const cap = capAt(p, length - 1);
@@ -398,7 +414,7 @@ export class BeltSim {
         // this tick — conservative by at most one tick per item. Its front
         // item is the one being handed over, so it is not in the way.
         const at = end.to === line && target.pos.length === 1 ? over : target.landingFor(over);
-        if (at < 0) return false;
+        if (at < 0 || target.isStopped(at)) return false;
         target.pos.push(at);
         target.item.push(item);
         return true;
@@ -407,7 +423,7 @@ export class BeltSim {
         const entry = end.target[laneIdx];
         if (!entry) return false;
         const target = this.lane(entry.line, entry.lane);
-        if (!target.hasRoomAt(entry.pos)) return false;
+        if (!target.hasRoomAt(entry.pos) || target.isStopped(entry.pos)) return false;
         target.insert(entry.pos, item);
         return true;
       }
@@ -454,7 +470,8 @@ export class BeltSim {
         outOrder = [st.output[laneIdx], (1 - st.output[laneIdx]) as Lane];
       }
       for (const outSide of outOrder) {
-        if (taken[outSide] || this.lane(s.outputs[outSide], laneIdx).landingFor(over) < 0) continue;
+        const dst = this.lane(s.outputs[outSide], laneIdx);
+        if (taken[outSide] || dst.landingFor(over) < 0 || dst.isStopped(dst.landingFor(over))) continue;
         assign[inSide] = outSide;
         taken[outSide] = true;
         if (filterId === undefined && !s.outputPriority) st.output[laneIdx] = (1 - outSide) as Lane;
@@ -468,6 +485,33 @@ export class BeltSim {
   }
 
   /* ---------- belt tiles, for inserters and overlays ---------- */
+
+  /** Switches one belt tile on or off, as a circuit condition does: off,
+   *  its items stand still and items behind it back up. */
+  setTileEnabled(node: BeltNode, on: boolean) {
+    if (!node.line) return;
+    for (const laneIdx of [0, 1] as const) {
+      const lane = this.lane(node.line, laneIdx);
+      const ranges = node.line.lanes[laneIdx].segments.filter((s) => s.node === node).map((s): [number, number] => [s.start, s.start + s.length]);
+      lane.stopped = lane.stopped.filter(([a]) => !ranges.some(([b]) => a === b));
+      if (!on) lane.stopped.push(...ranges);
+    }
+  }
+
+  /** Items on one belt tile (both lanes), or on its whole line, by name. */
+  tileContents(node: BeltNode, wholeLine = false): Map<string, number> {
+    const out = new Map<string, number>();
+    for (const laneIdx of [0, 1] as const) {
+      const lane = this.lane(node.line!, laneIdx);
+      const segs = node.line!.lanes[laneIdx].segments.filter((s) => wholeLine || s.node === node);
+      lane.pos.forEach((p, i) => {
+        if (!segs.some((s) => p >= s.start && p < s.start + s.length)) return;
+        const name = this.items[idOf(lane.item[i]!)]!;
+        out.set(name, (out.get(name) ?? 0) + countOf(lane.item[i]!));
+      });
+    }
+    return out;
+  }
 
   /** Index of the segment that lies on `node`'s own tile (never the tunnel
    *  in front of an underground exit). */

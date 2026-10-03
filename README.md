@@ -55,6 +55,11 @@ Plus a live map seed viewer.
       splitters — so lane imbalance and starved inputs show up the way they
       would in game. Run at 1×, 4× or 16×, skip ahead a minute, and toggle
       inserter capacity research and belt stacking.
+      <br><br>
+      <b>Circuits run too:</b> constant, arithmetic, decider and selector
+      combinators on separate red and green networks — Each, Anything and
+      Everything included — switch belts, inserters and machines on and off,
+      read their contents, and light lamps and display panels.
     </td>
   </tr>
   <tr>
@@ -192,7 +197,7 @@ tiles and oil wells are the ones the game places, with their amounts.
 2. In game, copy a blueprint to the clipboard.
 3. Click **Import / Export → Import from clipboard** and paste the string or link.
    No blueprint handy? **Load a random example** picks from 170+ curated builds.
-4. Open **Rates** to see what it produces, where it loses output, and why.
+4. Open **Simulate** to see what it produces, where it loses output, and why.
 
 ## 🧰 Build from source
 
@@ -315,7 +320,7 @@ flowchart LR
 | Workspace | What it holds |
 |---|---|
 | [`packages/engine`](packages/engine) | Blueprint decode/encode, the rate calculator, prototype types. No DOM. |
-| [`packages/sim`](packages/sim) | Tick-by-tick belt simulation: per-lane transport lines, curves, side-loading, undergrounds, splitters. No DOM. |
+| [`packages/sim`](packages/sim) | Tick-by-tick belt simulation: per-lane transport lines, curves, side-loading, undergrounds, splitters; and the circuit network. No DOM. |
 | [`packages/mapgen`](packages/mapgen) | Factorio 2.0 map generation: noise expressions, spot and Voronoi noise, cliffs, entity placement. No DOM. |
 | [`packages/renderer`](packages/renderer) | Canvas renderer: sprite atlas, neighbour classification, camera, draw passes. |
 | [`packages/data-pipeline`](packages/data-pipeline) | One-time scripts that turn a Factorio install into the dataset. |
@@ -323,14 +328,6 @@ flowchart LR
 
 Every pushed branch is built and published as a preview under
 `https://malte9799.github.io/FactorioTools/preview/<branch>/`.
-
-### Code audit
-
-[`audit/`](audit) holds a full code audit — 19 findings with severity and
-effort ratings, the implementation reports, and the verification scripts that
-back them. The scripts are runnable and self-checking; one of them,
-`verify-render-identical.ts`, hashes the entire render path so a refactor can
-prove it changed no pixels.
 
 ## 📜 Licence
 
@@ -351,3 +348,13 @@ Factorio, its prototype data and its sprite art are the property of
 [Wube Software](https://factorio.com) and are **not** covered by that licence.
 This project reads them from a Factorio installation at build time and is not
 affiliated with Wube Software.
+
+## Star History
+
+<a href="https://www.star-history.com/?type=date&repos=malte9799%2FFactorioTools">
+ <picture>
+   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=malte9799/FactorioTools&type=date&theme=dark&legend=top-left" />
+   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=malte9799/FactorioTools&type=date&legend=top-left" />
+   <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=malte9799/FactorioTools&type=date&legend=top-left" />
+ </picture>
+</a>

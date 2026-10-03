@@ -232,3 +232,8 @@
 .lab-item-grid .lab-item-slot:hover { background: #f2b84a; box-shadow: none; }
 .lab-grid-icon { width: 28px; height: 28px; background-repeat: no-repeat; pointer-events: none; }
 .lab-item-more { width: 100%; margin-top: 4px; font-size: 12px; }
+
+/* Circuit networks in the hover card. */
+.lab-card-net { margin-top: 8px; font: 600 11px/1.4 var(--mono); text-transform: uppercase; letter-spacing: 0.04em; color: var(--text-dim); }
+.lab-card-net-red { color: #ff6a5e; }
+.lab-card-net-green { color: #5fe063; }
