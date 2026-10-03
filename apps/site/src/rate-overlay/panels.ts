@@ -293,6 +293,13 @@ function portRows(f: LabFactory, overlay: RateOverlay) {
     `<option value="">${empty}</option>` +
     `<optgroup label="In this blueprint">${f.knownItems.map((n) => opt(n, cur)).join("")}</optgroup>` +
     `<optgroup label="Other items">${others.map((n) => opt(n, cur)).join("")}</optgroup>`;
+  // An item slot showing the chosen item's icon; clicking it opens a grid
+  // of icons to pick from (see wirePortList). The select underneath holds
+  // the value and fires the change, so picking works like choosing in it.
+  const itemField = (attrs: string, cur: string | undefined, empty?: string) => {
+    const title = cur ? itemLabel(f.data, cur) : (empty ?? "(empty)").replace(/[()]/g, "");
+    return `<span class="lab-item-field"><select hidden ${attrs}>${options(cur, empty)}</select><button type="button" class="lab-item-slot ${cur ? "" : "is-empty"}" data-pick title="${escapeHtml(title)}" aria-label="${escapeHtml(title)}">${cur ? slotIcon(cur, title) : ""}</button></span>`;
+  };
   const unit = overlay.settings.style.rateUnit;
   const rateField = (p: PortInfo) => {
     const v = p.limit.rate === undefined ? "" : +(p.limit.rate * PER[unit]).toFixed(3);
@@ -307,14 +314,14 @@ function portRows(f: LabFactory, overlay: RateOverlay) {
     if (p.kind === "input" && p.via === "belt") {
       const [l, r] = f.inputs.get(p.id) ?? [null, null];
       const stack = (l ?? r)?.stack ?? 1;
-      body = `<label>Left lane <select data-lane="0">${options(l?.item)}</select></label>
-        <label>Right lane <select data-lane="1">${options(r?.item)}</select></label>
+      body = `<div class="lab-port-lanes"><label>Left lane ${itemField(`data-lane="0"`, l?.item)}</label>
+        <label>Right lane ${itemField(`data-lane="1"`, r?.item)}</label></div>
         <label>Stacked <select data-stack>${[1, 2, 3, 4].map((n) => `<option value="${n}" ${n === stack ? "selected" : ""}>×${n}</option>`).join("")}</select></label>
         ${rateField(p)}`;
     } else if (p.kind === "input") {
       const arm = f.armPorts.find((a) => a.id === p.id)!;
       const onto = arm.onto ? ` from the ${escapeHtml(arm.onto.replace(/-/g, " "))}` : "";
-      body = `<label>Brings${onto} <select data-arm-items>${options(arm.items.length === 1 ? arm.items[0] : undefined, arm.items.length > 1 ? `What the machine needs (${arm.items.length})` : "(nothing)")}</select></label>
+      body = `<label>Brings${onto} ${itemField("data-arm-items", arm.items.length === 1 ? arm.items[0] : undefined, arm.items.length > 1 ? `What the machine needs (${arm.items.length})` : "(nothing)")}</label>
         <label>Per swing <input type="number" min="1" max="${arm.inserter.handSize}" step="1" data-arm-stack value="${p.limit.stack ?? ""}" placeholder="${arm.inserter.handSize}"></label>
         ${rateField(p)}`;
     } else {
@@ -366,6 +373,8 @@ export function wirePortList(el: HTMLElement, overlay: RateOverlay, signal: Abor
     const f = overlay.factory;
     if (!f) return;
     const input = e.target as HTMLInputElement & HTMLSelectElement;
+    // Typing in an icon grid's search box changes nothing about the port.
+    if (input.dataset.itemSearch !== undefined) return;
     const rowEl = input.closest<HTMLElement>("[data-port]");
     const id = rowEl?.dataset.port;
     if (!id || !rowEl) return;
@@ -396,12 +405,64 @@ export function wirePortList(el: HTMLElement, overlay: RateOverlay, signal: Abor
     }
   }, { signal });
   el.addEventListener("click", (e) => {
-    const b = (e.target as HTMLElement).closest<HTMLButtonElement>("[data-all]");
+    const target = e.target as HTMLElement;
+    const slot = target.closest<HTMLButtonElement>("[data-pick]");
+    if (slot) return toggleItemPicker(slot);
+    const pick = target.closest<HTMLButtonElement>("[data-item]");
+    if (pick) {
+      const select = pickerFor.get(pick.closest(".lab-item-picker")!);
+      if (!select) return;
+      select.value = pick.dataset.item!;
+      select.dispatchEvent(new Event("change", { bubbles: true }));
+      return;
+    }
+    const b = target.closest<HTMLButtonElement>("[data-all]");
     if (!b || !overlay.factory) return;
     for (const p of overlay.factory.ports()) if (p.kind === b.dataset.all) overlay.setPortEnabled(p.id, b.dataset.on === "1");
+  }, { signal });
+  el.addEventListener("input", (e) => {
+    const search = (e.target as HTMLElement).closest<HTMLInputElement>("[data-item-search]");
+    if (!search) return;
+    const q = search.value.trim().toLowerCase();
+    const picker = search.closest(".lab-item-picker")!;
+    for (const b of picker.querySelectorAll<HTMLElement>("[data-item]")) b.hidden = !!q && !b.title.toLowerCase().includes(q);
+    for (const g of picker.querySelectorAll<HTMLElement>(".lab-item-group")) g.hidden = !g.querySelector("[data-item]:not([hidden])");
   }, { signal });
   el.addEventListener("pointerover", (e) => {
     overlay.highlightPort = (e.target as HTMLElement).closest<HTMLElement>("[data-port]")?.dataset.port;
   }, { signal });
   el.addEventListener("pointerleave", () => (overlay.highlightPort = undefined), { signal });
+}
+
+/** An item's icon for a slot, or its initials where it has none. */
+function slotIcon(name: string, label: string): string {
+  return getIconPosition(name) ? iconHtml(name, 28) : `<span class="lab-item-initials">${escapeHtml(label.split(/\s+/).map((w) => w[0]).join("").slice(0, 3))}</span>`;
+}
+
+/** Which select each open icon grid sets. */
+const pickerFor = new WeakMap<Element, HTMLSelectElement>();
+
+/** Opens (or closes) the icon grid under an item slot, built from the
+ *  options of the select it stands for. One grid open at a time. */
+function toggleItemPicker(slot: HTMLButtonElement) {
+  const field = slot.closest<HTMLElement>(".lab-item-field")!;
+  const open = field.nextElementSibling?.classList.contains("lab-item-picker");
+  for (const p of document.querySelectorAll(".lab-item-picker")) p.remove();
+  for (const s of document.querySelectorAll(".lab-item-slot.is-open")) s.classList.remove("is-open");
+  if (open) return;
+  const select = field.querySelector("select")!;
+  const cell = (value: string, title: string, inner: string) =>
+    `<button type="button" class="lab-item-slot ${value === select.value ? "is-chosen" : ""} ${value ? "" : "is-empty"}" data-item="${escapeHtml(value)}" title="${escapeHtml(title)}">${inner}</button>`;
+  const none = select.options[0]!;
+  const groups = [...select.querySelectorAll("optgroup")]
+    .map((g) => `<div class="lab-item-group"><span class="lab-field-label">${escapeHtml(g.label)}</span><div class="lab-item-grid">${[...g.querySelectorAll("option")].map((o) => cell(o.value, o.text, slotIcon(o.value, o.text))).join("")}</div></div>`)
+    .join("");
+  const picker = document.createElement("div");
+  picker.className = "lab-item-picker";
+  picker.innerHTML = `<div class="lab-item-picker-head"><input type="search" data-item-search placeholder="Search items" aria-label="Search items">${cell("", none.text, "")}<span class="lab-item-none">${escapeHtml(none.text.replace(/[()]/g, ""))}</span></div>${groups}`;
+  // Under the whole lane pair when there are two slots side by side.
+  (field.closest(".lab-port-lanes") ?? field.closest("label") ?? field).after(picker);
+  pickerFor.set(picker, select);
+  slot.classList.add("is-open");
+  picker.querySelector<HTMLInputElement>("[data-item-search]")!.focus();
 }
