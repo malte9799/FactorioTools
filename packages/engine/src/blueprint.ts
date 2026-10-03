@@ -244,7 +244,37 @@ export function normaliseEntities(blueprint: Blueprint): PlacedEntity[] {
     splitterOutputPriority: asSplitterSide(entity.output_priority),
     splitterFilter: readSplitterFilter(entity.filter),
     signalItems: readSignalItems(entity),
+    ...readCircuit(entity),
   }));
+}
+
+/** The circuit settings an entity carries, copied so edits never reach back
+ *  into the decoded blueprint. */
+function readCircuit(entity: BpEntity): Pick<PlacedEntity, "controlBehavior" | "panel" | "color"> {
+  const out: Pick<PlacedEntity, "controlBehavior" | "panel" | "color"> = {};
+  if (entity.control_behavior && typeof entity.control_behavior === "object") out.controlBehavior = structuredClone(entity.control_behavior);
+  if (entity.text !== undefined || entity.always_show !== undefined || entity.show_in_chart !== undefined || (entity.icon && /display-panel/.test(entity.name))) {
+    out.panel = {
+      text: typeof entity.text === "string" ? entity.text : undefined,
+      icon: entity.icon ? { ...entity.icon } : undefined,
+      alwaysShow: entity.always_show,
+      showInChart: entity.show_in_chart,
+    };
+  }
+  if (entity.color && typeof entity.color === "object") out.color = { ...entity.color };
+  return out;
+}
+
+/** Recomputes the read-only `signalItems` hint after an edit to an
+ *  entity's circuit settings. */
+export function refreshSignalItems(entity: PlacedEntity): void {
+  entity.signalItems = readSignalItems({
+    entity_number: entity.entityNumber,
+    name: entity.name,
+    position: { x: entity.x, y: entity.y },
+    control_behavior: entity.controlBehavior,
+    icon: entity.panel?.icon,
+  });
 }
 
 /** Every item (not virtual signal or fluid) a combinator, display panel,
@@ -342,6 +372,14 @@ export function denormaliseEntities(entities: PlacedEntity[]): BpEntity[] {
     if (e.splitterInputPriority) bp.input_priority = e.splitterInputPriority;
     if (e.splitterOutputPriority) bp.output_priority = e.splitterOutputPriority;
     if (e.splitterFilter) bp.filter = { name: e.splitterFilter };
+    if (e.controlBehavior && Object.keys(e.controlBehavior).length) bp.control_behavior = structuredClone(e.controlBehavior);
+    if (e.panel) {
+      if (e.panel.text) bp.text = e.panel.text;
+      if (e.panel.icon?.name) bp.icon = { ...e.panel.icon };
+      if (e.panel.alwaysShow !== undefined) bp.always_show = e.panel.alwaysShow;
+      if (e.panel.showInChart !== undefined) bp.show_in_chart = e.panel.showInChart;
+    }
+    if (e.color) bp.color = { ...e.color };
     return bp;
   });
 }

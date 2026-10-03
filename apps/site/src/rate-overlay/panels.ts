@@ -16,6 +16,7 @@ export const LAYER_INFO: { key: Layer; label: string; hint: string; group: "main
   { key: "dim", label: "Dim the build", hint: "Pushes the sprites back so the signals read.", group: "main" },
   { key: "lanes", label: "Lane signals", hint: "One mark per lane per tile: flowing, backed up, empty, running dry.", group: "main" },
   { key: "rings", label: "Machine status", hint: "Uptime and why a machine isn't working.", group: "main" },
+  { key: "circuits", label: "Circuits", hint: "Lamps, displays, combinator outputs, live wires, and what a circuit switched off.", group: "main" },
   { key: "hover", label: "Hover card", hint: "Details for whatever is under the cursor.", group: "main" },
   { key: "items", label: "Render items", hint: "Items on belts and in inserter hands, and how busy each arm is.", group: "extra" },
   { key: "ports", label: "Port tabs", hint: "Where belts enter and leave, with rates.", group: "extra" },

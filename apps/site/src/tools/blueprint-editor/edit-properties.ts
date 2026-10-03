@@ -1,6 +1,7 @@
 import type { BottleneckSubgroup, GameData, ModuleStack, PlacedEntity, QualityName, RenderCatalog } from "@factoriotools/engine";
 import { buildVisualLookup, mountEntityPreview } from "@factoriotools/renderer";
 import { icon } from "./legacy-view/icons.js";
+import { buildCircuitSection, hasCircuitGui, type CircuitCallbacks } from "./edit-circuit.js";
 import { buildGridMenu, type GridMenuEntry, type GridMenuHandle } from "./grid-menu.js";
 
 export interface PropertiesCallbacks {
@@ -37,6 +38,9 @@ export interface PropertiesCallbacks {
   /** One of the Spoiled first / Fresh first radios picked, or neither
    *  (clearing back to "no preference") — undefined clears it. */
   onSetSpoilPriority(priority: "spoiled-first" | "fresh-first" | undefined): void;
+  /** Circuit settings: shown for combinators, display panels, lamps and
+   *  anything with a red or green wire. */
+  circuit?: CircuitCallbacks;
 }
 
 /** Bottleneck lookup this GUI needs to show its status line — pass in
@@ -484,6 +488,8 @@ export function buildPropertiesPanel(
       callbacks.onSetSpoilPriority(spoilCheckbox.checked ? "spoiled-first" : undefined);
     });
   }
+
+  if (callbacks.circuit && hasCircuitGui(entity, callbacks.circuit.wired)) buildCircuitSection(container, entity, data, catalog, callbacks.circuit);
 
   // mountEntityPreview's teardown fires when this panel is next rebuilt or
   // the container is cleared — matches every other rebuild-on-change spot

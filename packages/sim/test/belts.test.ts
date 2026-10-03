@@ -550,4 +550,28 @@ test("every example blueprint builds a network and simulates without breaking an
   assert.ok(withBelts > 10, `only ${withBelts} examples had belts`);
 });
 
+test("a belt tile switched off by a circuit stops its items and backs up the belt", () => {
+  const { net, sim: s } = sim(row(0, 5, 0, E));
+  const input = inputAt(net, 0, 0);
+  const output = outputAt(net, 5, 0);
+  s.setInput(input, FULL(), FULL());
+  s.step(600);
+  const stopNode = net.nodeAt(3, 0)!;
+  s.setTileEnabled(stopNode, false);
+  s.step(300);
+  const held = s.tileContents(stopNode).get("iron-plate") ?? 0;
+  s.resetCounters();
+  s.step(300);
+  assert.equal(s.portRate(output), 0);
+  // The stopped tile keeps what it held, the tile behind fills up.
+  assert.equal(s.tileContents(stopNode).get("iron-plate") ?? 0, held);
+  assert.equal(s.tileContents(net.nodeAt(2, 0)!).get("iron-plate"), 8);
+  assert.equal(s.tileContents(stopNode, true).get("iron-plate")! >= 8 * 3, true);
+  s.setTileEnabled(stopNode, true);
+  s.step(300);
+  s.resetCounters();
+  s.step(600);
+  assert.ok(Math.abs(s.portRate(output) - 15) < 0.2, `rate ${s.portRate(output)}`);
+});
+
 console.log(`\n${passed} passing`);

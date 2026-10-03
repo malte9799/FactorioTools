@@ -3,7 +3,7 @@
  *  hover card and clickable port tabs. The blueprint editor and the
  *  Overlay Lab both drive one of these; each brings its own windows. */
 import "./rate-overlay.css";
-import { getData, getRenderCatalog, type PlacedEntity } from "@factoriotools/engine";
+import { getData, getRenderCatalog, type PlacedEntity, type WireLink } from "@factoriotools/engine";
 import { getSharedIconAtlas, type BlueprintRenderer } from "@factoriotools/renderer";
 import type { LaneFeed } from "@factoriotools/sim";
 import { hoverCardHtml } from "./card.js";
@@ -17,7 +17,7 @@ import { makeFloatingWindow, type FloatingWindow } from "../window-manager.js";
 type Lanes = [LaneFeed | null, LaneFeed | null];
 
 /** Every layer off: what the ports-only mode draws under its tabs. */
-const NO_LAYERS: LabSettings["layers"] = { dim: false, lanes: false, rings: false, hover: false, items: false, ports: false };
+const NO_LAYERS: LabSettings["layers"] = { dim: false, lanes: false, rings: false, hover: false, items: false, ports: false, circuits: false };
 
 /** Ticks simulated before the overlay counts as settled: a factory that
  *  has been running for a minute rather than one just switched on, so the
@@ -74,6 +74,7 @@ export class RateOverlay {
   private readonly cardBody: HTMLDivElement;
   private readonly abort = new AbortController();
   private entities: PlacedEntity[] = [];
+  private wires: WireLink[] = [];
   private justLoaded: PlacedEntity[] | undefined;
   /** What the user set on ports by hand, by port id. Port ids come from
    *  tile positions, so these survive an edit to the blueprint and are laid
@@ -188,8 +189,9 @@ export class RateOverlay {
   }
 
   /** A new blueprint: forget hand-made port settings and start over. */
-  load(entities: PlacedEntity[]) {
+  load(entities: PlacedEntity[], wires: WireLink[] = []) {
     this.entities = entities;
+    this.wires = wires;
     this.userInputs.clear();
     this.userArms.clear();
     this.userEnabled.clear();
@@ -201,14 +203,15 @@ export class RateOverlay {
   }
 
   /** The same blueprint, edited: rebuild shortly, keeping port settings. */
-  update(entities: PlacedEntity[]) {
+  update(entities: PlacedEntity[], wires: WireLink[] = []) {
     // The host's usual "something changed" call right after a load.
-    if (entities === this.justLoaded) {
+    if (entities === this.justLoaded && wires === this.wires) {
       this.justLoaded = undefined;
       return;
     }
     this.justLoaded = undefined;
     this.entities = entities;
+    this.wires = wires;
     if (!this.active) {
       this.dirty = true;
       return;
@@ -230,7 +233,7 @@ export class RateOverlay {
       return;
     }
     const footprint = (name: string) => getRenderCatalog().entities[name]?.tileFootprint;
-    const f = new LabFactory(getData(), this.entities, this.research, footprint);
+    const f = new LabFactory(getData(), this.entities, this.research, footprint, this.wires);
     const ids = new Set(f.ports().map((p) => p.id));
     for (const [id, [l, r]] of this.userInputs) if (ids.has(id)) f.setInput(id, l, r);
     for (const [id, items] of this.userArms) if (ids.has(id)) f.setArmPortItems(id, items);
@@ -413,7 +416,17 @@ export class RateOverlay {
     if (box) return { kind: "box", box };
     const node = f.net.nodeAt(Math.floor(wx), Math.floor(wy));
     if (node?.line) return { kind: "belt", node };
-    return undefined;
+    // Combinators, lamps, poles…: the nearest within reach of the cursor.
+    let best: HoverTarget | undefined;
+    let bestD = 0.8;
+    for (const e of f.circuitEntities) {
+      const d = Math.max(Math.abs(e.x - wx), Math.abs(e.y - wy));
+      if (d < bestD) {
+        bestD = d;
+        best = { kind: "circuit", entity: e };
+      }
+    }
+    return best;
   }
 
   /** True while the pointer rests on something the card describes. */

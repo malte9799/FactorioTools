@@ -2961,3 +2961,30 @@ canvas.select-mode {
 .bp-composed-icon-cell { display: block; }
 .quality-badge { position: absolute; left: 1px; bottom: 1px; pointer-events: none; }
 .bp-composed-icon-cell .quality-badge { left: 0; bottom: 0; }
+
+/* ---------- circuit GUIs (edit-circuit.ts) ---------- */
+
+/* A decider with a few rows outgrows the 300px machine GUI. */
+#properties-window:has(.circuit-section) { width: 380px; }
+#properties-body:has(.circuit-section) { max-height: calc(100vh - 140px); overflow-y: auto; }
+.circuit-heading { font-weight: 600; color: var(--text); margin-bottom: 6px; }
+.circuit-section .circuit-heading:not(:first-child) { margin-top: 8px; }
+.circuit-row { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; margin: 4px 0; }
+.circuit-decider-row { display: flex; flex-direction: column; gap: 2px; }
+.circuit-operand { display: flex; align-items: center; gap: 4px; }
+.circuit-label { color: var(--text-dim); }
+.circuit-note { color: var(--text-dim); font-size: 11.5px; line-height: 1.4; }
+.circuit-number { width: 64px; padding: 3px 4px; font-size: 12px; text-align: right; font-variant-numeric: tabular-nums; }
+.circuit-text { flex: 1 1 120px; min-width: 0; padding: 3px 6px; font-size: 12px; }
+.circuit-select { padding: 3px 4px; font-size: 12px; }
+.circuit-join { align-self: flex-start; }
+.circuit-nets { display: inline-flex; gap: 2px; }
+.circuit-net { width: 20px; height: 20px; padding: 0; font: 600 10px/1 var(--mono); border: 1px solid var(--border); border-radius: 3px; background: var(--panel); color: var(--text-dim); cursor: pointer; opacity: 0.55; }
+.circuit-net.is-on { opacity: 1; color: #111; }
+.circuit-net-red.is-on { background: #e0463a; border-color: #ff7a6e; }
+.circuit-net-green.is-on { background: #3fbf44; border-color: #77e47b; }
+.circuit-constant-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(72px, 1fr)); gap: 6px; margin-top: 6px; }
+.circuit-constant-cell { display: flex; flex-direction: column; align-items: center; gap: 3px; }
+.circuit-constant-cell .circuit-number { width: 68px; }
+.circuit-add, .circuit-remove { padding: 2px 8px; font-size: 12px; cursor: pointer; }
+.circuit-remove { margin-left: auto; padding: 0 6px; line-height: 20px; }

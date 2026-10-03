@@ -229,10 +229,15 @@ const MAX_POLE_COPPER_WIRES = 5;
 /** True when `a` and `b` are already joined by a wire of this colour, in
  *  either direction. Wires are undirected, so the stored order of the two
  *  ends says nothing about which is "first". */
-export function wireExists(wires: WireLink[], color: WireColor, a: number, b: number): boolean {
-  return wires.some(
-    (w) => w.color === color && ((w.from === a && w.to === b) || (w.from === b && w.to === a)),
-  );
+export function wireExists(wires: WireLink[], color: WireColor, a: number, b: number, aSide?: 1 | 2, bSide?: 1 | 2): boolean {
+  return wires.some((w) => w.color === color && sameEnds(w, a, b, aSide, bSide));
+}
+
+/** Whether a wire joins these two ends, in either order. A side left out
+ *  matches either side. */
+function sameEnds(w: WireLink, a: number, b: number, aSide?: 1 | 2, bSide?: 1 | 2): boolean {
+  const end = (n: number, side: 1 | 2, want: number, wantSide?: 1 | 2) => n === want && (wantSide === undefined || side === wantSide);
+  return (end(w.from, w.fromSide, a, aSide) && end(w.to, w.toSide, b, bSide)) || (end(w.from, w.fromSide, b, bSide) && end(w.to, w.toSide, a, aSide));
 }
 
 /** Whether this entity has a terminal of the given colour at all — a pole has
@@ -254,21 +259,38 @@ export function toggleWire(
   color: WireColor,
   a: number,
   b: number,
+  aSide: 1 | 2 = 1,
+  bSide: 1 | 2 = 1,
 ): { wires: WireLink[]; connected: boolean } {
-  if (a === b) return { wires, connected: false };
-  if (wireExists(wires, color, a, b)) {
+  // A combinator may be wired from its input to its own output (a memory
+  // cell, a clock); any other wire needs two different ends.
+  if (a === b && aSide === bSide) return { wires, connected: false };
+  if (wireExists(wires, color, a, b, aSide, bSide)) {
     return {
-      wires: wires.filter(
-        (w) => !(w.color === color && ((w.from === a && w.to === b) || (w.from === b && w.to === a))),
-      ),
+      wires: wires.filter((w) => !(w.color === color && sameEnds(w, a, b, aSide, bSide))),
       connected: false,
     };
   }
-  // Side 1 on both ends: that is what a pole-to-pole copper wire uses, and
-  // what a plain (non-combinator) circuit terminal uses too. A combinator's
-  // output side is only reachable by wiring from the output terminal, which
-  // this gesture does not distinguish yet.
-  return { wires: [...wires, { color, from: a, fromSide: 1, to: b, toSide: 1 }], connected: true };
+  // Side 1 is a pole's or plain entity's terminal and a combinator's input;
+  // side 2 a combinator's output.
+  return { wires: [...wires, { color, from: a, fromSide: aSide, to: b, toSide: bSide }], connected: true };
+}
+
+/** Which terminal of an entity a click at (x, y) means: the output side of
+ *  a combinator when the click is nearer its output, else side 1. */
+export function terminalSideAt(
+  entity: PlacedEntity,
+  visual: ResolvedVisual | undefined,
+  direction: number,
+  color: WireColor,
+  at: { x: number; y: number },
+): 1 | 2 {
+  if (!visual?.outputWireConnections) return 1;
+  const input = terminalFor(entity, visual, direction, color, 1);
+  const output = terminalFor(entity, visual, direction, color, 2);
+  if (!input || !output) return output ? 2 : 1;
+  const d = (p: { x: number; y: number }) => (p.x - at.x) ** 2 + (p.y - at.y) ** 2;
+  return d(output) < d(input) ? 2 : 1;
 }
 
 /** Copper wires a freshly placed pole should take on, mirroring the game's

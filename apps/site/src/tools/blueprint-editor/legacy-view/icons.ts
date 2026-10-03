@@ -104,3 +104,14 @@ export function getSheetSize(): { width: number; height: number } {
 }
 
 export { SHEET_URL, CELL };
+
+/** An icon as an HTML string, for markup rebuilt often (hover cards).
+ *  Blank until the manifest has loaded; the next rebuild fills it in. */
+export function iconHtml(name: string, displaySize = 16): string {
+  void load();
+  const entry = positions?.get(name);
+  const base = `display:inline-block;width:${displaySize}px;height:${displaySize}px;vertical-align:-3px;flex:none`;
+  if (!entry) return `<span style="${base}"></span>`;
+  const scale = displaySize / CELL;
+  return `<span role="img" style="${base};background:url(${SHEET_URL}) ${-entry.x * scale}px ${-entry.y * scale}px / ${SHEET_W * scale}px ${SHEET_H * scale}px no-repeat"></span>`;
+}

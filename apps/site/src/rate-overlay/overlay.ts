@@ -1,7 +1,8 @@
 /** Draws the lab's overlay layers onto a transparent canvas stacked over the
  *  real renderer's, in the same world coordinates its camera uses. */
+import type { PlacedEntity } from "@factoriotools/engine";
 import type { Camera, IconAtlas } from "@factoriotools/renderer";
-import { DX, DY, lanePoint, type BeltNode, type Lane, type LaneSegment, type Port } from "@factoriotools/sim";
+import { DX, DY, lanePoint, parseSignalKey, type Signals, type BeltNode, type Lane, type LaneSegment, type Port } from "@factoriotools/sim";
 import { machineStatus, type Box, type InserterSim, type LabFactory, type MachineSim, type MachineStatus } from "./factory.js";
 import type { Issue } from "./issues.js";
 import { formatRate, PALETTES, type LabSettings, type LaneState, type Palette } from "./settings.js";
@@ -11,7 +12,9 @@ export type HoverTarget =
   | { kind: "machine"; machine: MachineSim }
   | { kind: "inserter"; inserter: InserterSim }
   | { kind: "belt"; node: BeltNode }
-  | { kind: "port"; port: Port };
+  | { kind: "port"; port: Port }
+  /** Anything else on a circuit network: a combinator, lamp, pole… */
+  | { kind: "circuit"; entity: PlacedEntity };
 
 export interface OverlayFrame {
   ctx: CanvasRenderingContext2D;
@@ -361,6 +364,9 @@ export function drawOverlay(fr: OverlayFrame): PortTabRect[] {
     }
   }
 
+  /* ---------- circuits ---------- */
+  if (L.circuits) drawCircuits(fr, { world, visible, toScreen, labels, detail, hovered: hoveredEntity(fr.hover) });
+
   /* ---------- ports ---------- */
   const tabs: PortTabRect[] = [];
   if (fr.showPorts) {
@@ -419,6 +425,7 @@ export function drawOverlay(fr: OverlayFrame): PortTabRect[] {
     else if (hv.kind === "box") ctx.strokeRect(hv.box.x - 0.5, hv.box.y - 0.5, 1, 1);
     else if (hv.kind === "inserter") ctx.strokeRect(hv.inserter.entity.x - 0.5, hv.inserter.entity.y - 0.5, 1, 1);
     else if (hv.kind === "belt") ctx.strokeRect(hv.node.x, hv.node.y, 1, 1);
+    else if (hv.kind === "circuit") ctx.strokeRect(hv.entity.x - 0.5, hv.entity.y - 0.5, 1, 1);
   }
 
   screen();
@@ -489,4 +496,178 @@ export function itemColor(name: string): string {
     itemColors.set(name, c);
   }
   return c;
+}
+
+/* ---------- circuits ---------- */
+
+/** The entity a hover target stands for, for highlighting its networks. */
+function hoveredEntity(hv: HoverTarget | undefined): PlacedEntity | undefined {
+  if (!hv) return undefined;
+  if (hv.kind === "circuit") return hv.entity;
+  if (hv.kind === "machine") return hv.machine.entity;
+  if (hv.kind === "inserter") return hv.inserter.entity;
+  if (hv.kind === "box") return hv.box.entity;
+  return undefined;
+}
+
+/** A signal value, short: 7, -12, 1.2k, 3.4M. */
+export function compactValue(v: number): string {
+  const a = Math.abs(v);
+  if (a >= 1e9) return `${(v / 1e9).toFixed(1)}G`;
+  if (a >= 1e6) return `${(v / 1e6).toFixed(a >= 1e7 ? 0 : 1)}M`;
+  if (a >= 1e4) return `${(v / 1e3).toFixed(a >= 1e5 ? 0 : 1)}k`;
+  return String(v);
+}
+
+const WIRE_COLOR = { red: "#ff4a3d", green: "#45e04a" } as const;
+
+function drawCircuits(
+  fr: OverlayFrame,
+  h: {
+    world: () => void;
+    visible: (x: number, y: number, pad?: number) => boolean;
+    toScreen: (x: number, y: number) => { x: number; y: number };
+    labels: (() => void)[];
+    detail: number;
+    hovered: PlacedEntity | undefined;
+  },
+) {
+  const { ctx, factory: f, camera } = fr;
+  const c = f.circuits;
+  const ppt = camera.state.pixelsPerTile;
+  const byNumber = new Map(f.entities.map((e) => [e.entityNumber, e] as const));
+  h.world();
+
+  // The hovered entity's networks glow in their colour.
+  const lit = new Set<number>();
+  if (h.hovered) {
+    for (const color of ["red", "green"] as const) {
+      for (const side of [1, 2] as const) {
+        const net = c.network(h.hovered.entityNumber, color, side);
+        if (net) lit.add(net.id);
+      }
+    }
+  }
+  ctx.lineCap = "round";
+  for (const w of f.wires) {
+    if (w.color === "copper") continue;
+    const a = byNumber.get(w.from);
+    const b = byNumber.get(w.to);
+    if (!a || !b) continue;
+    const net = c.network(w.from, w.color, combinatorSide(a, w.fromSide));
+    if (!net) continue;
+    // The renderer draws every wire already; this only lights up the
+    // networks of whatever is under the cursor.
+    const hot = lit.has(net.id);
+    if (!hot) continue;
+    if (!h.visible(a.x, a.y, 8) && !h.visible(b.x, b.y, 8)) continue;
+    ctx.strokeStyle = WIRE_COLOR[w.color];
+    ctx.globalAlpha = net.values.size ? 0.95 : 0.55;
+    ctx.lineWidth = Math.max(0.04, 3 / ppt);
+    ctx.beginPath();
+    ctx.moveTo(a.x, a.y);
+    ctx.lineTo(b.x, b.y);
+    ctx.stroke();
+  }
+  ctx.globalAlpha = 1;
+
+  for (const e of f.circuitEntities) {
+    if (!h.visible(e.x, e.y)) continue;
+    const n = e.entityNumber;
+    if (/lamp/.test(e.name)) {
+      const lamp = c.lamp(n);
+      if (lamp.on) {
+        const col = lamp.color ?? "#fff3c4";
+        const g = ctx.createRadialGradient(e.x, e.y, 0.05, e.x, e.y, 1.4);
+        g.addColorStop(0, col);
+        g.addColorStop(0.25, col + "aa");
+        g.addColorStop(1, col + "00");
+        ctx.fillStyle = g;
+        ctx.fillRect(e.x - 1.4, e.y - 1.4, 2.8, 2.8);
+      } else {
+        ctx.fillStyle = "rgba(20,20,20,0.7)";
+        ctx.beginPath();
+        ctx.arc(e.x, e.y, 0.22, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      continue;
+    }
+    if (/display-panel/.test(e.name)) {
+      const shown = c.display(n);
+      const icon = shown?.icon?.name ? fr.icons.get(shown.icon.name) : undefined;
+      if (icon) ctx.drawImage(icon.sheet, icon.cell.x, icon.cell.y, icon.cell.w, icon.cell.h, e.x - 0.36, e.y - 0.36, 0.72, 0.72);
+      const text = shown?.text;
+      if (text && h.detail > 0) {
+        h.labels.push(() => {
+          const p = h.toScreen(e.x, e.y - 0.7);
+          const fs = Math.max(10, Math.min(16, ppt * 0.3));
+          ctx.globalAlpha = h.detail;
+          ctx.font = `500 ${fs}px "IBM Plex Mono", monospace`;
+          const tw = Math.min(ctx.measureText(text).width, fs * 18);
+          ctx.fillStyle = "rgba(32,31,30,0.92)";
+          ctx.beginPath();
+          ctx.roundRect(p.x - tw / 2 - 5, p.y - fs, tw + 10, fs * 1.5, 3);
+          ctx.fill();
+          ctx.fillStyle = "#e6e0d8";
+          ctx.textAlign = "center";
+          ctx.textBaseline = "middle";
+          ctx.fillText(text, p.x, p.y - fs * 0.25, fs * 18);
+          ctx.textAlign = "left";
+          ctx.globalAlpha = 1;
+        });
+      }
+      continue;
+    }
+    const out = c.combinatorOutput(n);
+    if (out && out.size && h.detail > 0) {
+      h.labels.push(() => signalStrip(ctx, fr.icons, h.toScreen(e.x, e.y + 0.55), out, Math.max(9, Math.min(13, ppt * 0.22)), h.detail));
+    }
+    if (c.enabled(n) === false) {
+      // The game's "disabled by circuit" sign: a red no-entry disc.
+      const r = 0.24;
+      ctx.fillStyle = "rgba(200,40,30,0.9)";
+      ctx.beginPath();
+      ctx.arc(e.x, e.y, r, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = "#fff";
+      ctx.fillRect(e.x - r * 0.62, e.y - r * 0.16, r * 1.24, r * 0.32);
+    }
+  }
+}
+
+/** Which network side a wire end lands on, the way CircuitSim keys it. */
+function combinatorSide(e: PlacedEntity, side: 1 | 2): 1 | 2 {
+  return side === 2 && /arithmetic|decider|selector/.test(e.name) ? 2 : 1;
+}
+
+/** A row of up to four signals, icon and value, centred under a point. */
+function signalStrip(ctx: CanvasRenderingContext2D, icons: IconAtlas, at: { x: number; y: number }, signals: Signals, fs: number, alpha: number) {
+  const list = [...signals].sort((a, b) => Math.abs(b[1]) - Math.abs(a[1])).slice(0, 4);
+  const iconSize = fs * 1.3;
+  ctx.font = `600 ${fs}px "IBM Plex Mono", monospace`;
+  const parts = list.map(([k, v]) => ({ name: parseSignalKey(k).name, text: compactValue(v) }));
+  const widths = parts.map((p) => iconSize + 2 + ctx.measureText(p.text).width);
+  const more = signals.size > list.length ? `+${signals.size - list.length}` : "";
+  const total = widths.reduce((a, b) => a + b + 6, 0) + (more ? ctx.measureText(more).width : 0) + 6;
+  let x = at.x - total / 2;
+  ctx.globalAlpha = alpha;
+  ctx.fillStyle = "rgba(32,31,30,0.9)";
+  ctx.beginPath();
+  ctx.roundRect(x, at.y, total, iconSize + 4, 3);
+  ctx.fill();
+  x += 6;
+  ctx.textBaseline = "middle";
+  const cy = at.y + iconSize / 2 + 2;
+  parts.forEach((p, i) => {
+    const icon = icons.get(p.name);
+    if (icon) ctx.drawImage(icon.sheet, icon.cell.x, icon.cell.y, icon.cell.w, icon.cell.h, x, cy - iconSize / 2, iconSize, iconSize);
+    ctx.fillStyle = "#e6e0d8";
+    ctx.fillText(p.text, x + iconSize + 2, cy);
+    x += widths[i]! + 6;
+  });
+  if (more) {
+    ctx.fillStyle = "#a5a19a";
+    ctx.fillText(more, x, cy);
+  }
+  ctx.globalAlpha = 1;
 }

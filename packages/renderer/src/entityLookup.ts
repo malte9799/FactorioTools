@@ -72,6 +72,18 @@ const MACHINE_ROTATES_FOOTPRINT = new Set([
   "recycler",
 ]);
 
+/** Circuit-connectable buildings besides poles, combinators and crafting
+ *  machines, by prototype name. */
+const CIRCUIT_CONNECTABLE =
+  /transport-belt$|inserter|chest|container|lamp|display-panel|pump|mining-drill|train-stop|rail-signal|rail-chain-signal|roboport|accumulator|programmable-speaker|storage-tank|gate$|splitter|turret|wagon|loader|agricultural-tower|asteroid-collector|cargo-landing-pad|space-platform-hub|reactor|silo/;
+
+function centreTerminal([w, h]: [number, number]): WireAttachPoints {
+  const dx = Math.min(0.18, w * 0.15);
+  const dy = -Math.min(0.2, h * 0.2);
+  const point = { red: [-dx, dy] as [number, number], green: [dx, dy] as [number, number] };
+  return { byDirection: [point, point, point, point] };
+}
+
 export function buildVisualLookup(data: GameData, catalog: RenderCatalog): Map<string, ResolvedVisual> {
   const lookup = new Map<string, ResolvedVisual>();
 
@@ -139,6 +151,14 @@ export function buildVisualLookup(data: GameData, catalog: RenderCatalog): Map<s
       supplyAreaDistance: e.supplyAreaDistance,
       maxWireDistance: e.maxWireDistance,
     });
+  }
+  // Most buildings take circuit wires, but the dataset only records where
+  // they attach for poles and combinators. Everything else that can be
+  // wired gets a terminal near its centre, so its wires draw and the
+  // editor can connect them.
+  for (const [name, visual] of lookup) {
+    if (visual.wireConnections || !(visual.isMachine || CIRCUIT_CONNECTABLE.test(name))) continue;
+    visual.wireConnections = centreTerminal(visual.tileFootprint);
   }
   return lookup;
 }

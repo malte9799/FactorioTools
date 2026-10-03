@@ -20,15 +20,17 @@ import {
   boxOf,
   overlaps,
   remapSelectionForPaste,
+  refreshSignalItems,
 } from "@factoriotools/engine";
-import type { CalculationResult, Timescale, Blueprint, BlueprintTreeNode, PlacedEntity, QualityName, MachineGroup, ModuleStack, ThroughputContext, BottleneckSubgroup, WireColor, WireLink } from "@factoriotools/engine";
-import { mountRenderer, isPoleLike, isUndergroundLike, autoUnderground, undergroundPartner, isTwoDirectionOnly, rotationStep, effectiveFootprint, rotateAroundCenter, summariseRecording, slowestFrames, worstPhase, autoConnectPole, canWire, dropWiresFor, toggleWire, type BlueprintRenderer, type HighlightRole } from "@factoriotools/renderer";
+import type { CalculationResult, Timescale, Blueprint, BlueprintTreeNode, PlacedEntity, QualityName, MachineGroup, ModuleStack, ThroughputContext, BottleneckSubgroup, BpSignalId, WireColor, WireLink } from "@factoriotools/engine";
+import { mountRenderer, isPoleLike, isUndergroundLike, autoUnderground, undergroundPartner, isTwoDirectionOnly, rotationStep, effectiveFootprint, rotateAroundCenter, summariseRecording, slowestFrames, worstPhase, autoConnectPole, canWire, dropWiresFor, terminalSideAt, toggleWire, type BlueprintRenderer, type HighlightRole } from "@factoriotools/renderer";
 import { buildRecipeCard, renderResults, type ViewOptions } from "./legacy-view/panels.js";
 import { icon } from "./legacy-view/icons.js";
 import { makeFloatingWindow } from "../../window-manager.js";
 import { buildPalette, placeableEntries } from "./edit-palette.js";
 import { appendQualityOptions, QUALITY_TIERS } from "./quality-options.js";
 import { buildPropertiesPanel, buildRecipeMenu, buildModuleMenu, buildFilterItemMenu } from "./edit-properties.js";
+import { buildSignalMenu, type Wildcards } from "./edit-circuit.js";
 import type { GridMenuHandle } from "./grid-menu.js";
 import { buildLibrarySidebar } from "./library-sidebar.js";
 import { buildQuickbar, readAltLayers, writeAltLayers, type AltLayers, type QuickbarHandle, type QuickbarItem } from "./quickbar.js";
@@ -237,6 +239,16 @@ const TEMPLATE = `
     </div>
     <div class="gui-body">
       <div id="filter-body"></div>
+    </div>
+  </div>
+
+  <div id="signal-window" class="gui-window floating-window menu-window" hidden>
+    <div class="gui-titlebar">
+      <span>Select signal</span>
+      <span class="grip" aria-hidden="true"></span>
+    </div>
+    <div class="gui-body">
+      <div id="signal-body"></div>
     </div>
   </div>
 
@@ -502,6 +514,13 @@ export function mountBlueprintEditor(root: HTMLElement): () => void {
     y: 66,
     onClose: () => enterMenuState("machine-info"),
   });
+  const signalWindow = makeFloatingWindow($("#signal-window"), {
+    x: Math.max(16, window.innerWidth - 900),
+    y: 66,
+    onClose: () => enterMenuState("machine-info"),
+  });
+  /** What the open signal picker fills, and which wildcards it offers. */
+  let signalPick: { allow: Wildcards; onPick: (signal: BpSignalId) => void } | undefined;
 
   // All floating windows start hidden so the blueprint fills the screen
   // uninterrupted — the toolbar below (bottom-of-template, always visible)
@@ -975,6 +994,9 @@ export function mountBlueprintEditor(root: HTMLElement): () => void {
    *  next click starts a fresh pair. Cleared by the first 'q' press; a
    *  second 'q' leaves wire mode entirely (see the 'q' handler). */
   let pendingWireFrom: number | null = null;
+  /** Which terminal of pendingWireFrom the wire leaves from: 2 for a
+   *  combinator's output, else 1. */
+  let pendingWireSide: 1 | 2 = 1;
 
   /** Arms or clears the half-finished wire pick, keeping the renderer in
    *  step so it can trail the in-progress wire to the cursor. Every write
@@ -983,9 +1005,10 @@ export function mountBlueprintEditor(root: HTMLElement): () => void {
    *  completing a wire, 'q'), and one of them forgetting to notify would
    *  leave a wire dangling from an entity the app no longer considers
    *  armed. */
-  function setPendingWireFrom(entityNumber: number | null): void {
+  function setPendingWireFrom(entityNumber: number | null, side: 1 | 2 = 1): void {
     pendingWireFrom = entityNumber;
-    renderer.setPendingWire(entityNumber);
+    pendingWireSide = side;
+    renderer.setPendingWire(entityNumber, side);
   }
   /** Which wire colour is on the cursor (Alt+C/R/G), or null outside wire
    *  mode. Mirrors the renderer's own 'wire' InteractionMode so the app can
@@ -1307,7 +1330,7 @@ export function mountBlueprintEditor(root: HTMLElement): () => void {
     const savedCamera = restoreCameraFromSave ? readSavedCamera() : null;
     renderer.loadBlueprint(entities, wires);
     restoreCamera(savedCamera);
-    rateOverlay.load(entities);
+    rateOverlay.load(entities, wires);
     recalculate();
     persistEntities();
     syncQuickbar();
@@ -1849,7 +1872,7 @@ export function mountBlueprintEditor(root: HTMLElement): () => void {
     // terminal of the held colour is refused outright rather than armed, so
     // the gesture never strands the user half-way through a wire that could
     // not exist (a belt has no circuit terminals at all).
-    renderer.onWireClick((entityNumber) => {
+    renderer.onWireClick((entityNumber, world) => {
       if (wireColorInHand === null) return;
       const entity = entities.find((e) => e.entityNumber === entityNumber);
       if (!entity) return;
@@ -1857,18 +1880,25 @@ export function mountBlueprintEditor(root: HTMLElement): () => void {
         setStatus(`A ${entity.name.replace(/-/g, " ")} has no ${wireColorInHand} wire terminal.`, "error");
         return;
       }
+      // A combinator's click picks the terminal nearer the cursor: its
+      // input or its output side.
+      const visual = visualLookup().get(entity.name);
+      const side = wireColorInHand === "copper" ? 1 : terminalSideAt(entity, visual, entity.direction, wireColorInHand, world);
+      const sideWord = visual?.outputWireConnections && wireColorInHand !== "copper" ? (side === 2 ? " output" : " input") : "";
       if (pendingWireFrom === null) {
-        setPendingWireFrom(entityNumber);
-        setStatus(`Picked one end — click another entity to connect or disconnect the ${wireColorInHand} wire.`);
+        setPendingWireFrom(entityNumber, side);
+        setStatus(`Picked one end${sideWord} — click another entity to connect or disconnect the ${wireColorInHand} wire.`);
         return;
       }
-      // Re-clicking the same entity is inert, per the user's own design:
-      // only 'q' clears a pick, never a click.
-      if (pendingWireFrom === entityNumber) return;
+      // Re-clicking the same terminal is inert, per the user's own design:
+      // only 'q' clears a pick, never a click. The other side of the same
+      // combinator is a real wire (input to output).
+      if (pendingWireFrom === entityNumber && pendingWireSide === side) return;
       const from = pendingWireFrom;
+      const fromSide = pendingWireSide;
       setPendingWireFrom(null);
       applyEdit(() => {
-        const result = toggleWire(wires, wireColorInHand!, from, entityNumber);
+        const result = toggleWire(wires, wireColorInHand!, from, entityNumber, fromSide, side);
         wires = result.wires;
         setStatus(result.connected ? `Connected with a ${wireColorInHand} wire.` : `Disconnected the ${wireColorInHand} wire.`);
       });
@@ -2012,7 +2042,7 @@ export function mountBlueprintEditor(root: HTMLElement): () => void {
    * function is what stops the four windows from being shown/hidden
    * ad-hoc from a dozen call sites and drifting into impossible
    * combinations. */
-  type MenuState = "default" | "build" | "hotbar" | "machine-info" | "recipe" | "module" | "filter";
+  type MenuState = "default" | "build" | "hotbar" | "machine-info" | "recipe" | "module" | "filter" | "signal";
   let menuState: MenuState = "default";
   /** The open menu's handle, for 'E' to confirm/cancel through. Undefined in
    *  the two states that aren't a grid menu (default, machine-info). */
@@ -2057,6 +2087,7 @@ export function mountBlueprintEditor(root: HTMLElement): () => void {
     recipeWindow.hide();
     moduleWindow.hide();
     filterWindow.hide();
+    signalWindow.hide();
     hotbarPickWindow.hide();
     // The properties window is the machine-info state itself, so it closes
     // for every other state — including while a picker it launched is open,
@@ -2085,6 +2116,16 @@ export function mountBlueprintEditor(root: HTMLElement): () => void {
       case "filter":
         openMenuWindow(filterWindow, buildFilterMenuForSlot(activeFilterSlot));
         return;
+      case "signal": {
+        const pick = signalPick;
+        if (!pick) return enterMenuState("machine-info");
+        openMenuWindow(signalWindow, buildSignalMenu($<HTMLDivElement>("#signal-body"), getRenderCatalog(), pick.allow, (signal) => {
+          signalPick = undefined;
+          pick.onPick(signal);
+          enterMenuState("machine-info");
+        }, () => enterMenuState("machine-info")));
+        return;
+      }
     }
   }
 
@@ -2103,6 +2144,7 @@ export function mountBlueprintEditor(root: HTMLElement): () => void {
         return;
       case "module":
       case "filter":
+      case "signal":
         enterMenuState("machine-info");
         return;
       case "default":
@@ -2391,6 +2433,23 @@ export function mountBlueprintEditor(root: HTMLElement): () => void {
       onSetSpoilPriority(priority) {
         updateSelectedEntity((e) => { e.spoilPriority = priority; });
       },
+      circuit: {
+        wired: wires.some((w) => w.color !== "copper" && (w.from === selectedEntity!.entityNumber || w.to === selectedEntity!.entityNumber)),
+        commit(mutate) {
+          updateSelectedEntity((e) => {
+            // Copy on write: undo snapshots share nested objects.
+            const cb = structuredClone(e.controlBehavior ?? {});
+            if (e.panel) e.panel = { ...e.panel };
+            mutate(cb, e);
+            e.controlBehavior = Object.keys(cb).length ? cb : undefined;
+            if (/combinator|display-panel/.test(e.name)) refreshSignalItems(e);
+          });
+        },
+        pickSignal(allow, onPick) {
+          signalPick = { allow, onPick };
+          enterMenuState("signal");
+        },
+      },
     });
     propertiesWindow.show();
     propertiesWindow.bringToFront();
@@ -2410,8 +2469,8 @@ export function mountBlueprintEditor(root: HTMLElement): () => void {
   function recalculate() {
     // Every edit lands here; the overlay rebuilds its model shortly after,
     // and the Overlay Lab picks up the same blueprint when it's opened.
-    rateOverlay.update(entities);
-    setCurrentBlueprint(entities);
+    rateOverlay.update(entities, wires);
+    setCurrentBlueprint(entities, wires);
     const data = getData();
     result = calculate(data, entities, options.researchLevels);
     const throughputCtx: ThroughputContext = {
@@ -3400,7 +3459,7 @@ export function mountBlueprintEditor(root: HTMLElement): () => void {
     else if (paletteSelection) renderer.setInteractionMode({ kind: "place", entityName: paletteSelection, quality: paletteQuality });
     // A fresh renderer knows nothing of a half-finished pick either, so an
     // armed wire would stop trailing to the cursor across the swap.
-    if (pendingWireFrom !== null) renderer.setPendingWire(pendingWireFrom);
+    if (pendingWireFrom !== null) renderer.setPendingWire(pendingWireFrom, pendingWireSide);
     if (entities.length) {
       const savedCamera = readSavedCamera();
       renderer.loadBlueprint(entities, wires);

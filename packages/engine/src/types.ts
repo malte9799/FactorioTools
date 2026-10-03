@@ -677,14 +677,17 @@ export interface BpEntity {
   spoil_priority?: BpSpoilPriority;
   /** Storage/requester/buffer chests. */
   request_filters?: BpRequestFilters;
-  /** Combinators, display panels and more: circuit settings. Only read for
-   *  the items they name (see PlacedEntity.signalItems). */
-  control_behavior?: {
-    sections?: { sections?: { filters?: BpSignalFilter[] }[] };
-    parameters?: { icon?: BpSignalFilter }[];
-  };
-  /** Display panels: the icon shown. */
+  /** Combinators, display panels and anything wired: circuit settings.
+   *  Carried through untouched as PlacedEntity.controlBehavior and read by
+   *  the circuit simulation (packages/sim/src/circuit.ts). */
+  control_behavior?: BpControlBehavior;
+  /** Display panels: the icon and text shown when no circuit message is. */
   icon?: BpSignalFilter;
+  text?: string;
+  always_show?: boolean;
+  show_in_chart?: boolean;
+  /** Lamps: the colour lit when no circuit colour is used. */
+  color?: { r?: number; g?: number; b?: number; a?: number };
   /** Infinity (creative) chests: what they hold. */
   infinity_settings?: { filters?: BpSignalFilter[] };
   /** Splitters only: which input belt is drained first. Omitted = no
@@ -696,6 +699,107 @@ export interface BpEntity {
   /** Splitters only: the item filter. 2.0 writes an item-filter object,
    *  1.1 wrote the bare item name. */
   filter?: string | { name: string; quality?: QualityName; comparator?: string };
+}
+
+/** A signal as a blueprint names it: `type` is omitted for an item. */
+export interface BpSignalId {
+  type?: string;
+  name?: string;
+  quality?: string;
+}
+
+/** Which wire colours an operand or output reads. Omitted means both. */
+export interface BpNetworks {
+  red?: boolean;
+  green?: boolean;
+}
+
+/** A plain circuit condition: an enable/disable condition, a lamp's, a
+ *  display panel message's. `comparator` defaults to "<", `constant` to 0. */
+export interface BpCircuitCondition {
+  first_signal?: BpSignalId;
+  second_signal?: BpSignalId;
+  constant?: number;
+  comparator?: string;
+}
+
+export interface BpArithmeticConditions {
+  first_signal?: BpSignalId;
+  first_constant?: number;
+  first_signal_networks?: BpNetworks;
+  second_signal?: BpSignalId;
+  second_constant?: number;
+  second_signal_networks?: BpNetworks;
+  /** Defaults to "*". */
+  operation?: string;
+  output_signal?: BpSignalId;
+}
+
+/** One row of a 2.0 decider: joined to the rows before it by `compare_type`
+ *  ("or" when omitted); AND binds tighter than OR, as in game. */
+export interface BpDeciderCondition extends BpCircuitCondition {
+  first_signal_networks?: BpNetworks;
+  second_signal_networks?: BpNetworks;
+  compare_type?: "and" | "or";
+}
+
+export interface BpDeciderOutput {
+  signal?: BpSignalId;
+  /** Defaults to true: output the input's own count. */
+  copy_count_from_input?: boolean;
+  /** Used when not copying; defaults to 1. */
+  constant?: number;
+  networks?: BpNetworks;
+}
+
+/** One signal slot of a constant combinator's section. */
+export interface BpLogisticFilter extends BpSignalId {
+  index?: number;
+  count?: number;
+  comparator?: string;
+}
+
+/** A wired entity's circuit settings, as the 2.0 blueprint format writes
+ *  them. Which keys apply depends on the entity; unknown ones are kept as
+ *  they are so a blueprint round-trips. */
+export interface BpControlBehavior {
+  /** Constant combinators: the on/off switch. Omitted means on. */
+  is_on?: boolean;
+  sections?: { sections?: { index?: number; filters?: BpLogisticFilter[]; active?: boolean; group?: string; multiplier?: number }[] };
+  arithmetic_conditions?: BpArithmeticConditions;
+  decider_conditions?: { conditions?: BpDeciderCondition[]; outputs?: BpDeciderOutput[] };
+  /** Selector combinators. */
+  operation?: string;
+  select_max?: boolean;
+  index_constant?: number;
+  index_signal?: BpSignalId;
+  count_signal?: BpSignalId;
+  random_update_interval?: number;
+  /** Display panels: messages, the first whose condition holds is shown. */
+  parameters?: { icon?: BpSignalId; text?: string; condition?: BpCircuitCondition }[];
+  /** Enable/disable by circuit: "circuit_enabled" in 2.0, the older
+   *  "circuit_enable_disable" is read too. */
+  circuit_enabled?: boolean;
+  circuit_enable_disable?: boolean;
+  circuit_condition?: BpCircuitCondition;
+  connect_to_logistic_network?: boolean;
+  logistic_condition?: BpCircuitCondition;
+  /** Inserters: read hand (mode 0 pulse, 1 hold), set filters, set stack. */
+  circuit_read_hand_contents?: boolean;
+  circuit_hand_read_mode?: number;
+  circuit_set_filters?: boolean;
+  circuit_set_stack_size?: boolean;
+  stack_control_input_signal?: BpSignalId;
+  /** Belts: read contents (mode 0 pulse, 1 hold, 2 entire belt). */
+  circuit_contents_read_mode?: number;
+  /** Crafting machines and containers. */
+  read_contents?: boolean;
+  read_working?: boolean;
+  working_signal?: BpSignalId;
+  /** Lamps. */
+  use_colors?: boolean;
+  color_mode?: number;
+  [key: string]: unknown;
 }
 
 /** A splitter's side, relative to its own facing (left = counter-clockwise
@@ -861,6 +965,12 @@ export interface PlacedEntity {
    *  requests (every section) name. Players put these next to belts to say
    *  what's on them. Not written back on export. */
   signalItems?: string[];
+  /** Circuit settings, kept as the blueprint wrote them and written back
+   *  on export. Edited by the editor's circuit GUIs. */
+  controlBehavior?: BpControlBehavior;
+  /** Display panels and lamps: the settings outside control_behavior. */
+  panel?: { text?: string; icon?: BpSignalId; alwaysShow?: boolean; showInChart?: boolean };
+  color?: { r?: number; g?: number; b?: number; a?: number };
 }
 
 /** One wire, normalised out of the blueprint's `wires` array into the pair
