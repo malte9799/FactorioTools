@@ -162,7 +162,15 @@ export function openLibraryWindow(options: LibraryWindowOptions): void {
   const descInput = el("textarea", "bp-edit-description");
   descInput.value = options.meta.description;
   descInput.rows = 4;
-  descPanel.appendChild(descInput);
+  // Rendered as the game shows it: colours, fonts and icons.
+  const descPreview = el("div", "bp-edit-description-preview");
+  const renderDescription = () => {
+    descPreview.replaceChildren(renderRichLabel(descInput.value, 16));
+    descPreview.hidden = !descInput.value.trim();
+  };
+  descInput.addEventListener("input", renderDescription);
+  renderDescription();
+  descPanel.append(descInput, descPreview);
 
   // Snap to grid
   const snapPanel = el("div", "bp-lib-panel bp-lib-snap");

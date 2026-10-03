@@ -21,6 +21,7 @@ import {
   overlaps,
   remapSelectionForPaste,
   refreshSignalItems,
+  stripRichText,
 } from "@factoriotools/engine";
 import type { CalculationResult, Timescale, Blueprint, BlueprintTreeNode, PlacedEntity, QualityName, MachineGroup, ModuleStack, ThroughputContext, BottleneckSubgroup, BpSignalId, WireColor, WireLink } from "@factoriotools/engine";
 import { mountRenderer, isPoleLike, isUndergroundLike, autoUnderground, undergroundPartner, isTwoDirectionOnly, rotationStep, effectiveFootprint, rotateAroundCenter, summariseRecording, slowestFrames, worstPhase, autoConnectPole, canWire, dropWiresFor, terminalSideAt, toggleWire, type BlueprintRenderer, type HighlightRole } from "@factoriotools/renderer";
@@ -39,7 +40,7 @@ import { buildGridMenu } from "./grid-menu.js";
 import { BlueprintLinkError, looksLikeBlueprintString, parseBlueprintLink, resolveBlueprintLink, SHARE_TARGETS } from "./blueprint-links.js";
 import { saveToLibrary } from "./blueprint-library.js";
 import { RateOverlay } from "../../rate-overlay/controller.js";
-import { setCurrentBlueprint, EDITOR_AUTOSAVE_KEY } from "../../current-blueprint.js";
+import { setCurrentBlueprint, EDITOR_AUTOSAVE_KEY, readAutosave } from "../../current-blueprint.js";
 import { currentQuality, onQualityChange } from "../../render-presets.js";
 import { GRAPHICS_WINDOW_HTML, wireGraphicsPanel } from "../../graphics-panel.js";
 import { clockText, overviewHtml, rateUnitHtml, renderLayerList, renderPortList, RESEARCH_HTML, wireLayerList, wirePortList, wireRateUnit, wireResearch } from "../../rate-overlay/panels.js";
@@ -2517,7 +2518,9 @@ export function mountBlueprintEditor(root: HTMLElement): () => void {
     if (wasHidden) {
       requestAnimationFrame(() => {
         const rect = propertiesWindow.el.getBoundingClientRect();
-        propertiesWindow.setPosition((window.innerWidth - rect.width) / 2, (window.innerHeight - rect.height) / 2);
+        // Never under the toolbar, even when the window is taller than half
+        // the screen (a display panel with many messages).
+        propertiesWindow.setPosition((window.innerWidth - rect.width) / 2, Math.max(110, (window.innerHeight - rect.height) / 2));
       });
     }
   }
@@ -2706,7 +2709,8 @@ export function mountBlueprintEditor(root: HTMLElement): () => void {
       blueprints.forEach((bp, i) => {
         const option = document.createElement("option");
         option.value = String(i);
-        option.textContent = bp.label || `Blueprint ${i + 1}`;
+        // An <option> can only hold plain text: the label without markup.
+        option.textContent = (bp.label && stripRichText(bp.label)) || `Blueprint ${i + 1}`;
         picker.appendChild(option);
       });
       picker.hidden = blueprints.length < 2;
@@ -3474,7 +3478,7 @@ export function mountBlueprintEditor(root: HTMLElement): () => void {
   // working on beats replacing it with something else every reload.
   let autosaved: string | null = null;
   try {
-    autosaved = localStorage.getItem(AUTOSAVE_KEY);
+    autosaved = readAutosave();
   } catch {
     /* storage unavailable — fall through to the random example below */
   }

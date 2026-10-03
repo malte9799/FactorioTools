@@ -1,75 +1,59 @@
-/** Renders a Factorio "rich text" label — plain text interleaved with
- *  `[type=name]` icon tags (item/entity/fluid/recipe/technology/quality/
- *  virtual-signal/tile/...), the syntax the game itself uses for blueprint
- *  and blueprint-book names set via the in-game rename dialog's icon
- *  picker. Only the `[type=name]` and `[type=name,quality=quality-name]`
- *  forms are parsed — those are the only ones the rename dialog can
- *  actually produce; colour/font tags and other rich-text markup exist in
- *  Factorio's wider text-rendering system but never end up in a save/load
- *  or blueprint-book label, so they're deliberately left unhandled (any
- *  tag this doesn't recognise, or a stray `[`/`]`, prints as literal text
- *  instead of vanishing silently). */
+/** Renders Factorio rich text (see packages/engine/src/richtext.ts) as
+ *  HTML: coloured and bold runs, and inline icons for `[item=…]`,
+ *  `[virtual-signal=…]`, `[img=type/name]` and the rest. Used wherever the
+ *  app shows a text the game would render as rich text: blueprint names
+ *  and descriptions, display panel messages, map labels. */
 
-import { icon } from "./legacy-view/icons.js";
+import { parseRichText, type RichRun } from "@factoriotools/engine";
+import { escapeHtml } from "./html.js";
+import { icon, iconHtml } from "./legacy-view/icons.js";
 
-const TAG_PATTERN = /\[([a-z][a-z0-9-]*)=([a-z0-9][a-z0-9_-]*)(?:,quality=[a-z0-9][a-z0-9_-]*)?\]/gi;
+const textStyle = (r: Extract<RichRun, { kind: "text" }>): string => {
+  const css: string[] = [];
+  if (r.color) css.push(`color:${r.color}`);
+  if (r.bold) css.push("font-weight:700");
+  if (r.scale !== 1) css.push(`font-size:${r.scale}em`);
+  return css.join(";");
+};
 
-/** Prototype-name types the icon sheet actually covers (see icons.ts's own
- *  doc comment — it's packed from items/entities/etc., not signals). A tag
- *  of a recognised TYPE but a name the sheet doesn't have falls through to
- *  icon()'s own "render nothing" handling for a missing sprite; a tag whose
- *  TYPE isn't in this set (virtual-signal, tile, quality, ...) has no sprite
- *  source at all, so it renders as a small placeholder square instead of
- *  silently disappearing — losing an icon entirely would make an otherwise
- *  descriptive name (e.g. a virtual-signal-only label) look blank. */
-const ICON_TYPES = new Set(["item", "entity", "fluid", "recipe", "technology", "item-group", "armor", "capsule", "gun", "ammo", "module", "tool"]);
-
-/** Builds a DocumentFragment with plain text runs and inline icon spans in
- *  place of each recognised `[type=name]` tag — for anywhere a blueprint or
- *  book label is displayed as a clickable row label rather than plain
- *  textContent. `iconSize` matches icon()'s own displaySize parameter. */
+/** A DocumentFragment of styled text spans and icon elements. Text only
+ *  ever reaches the DOM as text nodes, so a label can't inject markup. */
 export function renderRichLabel(label: string, iconSize = 16): DocumentFragment {
   const fragment = document.createDocumentFragment();
-  let lastIndex = 0;
-  TAG_PATTERN.lastIndex = 0;
-  let match: RegExpExecArray | null;
-  while ((match = TAG_PATTERN.exec(label)) !== null) {
-    if (match.index > lastIndex) {
-      fragment.appendChild(document.createTextNode(label.slice(lastIndex, match.index)));
+  for (const r of parseRichText(label)) {
+    if (r.kind === "icon") {
+      const el = icon(r.name, r.name.replace(/-/g, " "), iconSize);
+      el.classList.add("rich-text-icon");
+      fragment.appendChild(el);
+      continue;
     }
-    const [, type, name] = match;
-    fragment.appendChild(renderTag(type!, name!, iconSize));
-    lastIndex = TAG_PATTERN.lastIndex;
-  }
-  if (lastIndex < label.length) {
-    fragment.appendChild(document.createTextNode(label.slice(lastIndex)));
+    const style = textStyle(r);
+    if (!style) {
+      fragment.appendChild(document.createTextNode(r.text));
+      continue;
+    }
+    const span = document.createElement("span");
+    span.style.cssText = style;
+    span.textContent = r.text;
+    fragment.appendChild(span);
   }
   return fragment;
 }
 
-function renderTag(type: string, name: string, iconSize: number): HTMLElement {
-  if (ICON_TYPES.has(type)) {
-    const el = icon(name, name.replace(/-/g, " "), iconSize);
-    el.classList.add("rich-text-icon");
-    return el;
-  }
-  // A type the sprite sheet has no art for (virtual-signal, quality, tile,
-  // space-location, ...) — a small lettered placeholder beats vanishing the
-  // reference entirely, and beats printing the raw `[type=name]` markup a
-  // plain-text fallback would show instead.
-  const placeholder = document.createElement("span");
-  placeholder.className = "rich-text-icon rich-text-icon-placeholder";
-  placeholder.style.setProperty("--icon-size", `${iconSize}px`);
-  placeholder.title = name.replace(/-/g, " ");
-  placeholder.textContent = (type[0] ?? "?").toUpperCase();
-  return placeholder;
+/** The same as an HTML string, escaped, for markup rebuilt often (hover
+ *  cards). */
+export function richTextHtml(label: string, iconSize = 16): string {
+  return parseRichText(label)
+    .map((r) => {
+      if (r.kind === "icon") return iconHtml(r.name, iconSize);
+      const style = textStyle(r);
+      return style ? `<span style="${style}">${escapeHtml(r.text)}</span>` : escapeHtml(r.text);
+    })
+    .join("");
 }
 
-/** Whether `label` contains at least one recognised rich-text tag — lets a
- *  caller skip the DocumentFragment machinery for the common case of a
- *  plain-text label (still handled correctly either way, just an easy early
- *  out). */
+/** Whether `label` has any markup at all — a plain label can skip the
+ *  rich rendering. */
 export function hasRichText(label: string): boolean {
-  TAG_PATTERN.lastIndex = 0;
-  return TAG_PATTERN.test(label);
+  return parseRichText(label).some((r) => r.kind === "icon" || r.color !== undefined || r.bold || r.scale !== 1);
 }

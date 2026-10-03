@@ -1,6 +1,6 @@
 /** Draws the lab's overlay layers onto a transparent canvas stacked over the
  *  real renderer's, in the same world coordinates its camera uses. */
-import type { PlacedEntity } from "@factoriotools/engine";
+import { parseRichText, type PlacedEntity, type RichRun } from "@factoriotools/engine";
 import type { Camera, IconAtlas } from "@factoriotools/renderer";
 import { DX, DY, lanePoint, parseSignalKey, type Signals, type BeltNode, type Lane, type LaneSegment, type Port } from "@factoriotools/sim";
 import { machineStatus, type Box, type InserterSim, type LabFactory, type MachineSim, type MachineStatus } from "./factory.js";
@@ -598,21 +598,17 @@ function drawCircuits(
       if (icon) ctx.drawImage(icon.sheet, icon.cell.x, icon.cell.y, icon.cell.w, icon.cell.h, e.x - 0.36, e.y - 0.36, 0.72, 0.72);
       const text = shown?.text;
       if (text && h.detail > 0) {
+        const runs = parseRichText(text);
         h.labels.push(() => {
           const p = h.toScreen(e.x, e.y - 0.7);
           const fs = Math.max(10, Math.min(16, ppt * 0.3));
           ctx.globalAlpha = h.detail;
-          ctx.font = `500 ${fs}px "IBM Plex Mono", monospace`;
-          const tw = Math.min(ctx.measureText(text).width, fs * 18);
+          const w = richTextWidth(ctx, runs, fs);
           ctx.fillStyle = "rgba(32,31,30,0.92)";
           ctx.beginPath();
-          ctx.roundRect(p.x - tw / 2 - 5, p.y - fs, tw + 10, fs * 1.5, 3);
+          ctx.roundRect(p.x - w / 2 - 5, p.y - fs * 1.05, w + 10, fs * 1.6, 3);
           ctx.fill();
-          ctx.fillStyle = "#e6e0d8";
-          ctx.textAlign = "center";
-          ctx.textBaseline = "middle";
-          ctx.fillText(text, p.x, p.y - fs * 0.25, fs * 18);
-          ctx.textAlign = "left";
+          drawRichText(ctx, fr.icons, runs, p.x - w / 2, p.y - fs * 0.25, fs);
           ctx.globalAlpha = 1;
         });
       }
@@ -670,4 +666,41 @@ function signalStrip(ctx: CanvasRenderingContext2D, icons: IconAtlas, at: { x: n
     ctx.fillText(more, x, cy);
   }
   ctx.globalAlpha = 1;
+}
+
+/* ---------- rich text on the canvas ---------- */
+
+const richFont = (r: Extract<RichRun, { kind: "text" }>, fs: number) => `${r.bold ? 700 : 500} ${fs * r.scale}px "IBM Plex Mono", ui-monospace, monospace`;
+
+/** Width of a rich-text line at font size `fs`, in CSS pixels. */
+export function richTextWidth(ctx: CanvasRenderingContext2D, runs: RichRun[], fs: number): number {
+  let w = 0;
+  for (const r of runs) {
+    if (r.kind === "icon") w += fs * 1.25;
+    else {
+      ctx.font = richFont(r, fs);
+      w += ctx.measureText(r.text).width;
+    }
+  }
+  return w;
+}
+
+/** Draws a rich-text line from its left edge, vertically centred on `y`:
+ *  coloured and bold runs, icons from the atlas. */
+export function drawRichText(ctx: CanvasRenderingContext2D, icons: IconAtlas, runs: RichRun[], x: number, y: number, fs: number, color = "#e6e0d8") {
+  ctx.textAlign = "left";
+  ctx.textBaseline = "middle";
+  for (const r of runs) {
+    if (r.kind === "icon") {
+      const size = fs * 1.15;
+      const icon = icons.get(r.name);
+      if (icon) ctx.drawImage(icon.sheet, icon.cell.x, icon.cell.y, icon.cell.w, icon.cell.h, x + fs * 0.05, y - size / 2, size, size);
+      x += fs * 1.25;
+      continue;
+    }
+    ctx.font = richFont(r, fs);
+    ctx.fillStyle = r.color ?? color;
+    ctx.fillText(r.text, x, y);
+    x += ctx.measureText(r.text).width;
+  }
 }

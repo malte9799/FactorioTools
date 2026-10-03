@@ -23,6 +23,7 @@ import type {
 import { combinatorKind, parseSignalKey, signalKey, type CircuitSim, type Signals } from "@factoriotools/sim";
 import { buildGridMenu, type GridMenuEntry, type GridMenuHandle } from "./grid-menu.js";
 import { icon } from "./legacy-view/icons.js";
+import { renderRichLabel } from "./rich-text.js";
 
 /** Which wildcards a signal slot may hold — the game allows each one only
  *  in some places. */
@@ -85,7 +86,8 @@ export function hasCircuitGui(entity: PlacedEntity, wired: boolean): boolean {
 export function circuitWindowKind(entity: PlacedEntity): string | undefined {
   const kind = combinatorKind(entity.name);
   if (kind === "decider" || kind === "arithmetic" || kind === "selector") return "wide";
-  if (kind === "constant" || /display-panel/.test(entity.name)) return "medium";
+  if (/display-panel/.test(entity.name)) return "panel";
+  if (kind === "constant") return "medium";
   return undefined;
 }
 
@@ -654,22 +656,40 @@ export function buildCircuitSection(container: HTMLElement, entity: PlacedEntity
     container.appendChild(checkbox("Show tag in chart", entity.panel?.showInChart ?? false, (on) => cb.commit((_, e) => (e.panel = { ...e.panel, showInChart: on || undefined }))));
     const msgs = behavior.parameters ?? [];
     const box = panel(container, "circuit-messages");
+    /** The message as the panel shows it (rich text: colours, fonts,
+     *  icons); the pencil, or a click, swaps in the raw text to edit. */
     const textField = (value: string | undefined, onCommit: (v: string | undefined) => void) => {
       const wrap = el("div", "circuit-text-wrap");
+      const view = el("div", "circuit-text circuit-text-view");
+      view.title = "Click to edit";
+      if (value) view.appendChild(renderRichLabel(value, 16));
+      else view.appendChild(el("span", "circuit-placeholder", "Text"));
       const t = el("input", "circuit-text");
       t.type = "text";
-      t.placeholder = "Text";
       t.value = value ?? "";
+      t.hidden = true;
+      const edit = () => {
+        view.hidden = true;
+        t.hidden = false;
+        t.focus();
+      };
       t.addEventListener("keydown", (e) => {
         if (e.key === "Enter") t.blur();
         e.stopPropagation();
       });
-      t.addEventListener("change", () => onCommit(t.value || undefined));
+      t.addEventListener("blur", () => {
+        if ((t.value || undefined) !== value) onCommit(t.value || undefined);
+        else {
+          t.hidden = true;
+          view.hidden = false;
+        }
+      });
+      view.addEventListener("click", edit);
       const pen = el("button", "circuit-pen", "✎");
       pen.type = "button";
       pen.title = "Edit text";
-      pen.addEventListener("click", () => t.focus());
-      wrap.append(t, pen);
+      pen.addEventListener("click", edit);
+      wrap.append(view, t, pen);
       return wrap;
     };
     if (!msgs.length) {

@@ -11,3 +11,4 @@ export * from "./data/rotation-test.js";
 export * from "./data/debug-lab.js";
 export * from "./data/throughput-tests.js";
 export * from "./data/bug-repro.js";
+export * from "./richtext.js";

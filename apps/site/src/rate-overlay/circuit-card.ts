@@ -4,6 +4,7 @@ import { getRenderCatalog, type BpCircuitCondition, type BpSignalId, type Placed
 import { combinatorKind, parseSignalKey, testCondition, type Signals } from "@factoriotools/sim";
 import { escapeHtml } from "../tools/blueprint-editor/html.js";
 import { iconHtml } from "../tools/blueprint-editor/legacy-view/icons.js";
+import { richTextHtml } from "../tools/blueprint-editor/rich-text.js";
 import type { LabFactory } from "./factory.js";
 import { compactValue } from "./overlay.js";
 
@@ -66,7 +67,7 @@ export function circuitCardHtml(f: LabFactory, e: PlacedEntity): string {
     parts.push(`<div class="lab-card-why">${lamp.on ? "Lit" : "Off"}${cb?.circuit_condition && wired ? `: ${escapeHtml(conditionText(cb.circuit_condition))}` : ""}.</div>`);
   } else if (/display-panel/.test(e.name)) {
     const shown = c.display(n);
-    parts.push(`<div class="lab-card-why">${shown ? `Showing ${shown.icon?.name ? iconHtml(shown.icon.name) : ""} ${escapeHtml(shown.text ?? "")}` : "No message's condition holds."}</div>`);
+    parts.push(`<div class="lab-card-why">${shown ? `Showing ${shown.icon?.name ? iconHtml(shown.icon.name) : ""} ${richTextHtml(shown.text ?? "")}` : "No message's condition holds."}</div>`);
   } else if (wired && cb && (cb.circuit_enabled ?? cb.circuit_enable_disable)) {
     const on = testCondition(cb.circuit_condition, c.merged(n));
     parts.push(`<div class="lab-card-why" style="color:${on ? "#93d977" : "#e2765a"}">${on ? "Enabled" : "Disabled"} by circuit: ${escapeHtml(conditionText(cb.circuit_condition))}</div>`);
