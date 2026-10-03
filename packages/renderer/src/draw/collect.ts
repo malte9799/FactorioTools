@@ -272,7 +272,7 @@ function axisIndex(axis: GraphicsLayer["column"], frame: EntityFrame): number {
   switch (axis.by) {
     case "none": return 0;
     case "direction": return frame.direction;
-    case "animation": return Math.floor(frame.animation / (axis.slowdown ?? 1));
+    case "animation": return Math.floor((frame.animation * (axis.speedup ?? 1)) / (axis.slowdown ?? 1));
     case "connection": return frame.connectionIndex;
     case "underground-end": {
       const sideLoadIndex = frame.undergroundIn ? axis.inSideLoadIndex : axis.outSideLoadIndex;

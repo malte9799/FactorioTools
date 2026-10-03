@@ -424,6 +424,11 @@ const FALLBACK_FOOTPRINT: [number, number] = [1, 1];
  *  does not repeat within it is treated as non-animating and left static. */
 const MAX_ANIM_PERIOD = 256;
 
+function gcd(a: number, b: number): number {
+  while (b !== 0) [a, b] = [b, a % b];
+  return a;
+}
+
 /** Placement-ghost valid/invalid tint — matches the real game's own
  *  green-means-go, red-means-blocked cursor-item convention. */
 const GHOST_VALID_TINT = "#4caf50";
@@ -600,6 +605,10 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
     animPeriod: number[];
     animPhase0: number[];
     animColumns: number[];
+    /** How many columns the command walks through over one period — a
+     *  multiple of animColumns when a fast belt skips cells (a red belt steps
+     *  two columns a tick, a blue one three). */
+    animSteps: number[];
     /** How to split `commands` into baked and live layers — worked out the
      *  first time this scene is baked. */
     bakePlan?: BakePlan;
@@ -1091,7 +1100,7 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
     for (let i = 0; i < sceneCache.animated.length; i++) {
       const command = commands[sceneCache.animated[i]!]!;
       const columns = sceneCache.animColumns[i]!;
-      const advanced = Math.floor((animationFrame % sceneCache.animPeriod[i]!) * (columns / sceneCache.animPeriod[i]!));
+      const advanced = Math.floor(((animationFrame % sceneCache.animPeriod[i]!) * sceneCache.animSteps[i]!) / sceneCache.animPeriod[i]!);
       const column = (sceneCache.animPhase0[i]! + advanced) % columns;
       command.sx = sceneCache.animOrigin[i]! + column * sceneCache.animStride[i]!;
     }
@@ -1409,6 +1418,8 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
      *  the end of it. */
     phase0: number[];
     columns: number[];
+    /** Columns advanced over one full period (see SceneCache.animSteps). */
+    steps: number[];
     origin: number[];
     /** How many commands the probed (isolated) entity emitted. The caller
      *  compares this against what the same entity emitted in the real scene:
@@ -1417,7 +1428,7 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
   }
   const animProfiles = new Map<string, AnimProfile>();
 
-  const NO_ANIMATION: AnimProfile = { animated: [], stride: [], period: [], phase0: [], columns: [], origin: [], commandCount: -1 };
+  const NO_ANIMATION: AnimProfile = { animated: [], stride: [], period: [], phase0: [], columns: [], steps: [], origin: [], commandCount: -1 };
 
   /** Collects a single entity at one animation frame, against whatever
    *  neighbour context it is handed.
@@ -1480,17 +1491,21 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
 
     const phase0: number[] = [];
     const columnCount: number[] = [];
+    const stepCount: number[] = [];
     const origin: number[] = [];
 
     if (!structural) {
       for (let i = 0; i < base.length; i++) {
-        // The frame width is the smallest positive sx step the command takes
-        // across the cycle. Reading it from the samples rather than from the
-        // sprite keeps this independent of how the layer was described.
+        // The frame width is the greatest common divisor of every sx step
+        // the command takes across the cycle, wraps included. Reading it from
+        // the samples rather than from the sprite keeps this independent of
+        // how the layer was described; a gcd rather than the smallest step
+        // because a fast belt moves several columns a tick (a blue belt's
+        // +3 and its -29 wrap only agree on one column).
         let width = 0;
         for (let frame = 0; frame < samples.length; frame++) {
-          const delta = samples[frame]![i]!.sx - (frame === 0 ? base[i]!.sx : samples[frame - 1]![i]!.sx);
-          if (delta > 0 && (width === 0 || delta < width)) width = delta;
+          const delta = Math.abs(samples[frame]![i]!.sx - (frame === 0 ? base[i]!.sx : samples[frame - 1]![i]!.sx));
+          if (delta > 0) width = gcd(width, delta);
         }
         if (width === 0) continue;
 
@@ -1510,24 +1525,32 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
         const startPhase = (base[i]!.sx - low) / width;
         if (!Number.isInteger(startPhase)) continue;
 
-        // Frames advance one column per `slowdown` ticks, so the sheet may
-        // hold more columns than the cycle has distinct steps only when
-        // slowdown is 1; otherwise columns === cycle / slowdown. Derive the
-        // column count from the widest sx actually reached.
+        // Derive the column count from the widest sx actually reached.
         let high = base[i]!.sx;
         for (let frame = 0; frame < cycle; frame++) high = Math.max(high, samples[frame]![i]!.sx);
         const columns = (high - low) / width + 1;
 
+        // How many columns the command walks through over one cycle: a
+        // forward step from one frame to the next, modulo the row. Frames
+        // advance `speedup / slowdown` columns a tick, so this is cycle /
+        // slowdown for a slowed sprite and a multiple of `columns` for a
+        // belt faster than one column a tick.
+        let steps = 0;
+        let previous = startPhase;
+        for (let frame = 1; frame <= cycle; frame++) {
+          const current = (samples[frame - 1]![i]!.sx - low) / width;
+          steps += (((current - previous) % columns) + columns) % columns;
+          previous = current;
+        }
+        if (steps === 0) continue;
+
         // Accept only an exact wrapping ramp with nothing else moving;
         // anything else stays on its frame-0 art rather than risking wrong
-        // sprites. `step` is how many columns one tick advances, which is
-        // 1/slowdown of a column — expressed as cycle/columns so it stays
-        // integral.
-        const perTick = columns / cycle;
+        // sprites.
         let matches = true;
         for (let frame = 1; frame <= samples.length && matches; frame++) {
           const sample = samples[frame - 1]![i]!;
-          const column = (startPhase + Math.floor(frame * perTick)) % columns;
+          const column = (startPhase + Math.floor(((frame % cycle) * steps) / cycle)) % columns;
           matches =
             sample.sx === low + column * width &&
             sample.sheet === base[i]!.sheet &&
@@ -1542,11 +1565,12 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
         period.push(cycle);
         phase0.push(startPhase);
         columnCount.push(columns);
+        stepCount.push(steps);
         origin.push(low);
       }
     }
 
-    return { animated, stride, period, phase0, columns: columnCount, origin, commandCount: base.length };
+    return { animated, stride, period, phase0, columns: columnCount, steps: stepCount, origin, commandCount: base.length };
   }
 
   /** Maps world tiles onto the canvas: camera center to viewport center,
@@ -1702,11 +1726,12 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
     const animPeriod: number[] = [];
     const animPhase0: number[] = [];
     const animColumns: number[] = [];
+    const animSteps: number[] = [];
 
     // Collect entity by entity so each command's index is known while its
     // profile is still in hand; the sort afterwards moves them, so the
     // recorded indices are remapped below.
-    const preSort: { command: DrawCommand; stride: number; period: number; columns: number; phase0: number; origin: number }[] = [];
+    const preSort: { command: DrawCommand; stride: number; period: number; columns: number; steps: number; phase0: number; origin: number }[] = [];
     // Only allocated when the panel asked for it — see setEntityAccounting.
     const costByName = entityAccounting ? new Map<string, EntityCost>() : null;
     for (const entity of visibleEntities) {
@@ -1756,6 +1781,7 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
             stride: usable.stride[k]!,
             period: usable.period[k]!,
             columns: usable.columns[k]!,
+            steps: usable.steps[k]!,
             phase0: usable.phase0[k]!,
             origin: usable.origin[k]!,
           });
@@ -1786,13 +1812,14 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
       animPeriod.push(entry.period);
       animPhase0.push(entry.phase0);
       animColumns.push(entry.columns);
+      animSteps.push(entry.steps);
     }
 
     if (costByName) {
       entityCosts = [...costByName.values()].sort((a, b) => b.collectMs - a.collectMs);
     }
 
-    return { key, commands, animated, animOrigin, animStride, animPeriod, animPhase0, animColumns };
+    return { key, commands, animated, animOrigin, animStride, animPeriod, animPhase0, animColumns, animSteps };
   }
 
   /** The one place a frame is drawn and accounted for. Both the rAF loop and

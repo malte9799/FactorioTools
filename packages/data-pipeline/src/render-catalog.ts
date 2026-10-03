@@ -6,6 +6,7 @@ import type { EntityGraphics, GraphicsLayer, MenuGroup, MenuPosition, RenderCata
 import type { LocaleTables } from "./locale.js";
 import {
   animationListGraphics,
+  beltAnimationAxis,
   directionColumnGraphics,
   heatConnectionPatchLayers,
   heatConnectionsOf,
@@ -162,7 +163,7 @@ function undergroundGraphics(proto: any): EntityGraphics | undefined {
   // paints on top of the lane rather than the lane covering it — both are
   // Layer.Object, so array order is what decides.
   if (beltLane) {
-    layers.push({ layer: Layer.Object, sprites: beltLane, column: { by: "animation" }, row: { by: "connection" } });
+    layers.push({ layer: Layer.Object, sprites: beltLane, column: beltAnimationAxis(proto), row: { by: "connection" } });
   }
 
   const backPatch = toSprite(struct?.back_patch?.sheet);
@@ -220,8 +221,8 @@ function splitterGraphics(proto: any): EntityGraphics | undefined {
   };
 
   const layers: GraphicsLayer[] = [
-    { layer: Layer.LowerObject, sprites: lane(-1), per: "dir4", column: { by: "animation" }, row: { by: "connection" } },
-    { layer: Layer.LowerObject, sprites: lane(1), per: "dir4", column: { by: "animation" }, row: { by: "connection" } },
+    { layer: Layer.LowerObject, sprites: lane(-1), per: "dir4", column: beltAnimationAxis(proto), row: { by: "connection" } },
+    { layer: Layer.LowerObject, sprites: lane(1), per: "dir4", column: beltAnimationAxis(proto), row: { by: "connection" } },
     { layer: Layer.Object, sprites: body, per: "dir4" },
   ];
 

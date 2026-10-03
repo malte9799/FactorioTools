@@ -117,8 +117,38 @@ test("turbo belt: the odd-parity tile advances across the whole cycle", () => {
     assert.ok(body, "belt body present");
     seen.add(body!.sx);
   }
-  // A frozen tile would show exactly one. The sheet is 64 columns wide.
-  assert.equal(seen.size, 64, "odd-parity turbo tile must visit every frame of its cycle");
+  // A frozen tile would show exactly one. The sheet is 64 columns wide and
+  // a turbo belt steps four of them a tick, so its cycle shows 16.
+  assert.equal(seen.size, 16, "odd-parity turbo tile must visit every frame of its cycle");
+});
+
+/* ---------- Each tier animates at its own belt speed ---------- */
+// The game advances a belt's sheet `speed * 32` frames a tick — one for a
+// yellow belt, two red, three blue, four turbo. Every tier stepping one
+// column a tick made the faster belts look slower than they move.
+
+test("each belt tier advances speed * 32 columns a tick", () => {
+  const expected: Record<string, number> = {
+    "transport-belt": 1, "fast-transport-belt": 2, "express-transport-belt": 3, "turbo-transport-belt": 4,
+    "underground-belt": 1, "fast-underground-belt": 2, "express-underground-belt": 3, "turbo-underground-belt": 4,
+    "splitter": 1, "fast-splitter": 2, "express-splitter": 3, "turbo-splitter": 4,
+  };
+  for (const [name, step] of Object.entries(expected)) {
+    const visual = lookup.get(name);
+    if (!visual?.graphics) continue;
+    const lane = visual.graphics.layers.find((l) => l.column?.by === "animation");
+    assert.ok(lane, `${name} has an animated lane`);
+    const sprites = lane!.sprites as { frameWidth?: number; north?: { frameWidth: number } };
+    const width = sprites.frameWidth ?? sprites.north!.frameWidth;
+    const self = entity(name, 0.5, 0.5);
+    const lanesAt = (frame: number) => collect(self, [], frame).filter((c) => /transport-belt\.png$/.test(c.sheet));
+    const a = lanesAt(0);
+    const b = lanesAt(1);
+    assert.ok(a.length > 0 && a.length === b.length, `${name} draws its lane`);
+    for (let k = 0; k < a.length; k++) {
+      assert.equal(b[k]!.sx - a[k]!.sx, step * width, `${name} lane ${k} must step ${step} column(s) a tick`);
+    }
+  }
 });
 
 test("turbo belt: both parities visit the SAME set of cells, only in a different order", () => {

@@ -156,8 +156,12 @@ export type FrameAxis =
    *  per-tick clock before indexing (default 1, every entity's previous
    *  behavior) — a belt wants full speed, but rail-signal's own 3-frame
    *  red/orange/green cycle at full speed reads as a strobe/flicker rather
-   *  than a visible color change. */
-  | { by: "animation"; slowdown?: number }
+   *  than a visible color change. `speedup` multiplies it instead: a belt
+   *  lane advances `speed * animation_speed_coefficient` frames a tick in
+   *  the game (1 for a yellow belt, 2 red, 3 blue, 4 turbo), so a faster
+   *  tier visibly runs faster rather than every tier crawling at yellow's
+   *  pace. */
+  | { by: "animation"; slowdown?: number; speedup?: number }
   /** A neighbour-derived index, from the entity's `connector`. */
   | { by: "connection" }
   /** Artillery-turret's cannon rotates through a 256-entry aiming sheet
