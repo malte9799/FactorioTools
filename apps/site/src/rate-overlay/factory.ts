@@ -4,7 +4,7 @@
  *  lands. Machines craft at the engine's calculated speed (modules, beacons
  *  and quality included); inserters are a fixed-time swing derived from
  *  their arm's rotation speed and quality, carrying a researched hand. */
-import { calculate, type BpControlBehavior, type GameData, type PlacedEntity, type WireLink } from "@factoriotools/engine";
+import { calculate, findBeacons, resolveMachine, type BpControlBehavior, type GameData, type PlacedEntity, type WireLink } from "@factoriotools/engine";
 import { BeltSim, beltSpecResolver, buildBeltNetwork, cardOf, CircuitSim, DX, DY, laneSide, parseSignalKey, signalKey, type BeltLine, type BeltNetwork, type BeltNode, type Card, type Lane, type LaneFeed, type Signals } from "@factoriotools/sim";
 
 const EMA = 1 / 300; // ~5 s at 60 ticks/s
@@ -15,9 +15,23 @@ export interface Research {
   hands: "none" | "full";
   /** Items per belt slot a stack inserter builds (Space Age belt stacking). */
   beltStack: number;
+  /** Lab research speed research: none, or all six levels (+250%). */
+  labSpeed: "none" | "full";
+  /** Seconds one unit of the technology being researched takes in a lab of
+   *  speed 1. The blueprint doesn't say what's being researched. */
+  unitTime: number;
 }
 
-export const FULL_RESEARCH: Research = { hands: "full", beltStack: 4 };
+export const FULL_RESEARCH: Research = { hands: "full", beltStack: 4, labSpeed: "full", unitTime: 60 };
+
+/** Lab research speed 1 to 6 add up to +250%. */
+const LAB_SPEED_BONUS = 2.5;
+/** What a lab makes: counted, never taken out. */
+export const SCIENCE = "science";
+const isSciencePack = (name: string) => name.endsWith("-science-pack");
+/** How long a science pack that stopped arriving still counts as part of
+ *  the research, in ticks. */
+const PACK_MEMORY_TICKS = 3600;
 
 /** Arm rotation speed at normal quality, revolutions per tick, from the
  *  prototypes (an inserter's tooltip shows it as degrees per second: 0.014
@@ -65,6 +79,9 @@ export interface MachineSim {
   takers: InserterSim[];
   /** Switched off by its circuit condition this tick. */
   circuitOff: boolean;
+  /** A lab: `ingredients` are the science packs of the research (shared by
+   *  every lab), and its product is science that's counted, not taken out. */
+  lab?: boolean;
 }
 
 export type Target =
@@ -298,6 +315,13 @@ export class LabFactory {
   private readonly armIn = new Map<string, number>();
   private readonly armOut = new Map<string, number>();
   private readonly launched = new Map<string, number>();
+  /** Science the labs have made so far. */
+  private researched = 0;
+  /** Science packs the research is taken to need until arms show what
+   *  really reaches the labs. */
+  private labPacks: { name: string; amount: number }[] = [];
+  /** Tick each science pack last went into a lab. */
+  private readonly packSeen = new Map<string, number>();
   private flowSamples: { tick: number; imports: Map<string, number>; exports: Map<string, number> }[] = [];
   /** Item names worth offering in the port pickers. */
   readonly knownItems: string[];
@@ -360,6 +384,8 @@ export class LabFactory {
       }
     }
 
+    this.addLabs();
+
     const byTile = new Map<string, PlacedEntity>();
     for (const e of entities) byTile.set(`${Math.floor(e.x)},${Math.floor(e.y)}`, e);
     this.entityAt = (x, y) => byTile.get(`${x},${y}`);
@@ -385,7 +411,7 @@ export class LabFactory {
       filled.add(tileKey(dropAt));
     }
     const boxes = new Map<string, Box>();
-    const madeHere = new Set(this.machines.flatMap((m) => m.products.map((p) => p.name)));
+    const madeHere = new Set(this.machines.flatMap((m) => (m.lab ? [] : m.products.map((p) => p.name))));
     for (const e of entities) {
       const proto = data.inserters[e.name];
       if (!proto) continue;
@@ -473,7 +499,9 @@ export class LabFactory {
           port.id,
           !port.items.length ? "Pick what it brings" : outside.length ? "Brings what the machine needs" : "Everything it could bring is made here",
         );
-      } else if (ins.drop.kind === "none" && ins.pickup.kind !== "none") {
+      } else if (ins.drop.kind === "none" && ins.pickup.kind !== "none" && !(ins.pickup.kind === "machine" && ins.pickup.machine.lab)) {
+        // (Nothing comes out of a lab: an arm only takes its packs to hand
+        // them to the next lab.)
         const port: ArmPort = { id: `arm-out:${where}`, kind: "output", inserter: ins, at: tile(dropAt), onto: byTile.get(tileKey(dropAt))?.name, items: [] };
         ins.drop = { kind: "port", port };
         this.armPorts.push(port);
@@ -486,7 +514,9 @@ export class LabFactory {
     }
 
     const items = new Set<string>();
-    for (const m of this.machines) for (const i of [...m.ingredients, ...m.products]) items.add(i.name);
+    for (const m of this.machines) for (const i of [...m.ingredients, ...(m.lab ? [] : m.products)]) items.add(i.name);
+    // Any pack can be picked for a port that feeds a lab.
+    if (this.labPacks.length) for (const n of Object.keys(data.items)) if (isSciencePack(n)) items.add(n);
     this.knownItems = [...items].sort();
     const occupied = new Map<string, PlacedEntity>();
     for (const e of entities) {
@@ -566,6 +596,68 @@ export class LabFactory {
 
   private readonly entityAt: (x: number, y: number) => PlacedEntity | undefined;
 
+  /** Labs take science packs and turn them into science. A blueprint
+   *  doesn't record the research, so a lab uses one of every pack that
+   *  reaches the labs, at the unit time set in the research settings. One
+   *  craft is as many research units as use up one whole pack of each kind
+   *  (two in a biolab, which drains half a pack per unit). */
+  private addLabs() {
+    const { data, entities, research } = this;
+    const labs = entities.filter((e) => data.machines[e.name]?.kind === "lab");
+    if (!labs.length) return;
+    // The packs to expect: those made here or named by a filter, a label
+    // or a chest; with nothing to go on, every pack there is.
+    const made = this.machines.flatMap((m) => m.products.map((p) => p.name));
+    const named = entities.flatMap((e) => [...(e.signalItems ?? []), ...(data.inserters[e.name] && e.useFilters ? e.filterItems : [])]);
+    const evidence = new Set([...made, ...named].filter((n) => n && isSciencePack(n)));
+    const all = Object.keys(data.items).filter((n) => isSciencePack(n) && data.items[n]!.kind === "item");
+    this.labPacks = (evidence.size ? all.filter((n) => evidence.has(n)) : all).map((name) => ({ name, amount: 1 }));
+
+    const beacons = findBeacons(data, entities);
+    for (const e of labs) {
+      const proto = data.machines[e.name]!;
+      const r = resolveMachine(data, proto, e, beacons);
+      const speed = r.baseSpeed * Math.max(0.2, 1 + r.totalEffects.speed + (research.labSpeed === "full" ? LAB_SPEED_BONUS : 0));
+      const unitsPerCraft = 1 / (proto.packDrain ?? 1);
+      const [w, h] = proto.tileFootprint ?? proto.size;
+      this.machines.push({
+        entity: e,
+        recipe: "Research",
+        box: { left: e.x - w / 2, top: e.y - h / 2, right: e.x + w / 2, bottom: e.y + h / 2 },
+        craftTicks: (60 * research.unitTime * unitsPerCraft) / speed,
+        ingredients: this.labPacks,
+        products: [{ name: SCIENCE, amount: unitsPerCraft * (1 + Math.max(0, r.totalEffects.productivity)) }],
+        buffer: new Map(),
+        out: new Map(),
+        outFraction: new Map(),
+        crafting: false,
+        progress: 0,
+        uptime: 0,
+        armBound: 0,
+        starved: 0,
+        outFull: 0,
+        feeders: [],
+        takers: [],
+        circuitOff: false,
+        lab: true,
+      });
+    }
+  }
+
+  /** The research needs every science pack that reaches the labs: one that
+   *  went into a lab lately, or that a lab still holds. */
+  private refreshLabPacks() {
+    const labs = this.machines.filter((m) => m.lab);
+    if (!labs.length) return;
+    const names = Object.keys(this.data.items).filter(
+      (n) => (this.packSeen.has(n) && this.tick - this.packSeen.get(n)! <= PACK_MEMORY_TICKS) || (isSciencePack(n) && labs.some((m) => (m.buffer.get(n) ?? 0) >= 1)),
+    );
+    const now = labs[0]!.ingredients;
+    if (!names.length || (now !== this.labPacks && names.join() === now.map((i) => i.name).join())) return;
+    const packs = names.map((name) => ({ name, amount: 1 }));
+    for (const m of labs) m.ingredients = packs;
+  }
+
   /** Only names the dataset knows as items (a combinator can also carry
    *  fluids and other signals). */
   private realItems(names: string[] | undefined): string[] | undefined {
@@ -585,7 +677,7 @@ export class LabFactory {
    *     skipping anything the blueprint makes itself — the most wanted on
    *     the left lane, the next on the right. */
   guessInputs() {
-    const madeHere = new Set(this.machines.flatMap((m) => m.products.map((p) => p.name)));
+    const madeHere = new Set(this.machines.flatMap((m) => (m.lab ? [] : m.products.map((p) => p.name))));
     // Builds with stack inserters are Space Age builds; assume their input
     // belts arrive stacked too.
     const stack = this.inserters.some((i) => i.stacksOnBelt) ? this.research.beltStack : 1;
@@ -847,6 +939,7 @@ export class LabFactory {
       if (wired) this.writeCircuits();
       this.tick++;
       if (this.tick % 30 === 0) {
+        this.refreshLabPacks();
         this.meter.sample(this.tick);
         this.sampleFlows();
       }
@@ -950,7 +1043,8 @@ export class LabFactory {
    *  of crafts' worth, more for a fast machine (the game's insertion limit
    *  grows with crafting speed), and never less than one full hand. */
   private limitFor(m: MachineSim, name: string): number {
-    const ing = m.ingredients.find((i) => i.name === name);
+    // A lab takes any science pack, in the research or not.
+    const ing = m.ingredients.find((i) => i.name === name) ?? (m.lab && isSciencePack(name) ? { name, amount: 1 } : undefined);
     if (!ing) return 0;
     const hands = Math.max(1, ...m.feeders.map((f) => f.handSize));
     const crafts = Math.max(2, Math.ceil((60 / m.craftTicks) * 1.2));
@@ -991,6 +1085,7 @@ export class LabFactory {
         // A rocket silo builds its parts into the rocket and launches it;
         // nothing is ever taken out.
         if (isSilo(m)) continue;
+        if (m.lab) continue;
         const total = (m.outFraction.get(p.name) ?? 0) + p.amount;
         const whole = Math.floor(total + 1e-9);
         m.outFraction.set(p.name, total - whole);
@@ -1015,6 +1110,9 @@ export class LabFactory {
       }
     }
     const working = 1 - budget;
+    // Research counts as it's done, not a whole unit at a time: a unit can
+    // take most of a minute.
+    if (m.lab) this.researched += (working / m.craftTicks) * (m.products[0]?.amount ?? 0);
     const idle = budget;
     let arm = 0;
     let starved = 0;
@@ -1043,7 +1141,7 @@ export class LabFactory {
     }
     const d = ins.drop;
     if (d.kind === "machine") {
-      const ingredient = d.machine.ingredients.some((i) => i.name === item);
+      const ingredient = d.machine.ingredients.some((i) => i.name === item) || (!!d.machine.lab && isSciencePack(item));
       // A rocket silo also takes anything else as rocket cargo.
       if (!ingredient) return isSilo(d.machine);
       return (d.machine.buffer.get(item) ?? 0) < this.limitFor(d.machine, item);
@@ -1089,7 +1187,19 @@ export class LabFactory {
       const room = (item: string) => Math.max(0, this.handTarget(ins, item) - ins.handCount);
       let got: string | undefined;
       let count = 0;
-      if (p.kind === "machine") {
+      if (p.kind === "machine" && p.machine.lab) {
+        // Out of a lab an arm only takes packs the next lab is short of.
+        if (ins.drop.kind === "machine" && ins.drop.machine.lab) {
+          for (const [item, have] of p.machine.buffer) {
+            if (have >= 1 && accept(item)) {
+              count = Math.min(Math.floor(have), room(item));
+              p.machine.buffer.set(item, have - count);
+              got = item;
+              break;
+            }
+          }
+        }
+      } else if (p.kind === "machine") {
         for (const prod of p.machine.products) {
           const have = p.machine.out.get(prod.name) ?? 0;
           if (have > 0 && accept(prod.name)) {
@@ -1158,7 +1268,8 @@ export class LabFactory {
       const d = ins.drop;
       if (d.kind === "machine") {
         // Rocket cargo leaves with the rocket; ingredients go in the buffer.
-        if (d.machine.ingredients.some((i) => i.name === ins.hand)) {
+        if (d.machine.lab) this.packSeen.set(ins.hand!, this.tick);
+        if (d.machine.lab || d.machine.ingredients.some((i) => i.name === ins.hand)) {
           d.machine.buffer.set(ins.hand!, (d.machine.buffer.get(ins.hand!) ?? 0) + ins.handCount);
         } else {
           bump(this.launched, ins.hand!, ins.handCount);
@@ -1227,6 +1338,7 @@ export class LabFactory {
     const imports = new Map(this.armIn);
     const exports = new Map(this.armOut);
     for (const [item, n] of this.launched) bump(exports, item, n);
+    if (this.researched > 0) exports.set(SCIENCE, this.researched);
     for (const p of this.net.ports) {
       const into = p.kind === "input" ? imports : exports;
       for (const [item, n] of this.belts.portTotals(p.id)) bump(into, item, n);

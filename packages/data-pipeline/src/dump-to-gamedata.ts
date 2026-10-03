@@ -626,6 +626,8 @@ function mapMachines(raw: Raw, locale: LocaleTables): Record<string, MachineProt
         name: proto.name,
         kind,
         speed,
+        // Labs only: a biolab uses up half a science pack per research unit.
+        ...(proto.science_pack_drain_rate_percent !== undefined ? { packDrain: proto.science_pack_drain_rate_percent / 100 } : {}),
         categories,
         moduleSlots: proto.module_slots ?? 0,
         // An empty Lua table ("no effects allowed") comes out of the dump as

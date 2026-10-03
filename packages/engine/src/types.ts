@@ -284,6 +284,10 @@ export interface MachineProto {
   kind: MachineKind;
   /** crafting_speed, researching_speed or mining_speed depending on kind. */
   speed: number;
+  /** Labs only: the share of a science pack one research unit uses up
+   *  (science_pack_drain_rate_percent / 100). Absent means a whole pack; a
+   *  biolab's is 0.5. */
+  packDrain?: number;
   categories: string[];
   moduleSlots: number;
   /** Effects the machine will accept. Undefined means all. */

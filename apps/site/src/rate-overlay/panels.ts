@@ -253,6 +253,18 @@ export const RESEARCH_HTML = `
     <button type="button" data-value="2">2</button>
     <button type="button" data-value="3">3</button>
     <button type="button" data-value="4">4</button>
+  </div>
+  <span class="lab-field-label">Lab research speed</span>
+  <div class="segmented lab-seg" data-research="labSpeed">
+    <button type="button" data-value="none">None</button>
+    <button type="button" data-value="full">Full</button>
+  </div>
+  <span class="lab-field-label">Research time per unit (seconds)</span>
+  <div class="segmented lab-seg" data-research="unitTime">
+    <button type="button" data-value="15">15</button>
+    <button type="button" data-value="30">30</button>
+    <button type="button" data-value="60">60</button>
+    <button type="button" data-value="120">120</button>
   </div>`;
 
 export function syncResearch(el: HTMLElement, research: Research) {
@@ -267,7 +279,7 @@ export function wireResearch(el: HTMLElement, overlay: RateOverlay, signal: Abor
     const b = (e.target as HTMLElement).closest<HTMLButtonElement>("[data-research] [data-value]");
     if (!b) return;
     const key = b.parentElement!.dataset.research as keyof Research;
-    const value = key === "beltStack" ? Number(b.dataset.value) : b.dataset.value;
+    const value = key === "beltStack" || key === "unitTime" ? Number(b.dataset.value) : b.dataset.value;
     overlay.setResearch({ ...overlay.research, [key]: value } as Research);
     syncResearch(el, overlay.research);
   }, { signal });
