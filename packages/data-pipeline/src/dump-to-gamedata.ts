@@ -628,7 +628,9 @@ function mapMachines(raw: Raw, locale: LocaleTables): Record<string, MachineProt
         speed,
         categories,
         moduleSlots: proto.module_slots ?? 0,
-        allowedEffects: proto.allowed_effects,
+        // An empty Lua table ("no effects allowed") comes out of the dump as
+        // {} rather than [].
+        allowedEffects: proto.allowed_effects === undefined ? undefined : Array.isArray(proto.allowed_effects) ? proto.allowed_effects : [],
         baseEffect: proto.effect_receiver?.base_effect,
         energyUsage: parseEnergyValue(proto.energy_usage),
         drain: proto.energy_source?.drain !== undefined ? parseEnergyValue(proto.energy_source.drain) : undefined,
