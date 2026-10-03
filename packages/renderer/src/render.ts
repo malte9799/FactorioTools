@@ -803,6 +803,9 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
   let railPreviewKey = "";
   let railPreviewCache: RailPreview | null = null;
   let railDragMoved = false;
+  // The current press started on open ground: a plain click there lays just
+  // the held piece and leaves no plan behind; only a drag plans on from it.
+  let railPressOnGround = false;
 
   function currentRailIndex(): RailIndex {
     if (!railIndex || railIndexVersion !== entitiesVersion) {
@@ -840,20 +843,22 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
   function railPress(): void {
     if (mode.kind !== "place" || !ghostWorldPos) return;
     railDragMoved = false;
+    railPressOnGround = false;
     if (railAnchor) {
       commitRailPreview();
       return;
     }
-    const start = railStartAt(currentRailIndex(), ghostWorldPos.x, ghostWorldPos.y, ghostDirection);
+    const start = railStartAt(currentRailIndex(), ghostWorldPos.x, ghostWorldPos.y);
     if (start) {
       railAnchor = start.end;
     } else {
-      // Nothing to continue: lay the held straight piece itself and plan on
-      // from its end facing the held direction.
+      // Nothing to continue: lay the held straight piece itself. A drag
+      // plans on from its end facing the held direction; a click doesn't.
       const elevated = plannerTargetsElevated(mode.entityName) && mode.entityName !== "rail-ramp";
       const { piece, end } = startPiece(ghostWorldPos.x, ghostWorldPos.y, ghostDirection, elevated);
       railPlaceCallback?.([piece], []);
       railAnchor = end;
+      railPressOnGround = true;
     }
     invalidate();
   }
@@ -977,17 +982,16 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
         for (const p of preview.pieces) railGhosts.push({ entity: asGhost(p), tint: GHOST_VALID_TINT });
         for (const sp of preview.supports) railGhosts.push({ entity: asGhost(sp), tint: GHOST_VALID_TINT });
       } else {
-        // No plan yet: an arrow shows where a press would start building
-        // and which way — on the placed rail under the cursor, or on the
-        // held straight piece over open ground. R turns it (8 ways).
-        const start = railStartAt(index, ghostWorldPos.x, ghostWorldPos.y, ghostDirection);
+        // No plan yet: on a placed rail an arrow shows where a press would
+        // start building — toward the end on the cursor's half of it; over
+        // open ground just the held straight piece, which R turns 8 ways.
+        const start = railStartAt(index, ghostWorldPos.x, ghostWorldPos.y);
         if (start) {
           railArrow = { x: start.piece.x, y: start.piece.y, dir: start.end.dir };
         } else {
           const elevated = plannerTargetsElevated(mode.entityName) && mode.entityName !== "rail-ramp";
-          const { piece, end } = startPiece(ghostWorldPos.x, ghostWorldPos.y, ghostDirection, elevated);
+          const { piece } = startPiece(ghostWorldPos.x, ghostWorldPos.y, ghostDirection, elevated);
           railGhosts.push({ entity: asGhost(piece), tint: GHOST_VALID_TINT });
-          railArrow = { x: piece.x, y: piece.y, dir: end.dir };
         }
       }
     } else if (mode.kind === "place" && ghostWorldPos) {
@@ -2400,9 +2404,13 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
       }
       return;
     }
-    if (isPlacingDrag && mode.kind === "place" && isRailPlannerItem(mode.entityName) && railDragMoved) {
+    if (isPlacingDrag && mode.kind === "place" && isRailPlannerItem(mode.entityName)) {
       // A press-drag-release lays the dragged track in one go.
-      commitRailPreview();
+      const laid = railDragMoved && (currentRailPreview()?.pieces.length ?? 0) > 0;
+      if (laid) commitRailPreview();
+      else if (railPressOnGround) railAnchor = null;
+      railPressOnGround = false;
+      invalidate();
     }
     if (isPlacingDrag && canvas.hasPointerCapture(e.pointerId)) canvas.releasePointerCapture(e.pointerId);
     isPlacingDrag = false;

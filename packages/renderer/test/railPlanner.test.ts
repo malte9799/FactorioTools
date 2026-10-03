@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { planEnd, planRail, supportsFor } from "../src/railPlanner.js";
 import { railEndsAt, railTiles, type RailEnd, type RailPiece } from "../src/railGeometry.js";
+import { buildRailIndex, railStartAt } from "../src/railPlacement.js";
 
 let passed = 0;
 function test(name: string, fn: () => void) {
@@ -104,6 +105,16 @@ test("a long elevated run gets supports at most 22 tiles apart", () => {
   assert.equal(ys[0], 0, "the unsupported start gets one");
   for (let i = 1; i < ys.length; i++) assert.ok(ys[i - 1]! - ys[i]! <= 22, `gap ${ys[i - 1]} → ${ys[i]}`);
   assert.ok(ys[ys.length - 1]! - planEnd(start, pieces).y <= 11, "the far end is held");
+});
+
+test("the start arrow only shows on a placed rail, toward the cursor's half", () => {
+  const rail = { entityNumber: 1, name: "straight-rail", x: 1, y: 1, direction: 0, quality: "normal" as const, modules: [], filterItems: [] };
+  const index = buildRailIndex([rail], () => [2, 2]);
+  assert.deepEqual(railStartAt(index, 1.2, 0.6)?.end, { x: 1, y: 0, dir: 0, elevated: false });
+  assert.deepEqual(railStartAt(index, 0.8, 1.6)?.end, { x: 1, y: 2, dir: 8, elevated: false });
+  // Beside the track, or just past its end: nothing.
+  assert.equal(railStartAt(index, 2.6, 1), undefined);
+  assert.equal(railStartAt(index, 1, -0.6), undefined);
 });
 
 console.log(`${passed} passed`);

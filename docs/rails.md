@@ -7,15 +7,15 @@ refresh the rail data from the game.
 
 | Held item | What a click does |
 | --- | --- |
-| **Rail** | Starts the rail planner. A green arrow shows where a press would start and which way. Over placed track, the arrow sits on the rail under the cursor (in the middle of a track too, to branch off); over open ground, it sits on the held straight piece, which gets laid first. Drag and release to lay track along the planned path. While a plan is active, the path previews from its end to the cursor and the next click lays it. |
+| **Rail** | Starts the rail planner. Hovering a placed rail shows a green arrow: a press there starts building from the end on the cursor's half of that rail (mid-track too, to branch off). A click on open ground lays just the held straight piece; a drag from open ground lays it and plans on from it. Drag and release to lay track along the planned path. While a plan is active, the path previews from its end to the cursor and the next click lays it. |
 | **Rail ramp** | Same planner, but the track finishes on the elevated layer. A ramp is inserted where the track climbs, and rail supports go under the elevated part. |
 | **Rail signal / chain signal** | Snaps to the nearest signal slot beside placed track, facing the trains it stops. Which side of the track it goes on follows the cursor. Away from track the ghost is red and nothing is placed. |
 | **Train stop** | Snaps to the slot beside a straight cardinal rail, on the right-hand side of travel. |
 
 - **No length limit.** Every plan lays in full, however long.
-- **R** turns the start arrow in 45° steps (8 ways) before a plan starts.
-  Over placed track, it flips which end of that rail the plan leaves from.
-  **Shift+R** turns it the other way.
+- **R** turns the held straight piece in 45° steps (8 ways), and the
+  direction a drag from open ground plans in. **Shift+R** turns it the other
+  way.
 - **Esc** or **right-click** drops the plan and keeps the rail in hand.
 - **Q** over any rail picks up the rail item. Over elevated track or a ramp, it picks up the ramp item.
 - **Undo** reverses each placement in a single step.

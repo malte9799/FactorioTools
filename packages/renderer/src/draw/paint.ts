@@ -277,24 +277,27 @@ export function drawHoverHighlight(
   ctx.restore();
 }
 
-/** The rail planner's start arrow: a rounded green triangle centred on
- *  (x, y), pointing along the 16-way `dir` — where a press would start
- *  laying track, and which way. */
+/** The rail planner's start arrow, as the game draws it on track: a
+ *  rounded green triangle whose flat side runs across the rail's centre
+ *  (x, y) and whose tip points along the 16-way `dir`, toward the end the
+ *  plan would leave from. */
 export function drawRailStartArrow(ctx: CanvasRenderingContext2D, x: number, y: number, dir: number): void {
   ctx.save();
   ctx.translate(x, y);
   ctx.rotate((dir * Math.PI) / 8);
   ctx.beginPath();
-  ctx.moveTo(0, -0.55);
-  ctx.lineTo(0.6, 0.15);
-  ctx.lineTo(-0.6, 0.15);
+  ctx.moveTo(0, -0.58);
+  ctx.lineTo(0.62, 0.02);
+  ctx.lineTo(-0.62, 0.02);
   ctx.closePath();
   ctx.lineJoin = "round";
-  ctx.lineWidth = 0.14;
-  ctx.strokeStyle = "#2e8b2e";
-  ctx.fillStyle = "#55c234";
-  ctx.fill();
+  // A wide round-joined stroke gives the soft corners; the fill covers its
+  // inner half, leaving a darker green rim.
+  ctx.lineWidth = 0.16;
+  ctx.strokeStyle = "#3a9e2a";
   ctx.stroke();
+  ctx.fillStyle = "#56c63b";
+  ctx.fill();
   ctx.restore();
 }
 

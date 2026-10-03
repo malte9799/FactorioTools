@@ -8,9 +8,9 @@ import {
   isElevatedRail,
   isRail,
   nearestSlot,
-  railEndKey,
   railEndsAt,
   railKey,
+  railHighlightBox,
   railName,
   railTiles,
   signalSlots,
@@ -42,12 +42,8 @@ export function isRailSnapped(name: string): boolean {
 export interface RailIndex {
   /** True when a piece on this layer may not cover the tile. */
   blocked(tx: number, ty: number, elevated: boolean): boolean;
-  /** Ends no other piece continues from — where planning can pick up. */
-  freeEnds: RailEnd[];
   /** Placed rails covering each tile, for picking the rail under the cursor. */
   railsAt: Map<string, RailPiece[]>;
-  /** The piece each free end belongs to. */
-  freeEndOwner: Map<RailEnd, RailPiece>;
   /** railKey of every placed rail, so a plan reuses track already there. */
   existing: Set<string>;
   /** True when a support or ramp top already holds the deck at this point. */
@@ -88,16 +84,10 @@ export function buildRailIndex(entities: PlacedEntity[], footprintOf: (e: Placed
     tilesUnder(e, footprintOf(e), groundTaken);
   }
 
-  const ends = new Map<string, RailEnd[]>();
-  const endOwner = new Map<RailEnd, RailPiece>();
   const rampTops = new Set<string>();
   for (const r of rails) {
-    for (const end of railEndsAt(r)) {
-      const key = railEndKey(end.x, end.y, end.elevated);
-      (ends.get(key) ?? ends.set(key, []).get(key)!).push(end);
-      endOwner.set(end, r);
-      if (r.name === "rail-ramp" && end.elevated) rampTops.add(`${end.x},${end.y}`);
-    }
+    if (r.name !== "rail-ramp") continue;
+    for (const end of railEndsAt(r)) if (end.elevated) rampTops.add(`${end.x},${end.y}`);
   }
   const railsAt = new Map<string, RailPiece[]>();
   for (const r of rails) {
@@ -106,18 +96,10 @@ export function buildRailIndex(entities: PlacedEntity[], footprintOf: (e: Placed
       (railsAt.get(key) ?? railsAt.set(key, []).get(key)!).push(r);
     }
   }
-  const freeEnds: RailEnd[] = [];
-  for (const group of ends.values()) {
-    for (const end of group) {
-      if (!group.some((o) => o.dir === (end.dir + 8) % 16)) freeEnds.push(end);
-    }
-  }
 
   return {
     blocked: (tx, ty, elevated) => !elevated && groundTaken.has(`${tx},${ty}`),
-    freeEnds,
     railsAt,
-    freeEndOwner: endOwner,
     existing: new Set(rails.map(railKey)),
     supported: (x, y) => supports.has(`${x},${y}`) || rampTops.has(`${x},${y}`),
     supportBlocked: (x, y) => {
@@ -129,21 +111,6 @@ export function buildRailIndex(entities: PlacedEntity[], footprintOf: (e: Placed
     railsideTaken,
     hasRails: rails.length > 0,
   };
-}
-
-/** The free end nearest a point, within `reach` tiles, on the given layer
- *  if one is preferred. */
-export function nearestFreeEnd(index: RailIndex, x: number, y: number, reach: number): RailEnd | undefined {
-  let best: RailEnd | undefined;
-  let bestDist = reach;
-  for (const end of index.freeEnds) {
-    const d = Math.hypot(end.x - x, end.y - y);
-    if (d < bestDist) {
-      bestDist = d;
-      best = end;
-    }
-  }
-  return best;
 }
 
 /** The single straight piece a rail item shows before any track is planned,
@@ -172,31 +139,40 @@ export function previewRail(index: RailIndex, start: RailEnd, target: { x: numbe
   return { pieces, supports, end: planEnd(start, pieces) };
 }
 
-/** Smallest turn between two 16-way directions, in steps. */
-function dirGap(a: number, b: number): number {
-  const d = (((a - b) % 16) + 16) % 16;
-  return Math.min(d, 16 - d);
-}
-
 /** Where a press with the rail item would start planning, and the piece the
- *  start arrow sits on. Over a placed rail, that rail's end facing closest
- *  to the held heading — so R picks which way to build on from it, middle
- *  of the track included. Just past the end of track, that free end.
- *  Undefined over open ground, where the held piece itself is the start. */
-export function railStartAt(index: RailIndex, x: number, y: number, heading: number): { end: RailEnd; piece: RailPiece } | undefined {
-  const under = index.railsAt.get(`${Math.floor(x)},${Math.floor(y)}`);
-  if (under && under.length > 0) {
-    // Several pieces on one tile (a junction): the one whose centre is
-    // nearest the cursor.
-    const piece = under.reduce((a, b) => (Math.hypot(a.x - x, a.y - y) <= Math.hypot(b.x - x, b.y - y) ? a : b));
-    const ends = railEndsAt(piece);
-    const end = ends.reduce((a, b) => (dirGap(a.dir, heading) <= dirGap(b.dir, heading) ? a : b));
-    return { end, piece };
+ *  start arrow sits on: the placed rail the cursor is over (inside its
+ *  turned hover box, so mid-track works too, to branch off), leaving from
+ *  the end on the cursor's half of that rail. Undefined anywhere else —
+ *  open ground, or beside track — where a press lays the held piece. */
+export function railStartAt(index: RailIndex, x: number, y: number): { end: RailEnd; piece: RailPiece } | undefined {
+  const tx = Math.floor(x);
+  const ty = Math.floor(y);
+  let best: RailPiece | undefined;
+  let bestDist = Infinity;
+  for (let oy = -1; oy <= 1; oy++) {
+    for (let ox = -1; ox <= 1; ox++) {
+      for (const piece of index.railsAt.get(`${tx + ox},${ty + oy}`) ?? []) {
+        const box = railHighlightBox(piece.name, piece.direction);
+        const dx = x - (piece.x + box.cx);
+        const dy = y - (piece.y + box.cy);
+        const cos = Math.cos(box.angle);
+        const sin = Math.sin(box.angle);
+        const across = Math.abs(dx * cos + dy * sin);
+        const along = Math.abs(-dx * sin + dy * cos);
+        if (across > box.w / 2 || along > box.h / 2) continue;
+        // Several pieces under the cursor (a junction): the nearest centre.
+        const d = Math.hypot(dx, dy);
+        if (d < bestDist) {
+          bestDist = d;
+          best = piece;
+        }
+      }
+    }
   }
-  const free = nearestFreeEnd(index, x, y, 1.5);
-  if (!free) return undefined;
-  const owner = index.freeEndOwner.get(free);
-  return owner ? { end: free, piece: owner } : undefined;
+  if (!best) return undefined;
+  const [a, b] = railEndsAt(best) as [RailEnd, RailEnd];
+  const end = Math.hypot(a.x - x, a.y - y) <= Math.hypot(b.x - x, b.y - y) ? a : b;
+  return { end, piece: best };
 }
 
 /** The signal or train stop slot a held signal/stop snaps to near a point. */
