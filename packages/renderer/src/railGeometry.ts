@@ -374,19 +374,21 @@ export function nearestSlot(slots: RailSlot[], x: number, y: number, reach: numb
   return best;
 }
 
-/** The box a rail's hover brackets go round, relative to its position:
- *  centred between its two ends and turned to lie along them. */
+/** The box a rail is hovered and selected by, relative to its position:
+ *  centred between its two ends and turned to lie along them, the size of
+ *  the prototype's collision box (1.5 wide and as long as the track; a
+ *  cardinal straight is a 2×2 square, a ramp 3.6 × 15.6). */
 export function railHighlightBox(name: string, direction: number): { cx: number; cy: number; w: number; h: number; angle: number } {
   const ends = railEnds(name, direction);
   if (ends.length !== 2) return { cx: 0, cy: 0, w: 2, h: 2, angle: 0 };
   const [a, b] = ends as [RailEndOffset, RailEndOffset];
-  const chord = Math.hypot(b.dx - a.dx, b.dy - a.dy);
-  const ramp = SHAPE_OF[name] === "ramp";
+  const shape = SHAPE_OF[name];
+  const cardinalStraight = shape === "straight" && Math.floor(direction / 2) % 2 === 0;
   return {
     cx: (a.dx + b.dx) / 2,
     cy: (a.dy + b.dy) / 2,
-    w: ramp ? 4 : 2,
-    h: Math.max(chord, 2),
+    w: shape === "ramp" ? 3.6 : cardinalStraight ? 2 : 1.5,
+    h: shape === "ramp" ? 15.6 : railLength(name, direction),
     // Clockwise from vertical, the way the box's long side runs.
     angle: Math.atan2(b.dx - a.dx, -(b.dy - a.dy)),
   };

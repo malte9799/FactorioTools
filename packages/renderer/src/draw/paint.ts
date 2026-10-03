@@ -246,8 +246,11 @@ export function drawHoverHighlight(
   /** Turns the box about its centre, clockwise in radians — rails lie at an
    *  angle, and their brackets follow them. */
   angle = 0,
+  /** Side length that picks the bracket size; the larger side by default.
+   *  Track is long and thin, and the game sizes its brackets by the width. */
+  tierSide = Math.max(w, h),
 ): void {
-  const tier = CURSOR_BOX_TIERS.find((t) => Math.max(w, h) <= t.maxSide)!;
+  const tier = CURSOR_BOX_TIERS.find((t) => tierSide <= t.maxSide)!;
   const sy = CURSOR_BOX_ROW[style];
   const left = -w / 2;
   const top = -h / 2;

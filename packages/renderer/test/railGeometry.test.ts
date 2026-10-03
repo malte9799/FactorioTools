@@ -3,11 +3,13 @@ import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { collectBlueprints, decodeBlueprintString } from "@factoriotools/engine";
 import { DATA_DIR } from "./dataset.js";
+import { SpatialIndex } from "../src/spatialIndex.js";
 import {
   isRail,
   railEnds,
   railEndsAt,
   railFootprint,
+  railHighlightBox,
   railTileOffsets,
   signalSlots,
   snapStraightRail,
@@ -142,6 +144,22 @@ test("example train stops sit in slots beside their straight rails", () => {
   }
   if (total === 0) return;
   assert.ok(matched / total > 0.99, `${matched}/${total} train stops in a slot`);
+});
+
+test("a rail is hovered by its turned box, not its square footprint", () => {
+  const box = railHighlightBox("half-diagonal-rail", 2);
+  assert.equal(box.w, 1.5);
+  assert.ok(Math.abs(box.h - 4.472) < 0.01);
+  const [w, h] = railFootprint("half-diagonal-rail", 2);
+  const index = new SpatialIndex([
+    { entityNumber: 1, left: -w / 2, top: -h / 2, right: w / 2, bottom: h / 2, turned: { ...box, cx: box.cx, cy: box.cy } },
+  ]);
+  // On the track: along its north-north-east line.
+  assert.equal(index.hitTest(0.5, -1), 1);
+  assert.equal(index.hitTest(-0.5, 1), 1);
+  // Inside the square footprint, well off the track.
+  assert.equal(index.hitTest(1.6, 1.6), undefined);
+  assert.equal(index.hitTest(-1.6, -1.6), undefined);
 });
 
 console.log(`${passed} passed`);

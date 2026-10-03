@@ -1351,7 +1351,7 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
     const highlightEntity = (entity: PlacedEntity, visual: ResolvedVisual, sheet: HTMLImageElement) => {
       if (isRail(entity.name)) {
         const box = railHighlightBox(entity.name, entity.direction);
-        drawHoverHighlight(ctx, sheet, entity.x + box.cx, entity.y + box.cy, box.w, box.h, "regular", box.angle);
+        drawHoverHighlight(ctx, sheet, entity.x + box.cx, entity.y + box.cy, box.w, box.h, "regular", box.angle, Math.min(box.w, box.h));
         return;
       }
       const [fw, fh] = effectiveFootprint(visual, entity.direction);
@@ -2548,12 +2548,16 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
     for (const e of entities) {
       const visual = visualFor(e.name);
       const [w, h] = visual ? effectiveFootprint(visual, e.direction) : FALLBACK_FOOTPRINT;
-      const box = {
+      const rail = isRail(e.name) ? railHighlightBox(e.name, e.direction) : undefined;
+      const box: IndexedBox = {
         entityNumber: e.entityNumber,
         left: e.x - w / 2,
         top: e.y - h / 2,
         right: e.x + w / 2,
         bottom: e.y + h / 2,
+        // Track is hovered by the same turned box its brackets draw round,
+        // not by its (mostly empty) axis-aligned footprint.
+        turned: rail && { cx: e.x + rail.cx, cy: e.y + rail.cy, w: rail.w, h: rail.h, angle: rail.angle },
       };
       boxes.push(box);
       if (connectors.isPlatformLike(e.name)) platformBoxes.push(box);
