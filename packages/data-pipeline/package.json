@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "dump-to-gamedata": "tsx src/dump-to-gamedata.ts",
+    "dump-to-mapgen": "tsx src/dump-to-mapgen.ts",
     "extract-sprites": "tsx src/extract-sprites.ts",
     "crop-sprite-sheets": "tsx src/crop-sprite-sheets.ts",
     "build-debug-lab": "tsx src/build-debug-lab.ts",

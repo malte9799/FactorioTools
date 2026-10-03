@@ -8,7 +8,9 @@
       "@factoriotools/renderer": ["../../packages/renderer/src/index.ts"],
       "@factoriotools/renderer/*": ["../../packages/renderer/src/*"],
       "@factoriotools/sim": ["../../packages/sim/src/index.ts"],
-      "@factoriotools/sim/*": ["../../packages/sim/src/*"]
+      "@factoriotools/sim/*": ["../../packages/sim/src/*"],
+      "@factoriotools/mapgen": ["../../packages/mapgen/src/index.ts"],
+      "@factoriotools/mapgen/*": ["../../packages/mapgen/src/*"]
     }
   },
   "include": ["src"]

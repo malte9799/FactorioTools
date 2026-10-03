@@ -1,0 +1,18 @@
+{
+  "name": "@factoriotools/mapgen",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "main": "src/index.ts",
+  "scripts": {
+    "test": "tsx test/mapgen.test.ts",
+    "check": "tsc --noEmit",
+    "make-fixtures": "tsx scripts/make-fixtures.ts",
+    "compare-preview": "tsx scripts/compare-preview.ts"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2"
+  }
+}
