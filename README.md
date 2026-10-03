@@ -324,14 +324,6 @@ flowchart LR
 Every pushed branch is built and published as a preview under
 `https://malte9799.github.io/FactorioTools/preview/<branch>/`.
 
-### Code audit
-
-[`audit/`](audit) holds a full code audit — 19 findings with severity and
-effort ratings, the implementation reports, and the verification scripts that
-back them. The scripts are runnable and self-checking; one of them,
-`verify-render-identical.ts`, hashes the entire render path so a refactor can
-prove it changed no pixels.
-
 ## 📜 Licence
 
 The code is [MIT](LICENSE). Blueprint math is ported from
