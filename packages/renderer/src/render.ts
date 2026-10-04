@@ -1,4 +1,4 @@
-import type { GameData, PlacedEntity, QualityName, RenderCatalog, WireColor, WireLink } from "@factoriotools/engine";
+import type { BpTile, GameData, PlacedEntity, QualityName, RenderCatalog, WireColor, WireLink } from "@factoriotools/engine";
 import { Camera } from "./camera.js";
 import { getSharedSpriteAtlas } from "./spriteAtlas.js";
 import { getSharedIconAtlas } from "./iconAtlas.js";
@@ -15,6 +15,7 @@ import { paint, paintPlain, drawOutline, drawDirectionArrows, drawHoverHighlight
 import { getHoverHighlightSprite, getIndicationSprites, getUndergroundLinesSprite } from "./hoverHighlightSprite.js";
 import { compareDrawCommands, type DrawCommand } from "./draw/commands.js";
 import { planBake, type BakePlan } from "./draw/bake.js";
+import { collectTiles, paintTiles, type TileScene } from "./draw/tiles.js";
 import { drawInserter } from "./sprites/inserter.js";
 import { SpatialIndex, type IndexedBox } from "./spatialIndex.js";
 
@@ -235,7 +236,9 @@ export interface PasteSnap {
 export interface BlueprintRenderer {
   canvas: HTMLCanvasElement;
   camera: Camera;
-  loadBlueprint(entities: PlacedEntity[], wires?: WireLink[]): void;
+  /** `tiles` is the blueprint's floor; omitted means none. Edits through
+   *  updateEntities leave it as loaded. */
+  loadBlueprint(entities: PlacedEntity[], wires?: WireLink[], tiles?: BpTile[]): void;
   /** Rebuilds the spatial/position indices for a mutated entity list WITHOUT
    *  reframing the camera — what every edit (place/remove/rotate/configure)
    *  calls, so the view never jumps mid-edit. loadBlueprint additionally
@@ -516,6 +519,7 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
   let heatNetwork = new HeatNetwork();
   let spatialIndex = new SpatialIndex([]);
   let platformBoxes: PlatformBox[] = [];
+  let tileScene: TileScene = { commands: [], bounds: null };
   let highlight: HighlightRole | null = null;
   /** The entity under the cursor right now, tracked independently of
    *  hoverCallback (an app-level subscriber, which may not even be set) so
@@ -1618,19 +1622,23 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
     target.translate(-camera.state.x, -camera.state.y);
   }
 
-  /** The bottom of every frame: background, grid, and the outline stand-ins
-   *  for entities that have no sprites. Called in world space. */
-  function paintBase(target: CanvasRenderingContext2D, outlined: PlacedEntity[], w: number, h: number): void {
+  /** The bottom of every frame: background, grid, the blueprint's floor
+   *  tiles, and the outline stand-ins for entities that have no sprites.
+   *  Called in world space. Returns false while a floor sheet is still
+   *  loading. */
+  function paintBase(target: CanvasRenderingContext2D, outlined: PlacedEntity[], w: number, h: number): boolean {
     target.save();
     target.setTransform(dpr, 0, 0, dpr, 0, 0);
     target.fillStyle = "#1f1e1c";
     target.fillRect(0, 0, w, h);
     target.restore();
     drawGrid(target, camera, w, h);
+    const complete = paintTiles(target, atlas, tileScene.commands);
     for (const entity of outlined) {
       const [fw, fh] = effectiveFootprint(visualFor(entity.name)!, entity.direction);
       drawOutline(target, entity.x, entity.y, fw, fh);
     }
+    return complete;
   }
 
   /** Inserter arms always paint over the whole Y-sorted scene. */
@@ -1729,7 +1737,7 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
       target.imageSmoothingEnabled = false;
       target.setTransform(dpr, 0, 0, dpr, 0, 0);
       applyWorldTransform(target);
-      if (r === 0) paintBase(target, outlined, w, h);
+      if (r === 0 && !paintBase(target, outlined, w, h)) complete = false;
       for (const c of run.commands) if (!atlas.get(c.sheet)) complete = false;
       paintPlain(target, atlas, run.commands, undefined, !quality.shadows);
       if (r === plan.runs.length - 1) {
@@ -2423,10 +2431,22 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
     void atlas.whenIdle().then(invalidate);
   }
 
-  function loadBlueprint(newEntities: PlacedEntity[], newWires: WireLink[] = []): void {
+  function loadBlueprint(newEntities: PlacedEntity[], newWires: WireLink[] = [], newTiles: BpTile[] = []): void {
+    tileScene = collectTiles(newTiles, catalog.tiles);
+    for (const command of tileScene.commands) if (command.sheet) atlas.get(command.sheet);
     rebuildIndices(newEntities, newWires);
     const rect = container.getBoundingClientRect();
-    const box = spatialIndex.boundingBox;
+    // The floor often reaches past the buildings standing on it.
+    const entityBox = spatialIndex.boundingBox;
+    const tileBox = tileScene.bounds;
+    const box = entityBox && tileBox
+      ? {
+          minX: Math.min(entityBox.minX, tileBox.minX),
+          minY: Math.min(entityBox.minY, tileBox.minY),
+          maxX: Math.max(entityBox.maxX, tileBox.maxX),
+          maxY: Math.max(entityBox.maxY, tileBox.maxY),
+        }
+      : (entityBox ?? tileBox);
     if (box) camera.frame(box, rect.width, rect.height);
   }
 

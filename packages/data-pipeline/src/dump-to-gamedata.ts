@@ -843,6 +843,7 @@ function collectSpriteFilenames(data: GameData, catalog: RenderCatalog): string[
     }
   }
   for (const e of Object.values(catalog.entities)) sheetsOf(e.graphics).forEach((f) => files.add(f));
+  for (const t of Object.values(catalog.tiles ?? {})) t.variants.forEach((v) => files.add(v.sheet));
   return [...files].sort();
 }
 
