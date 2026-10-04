@@ -1542,7 +1542,7 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
           drawInserter(ctx, atlas, ghost, visual.inserterGraphics, ghostTint, tintedRes);
         } else if (visual.graphics) {
           const ghostCommands: DrawCommand[] = [];
-          collectEntity(ghostCommands, ghost, visual, { grid: previewGrid, fluidNetwork: previewFluidNetwork, heatNetwork: previewHeatNetwork, ...connectors, platformBoxes, animationFrame }, 1);
+          collectEntity(ghostCommands, ghost, withoutRailPatch(visual), { grid: previewGrid, fluidNetwork: previewFluidNetwork, heatNetwork: previewHeatNetwork, ...connectors, platformBoxes, animationFrame }, 1);
           for (const c of ghostCommands) c.tint = ghostTint;
           paint(ctx, atlas, ghostCommands, tintedRes);
         }
@@ -2223,6 +2223,15 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
    *  keep placing wherever the ghost lands, one placement per cell instead
    *  of one per pointermove event (which would fire many times over the
    *  same cell at normal drag speeds). */
+  /** A signal's ghost without the cables to the rail beside it (its
+   *  rail_piece layer, the one laid out in a direction16Grid): those belong
+   *  to a signal standing on track, not to one still in hand. */
+  function withoutRailPatch(visual: ResolvedVisual): ResolvedVisual {
+    const layers = visual.graphics?.layers;
+    if (!layers?.some((l) => l.column?.by === "direction16Grid")) return visual;
+    return { ...visual, graphics: { ...visual.graphics!, layers: layers.filter((l) => l.column?.by !== "direction16Grid") } };
+  }
+
   function placeAtGhost(): void {
     if (mode.kind !== "place" || !ghostWorldPos) return;
     // Track only ever goes down through the rail planner, which snaps it to
