@@ -20,7 +20,7 @@ import { drawInserter } from "./sprites/inserter.js";
 import { SpatialIndex, type IndexedBox } from "./spatialIndex.js";
 import { boxHitsEntity, entitiesCollide } from "./collision.js";
 import { RAIL_BLOCK_COLORS } from "./railBlocks.js";
-import { isRail, railCentreline, railHighlightBox, type RailEnd, type RailPiece } from "./railGeometry.js";
+import { isRail, railCentreline, railHighlightBox, type RailEnd, type RailPiece, type RailSlot } from "./railGeometry.js";
 import {
   buildRailIndex,
   isRailPlannerItem,
@@ -31,6 +31,7 @@ import {
   plannerTargetsElevated,
   previewRail,
   railsideSlot,
+  railsideSlotTaken,
   startPiece,
   type RailIndex,
   type RailPreview,
@@ -2204,10 +2205,10 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
   /** A signal/stop slot is free when nothing but track already stands on
    *  it. `overlapping` is the spatial query over the ghost's own box, when
    *  the caller already has one. */
-  function railsideOk(slot: { x: number; y: number } | undefined, overlapping?: ReadonlySet<number>): boolean {
+  function railsideOk(slot: RailSlot | undefined, overlapping?: ReadonlySet<number>): boolean {
     if (!slot) return false;
     const index = currentRailIndex();
-    if (index.railsideTaken.has(`${slot.x},${slot.y}`)) return false;
+    if (railsideSlotTaken(index, slot)) return false;
     const hits = overlapping ?? spatialIndex.queryRect(slot.x - 0.49, slot.y - 0.49, slot.x + 0.49, slot.y + 0.49);
     for (const id of hits) {
       const e = entityById.get(id);
@@ -2251,10 +2252,9 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
       if (!slot || !railsideOk(slot)) return;
       const key = `${slot.x},${slot.y}`;
       if (placedThisGesture.has(key)) return;
-      // One train stop per click: once one is down, the ghost snaps to the
-      // free slot next to it, and a drag (or a jittery click) would drop a
-      // second stop there.
-      if (mode.entityName === "train-stop" && placedThisGesture.size > 0) return;
+      // One signal or stop per click: a drag (or a jittery click) would
+      // otherwise drop another on each slot it passes.
+      if (placedThisGesture.size > 0) return;
       placedThisGesture.add(key);
       placeCallback?.(slot.x, slot.y, slot.direction);
       return;

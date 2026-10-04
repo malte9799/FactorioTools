@@ -4,7 +4,7 @@ import path from "node:path";
 import { collectBlueprints, decodeBlueprintString } from "@factoriotools/engine";
 import { DATA_DIR } from "./dataset.js";
 import { SpatialIndex } from "../src/spatialIndex.js";
-import { buildRailIndex, railsideSlot, signalSlotsNear } from "../src/railPlacement.js";
+import { buildRailIndex, railsideSlot, railsideSlotTaken, signalSlotsNear } from "../src/railPlacement.js";
 import {
   isRail,
   railEnds,
@@ -214,6 +214,19 @@ test("a held train stop over a taken slot stays on it, not the free one beside i
   const picked = railsideSlot(index, "train-stop", taken.x, taken.y - 0.6, taken.direction);
   assert.deepEqual(picked && [picked.x, picked.y], [taken.x, taken.y]);
   assert.ok(index.railsideTaken.has(`${taken.x},${taken.y}`), "so the ghost shows red and nothing is placed");
+});
+
+test("a held signal over a taken joint side stays on it, not the free slot beside it", () => {
+  const rails = [1, 3, 5].map((y, i) => ({ entityNumber: i + 1, name: "straight-rail", x: 1, y, direction: 0, quality: "normal" as const, modules: [], filterItems: [] }));
+  const slots = signalSlots(rails).filter((s) => s.ex === 1 && s.ey === 2 && s.direction === 0);
+  const [placed, twin] = slots;
+  assert.ok(placed && twin);
+  const signal = { entityNumber: 9, name: "rail-signal", x: placed.x, y: placed.y, direction: placed.direction, quality: "normal" as const, modules: [], filterItems: [] };
+  const index = buildRailIndex([...rails, signal], () => [1, 1]);
+  const picked = railsideSlot(index, "rail-signal", placed.x, placed.y + 0.3, placed.direction);
+  assert.deepEqual(picked && [picked.x, picked.y], [placed.x, placed.y]);
+  assert.ok(railsideSlotTaken(index, picked!), "so the ghost shows red and nothing is placed");
+  assert.ok(railsideSlotTaken(index, twin), "the twin slot on the same joint side is taken too");
 });
 
 console.log(`${passed} passed`);

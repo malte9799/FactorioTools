@@ -201,13 +201,21 @@ export function railStartAt(index: RailIndex, x: number, y: number): { end: Rail
   return { end, piece: best };
 }
 
-/** The signal or train stop slot a held signal/stop snaps to near a point.
- *  A train stop snaps to the nearest slot even when one stands there (the
- *  ghost shows red), as in the game: skipping to the free slot beside it
- *  made the click after placing a stop drop a second one next to it. */
+/** The signal or train stop slot a held signal/stop snaps to near a point:
+ *  the nearest one, even when it's taken (the ghost shows red, see
+ *  railsideSlotTaken), as in the game. Skipping to the free slot beside a
+ *  taken one made the click after placing a signal or stop drop a second
+ *  one next to it. */
 export function railsideSlot(index: RailIndex, name: string, x: number, y: number, heldDirection: number): RailSlot | undefined {
-  const slots = SIGNALS.has(name) ? index.signalSlots.filter((s) => !index.takenSignalGroups.has(slotGroup(s))) : index.stopSlots;
+  const slots = SIGNALS.has(name) ? index.signalSlots : index.stopSlots;
   return nearestSlot(slots, x, y, name === "train-stop" ? 3 : 2, heldDirection);
+}
+
+/** True when a signal or stop already stands on the slot, or — for a
+ *  signal — on the same side of the same joint. */
+export function railsideSlotTaken(index: RailIndex, slot: RailSlot): boolean {
+  if (index.railsideTaken.has(`${slot.x},${slot.y}`)) return true;
+  return slot.ex !== undefined && index.takenSignalGroups.has(slotGroup(slot));
 }
 
 /** How far from the cursor a held signal shows its placement handles. */
