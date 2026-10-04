@@ -180,3 +180,12 @@ export function railsideSlot(index: RailIndex, name: string, x: number, y: numbe
   const slots = SIGNALS.has(name) ? index.signalSlots : index.stopSlots;
   return nearestSlot(slots, x, y, name === "train-stop" ? 3 : 2, heldDirection);
 }
+
+/** How far from the cursor a held signal shows its placement handles. */
+export const SIGNAL_HANDLE_RANGE = 12;
+
+/** Free signal slots within `radius` of a point — where a held signal shows
+ *  a handle on the track. */
+export function signalSlotsNear(index: RailIndex, x: number, y: number, radius = SIGNAL_HANDLE_RANGE): RailSlot[] {
+  return index.signalSlots.filter((s) => !index.railsideTaken.has(`${s.x},${s.y}`) && Math.hypot(s.x - x, s.y - y) <= radius);
+}

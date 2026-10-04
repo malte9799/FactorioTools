@@ -16,3 +16,4 @@ export * from "./recordingSummary.js";
 export * from "./railGeometry.js";
 export * from "./railPlanner.js";
 export * from "./railPlacement.js";
+export * from "./collision.js";

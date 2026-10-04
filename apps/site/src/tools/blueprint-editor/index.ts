@@ -17,14 +17,12 @@ import {
   ROTATION_TEST_BLUEPRINT,
   DEBUG_BLUEPRINT,
   TIMESCALE_FACTOR,
-  boxOf,
-  overlaps,
   remapSelectionForPaste,
   refreshSignalItems,
   stripRichText,
 } from "@factoriotools/engine";
 import type { CalculationResult, Timescale, Blueprint, BlueprintTreeNode, PlacedEntity, QualityName, MachineGroup, ModuleStack, ThroughputContext, BottleneckSubgroup, BpSignalId, WireColor, WireLink } from "@factoriotools/engine";
-import { mountRenderer, isRail, isElevatedRail, railTiles, railKey, type RailPiece, isPoleLike, isUndergroundLike, autoUnderground, undergroundPartner, isTwoDirectionOnly, rotationStep, effectiveFootprint, rotateAroundCenter, summariseRecording, slowestFrames, worstPhase, autoConnectPole, canWire, dropWiresFor, terminalSideAt, toggleWire, type BlueprintRenderer, type HighlightRole } from "@factoriotools/renderer";
+import { mountRenderer, entitiesCollide, isRail, isElevatedRail, railTiles, railKey, type RailPiece, isPoleLike, isUndergroundLike, autoUnderground, undergroundPartner, isTwoDirectionOnly, rotationStep, effectiveFootprint, rotateAroundCenter, summariseRecording, slowestFrames, worstPhase, autoConnectPole, canWire, dropWiresFor, terminalSideAt, toggleWire, type BlueprintRenderer, type HighlightRole } from "@factoriotools/renderer";
 import { buildRecipeCard, renderResults, type ViewOptions } from "./legacy-view/panels.js";
 import { icon } from "./legacy-view/icons.js";
 import { makeFloatingWindow } from "../../window-manager.js";
@@ -1516,28 +1514,14 @@ export function mountBlueprintEditor(root: HTMLElement): () => void {
       });
       return;
     }
-    // In real Factorio nothing shares a tile — reject a placement whose
-    // footprint box overlaps any already-placed entity's box, the same box
-    // math the rate calculator's beacon-range check already uses.
-    // Unknown-footprint entities fall back to 1x1, matching
-    // buildVisualLookup's own default. Track is the exception: it blocks
-    // only the tiles it actually runs over (a curve's box is mostly empty),
-    // elevated track blocks nothing on the ground, and signals and train
-    // stops stand beside track by design.
-    const newVisual = visualLookup().get(name);
-    const newFootprint = newVisual ? effectiveFootprint(newVisual, direction) : ([1, 1] as [number, number]);
-    const newBox = boxOf(worldX, worldY, newFootprint);
-    const railside = RAILSIDE.has(name);
-    const collides = entities.some((e) => {
-      if (isRail(e.name)) {
-        if (railside || isElevatedRail(e.name)) return false;
-        return railTiles(e).some(([tx, ty]) => overlaps(newBox, { left: tx, top: ty, right: tx + 1, bottom: ty + 1 }));
-      }
-      if (railside && RAILSIDE.has(e.name)) return e.x === worldX && e.y === worldY;
-      const visual = visualLookup().get(e.name);
-      const footprint = visual ? effectiveFootprint(visual, e.direction) : ([1, 1] as [number, number]);
-      return overlaps(newBox, boxOf(e.x, e.y, footprint));
-    });
+    // In real Factorio nothing shares a tile — reject a placement that
+    // collides with any already-placed entity (entitiesCollide: footprint
+    // boxes, except that track blocks only the tiles it runs over, elevated
+    // track blocks nothing on the ground, and signals and train stops stand
+    // beside track). Unknown-footprint entities fall back to 1x1, matching
+    // buildVisualLookup's own default.
+    const candidate: PlacedEntity = { entityNumber: -1, name, x: worldX, y: worldY, direction, quality, modules: [], filterItems: [] };
+    const collides = entities.some((e) => entitiesCollide(candidate, e, footprintOfEntity));
     if (collides) {
       setStatus("Can't build here — something else already occupies that space.", "error");
       return;
@@ -1570,6 +1554,11 @@ export function mountBlueprintEditor(root: HTMLElement): () => void {
       // rather than as two separate steps.
       wires = autoConnectPole(newEntity, entities, wires, visualLookup().get.bind(visualLookup()), isPoleLike);
     });
+  }
+
+  function footprintOfEntity(e: PlacedEntity): [number, number] {
+    const visual = visualLookup().get(e.name);
+    return visual ? effectiveFootprint(visual, e.direction) : [1, 1];
   }
 
   /** Lays planned track (and the supports under its elevated part) as one
@@ -2023,12 +2012,8 @@ export function mountBlueprintEditor(root: HTMLElement): () => void {
       );
       nextEntityNumber = remapped.nextNumber;
 
-      const footprintOf = (e: PlacedEntity): [number, number] => {
-        const visual = visualLookup().get(e.name);
-        return visual ? effectiveFootprint(visual, e.direction) : ([1, 1] as [number, number]);
-      };
       const collidesWithAny = (e: PlacedEntity, against: PlacedEntity[]) =>
-        against.some((other) => overlaps(boxOf(e.x, e.y, footprintOf(e)), boxOf(other.x, other.y, footprintOf(other))));
+        against.some((other) => entitiesCollide(e, other, footprintOfEntity));
 
       let toPlace = remapped.entities;
       let toRemoveFirst: number[] = [];

@@ -9,7 +9,7 @@ refresh the rail data from the game.
 | --- | --- |
 | **Rail** | Starts the rail planner. Hovering a placed rail shows a green arrow: a press there starts building from the end on the cursor's half of that rail (mid-track too, to branch off). A click on open ground lays just the held straight piece; a drag from open ground lays it and plans on from it. Drag and release to lay track along the planned path. While a plan is active, the path previews from its end to the cursor and the next click lays it. |
 | **Rail ramp** | Same planner, but the track finishes on the elevated layer. A ramp is inserted where the track climbs, and rail supports go under the elevated part. |
-| **Rail signal / chain signal** | Snaps to the nearest signal slot beside placed track, facing the trains it stops. Which side of the track it goes on follows the cursor. Away from track the ghost is red and nothing is placed. |
+| **Rail signal / chain signal** | Snaps to the nearest signal slot beside placed track, facing the trains it stops. Which side of the track it goes on follows the cursor. Green handles mark every free signal spot on track within 12 tiles of the cursor. Away from track the ghost is red and nothing is placed. |
 | **Train stop** | Snaps to the slot beside a straight cardinal rail, on the right-hand side of travel. |
 
 - **No length limit.** Every plan lays in full, however long.
@@ -21,9 +21,8 @@ refresh the rail data from the game.
 - **Undo** reverses each placement in a single step.
 
 The planner routes around buildings. It crosses and reuses existing track, and
-never lays a duplicate piece. Like the game, it always puts a straight piece
-between two curves, so a full 90° turn is curve A, half-diagonal, curve B,
-diagonal, curve B, half-diagonal, curve A.
+never lays a duplicate piece. It takes the tightest turn that fits: a minimal
+90° corner is curve A, curve B, curve B, curve A, back to back.
 
 ## How it works
 
@@ -33,9 +32,11 @@ diagonal, curve B, half-diagonal, curve A.
 - `railGeometry.test.ts` requires the examples' rails to connect up end to end.
 - The same file works out the tiles each piece covers (used for collision), the signal and train-stop slots, and a footprint for hover and selection.
 
+**`packages/renderer/src/collision.ts`: what blocks what.** One rule for every placement, paste and box selection: footprints for most entities, but track blocks only the tiles it runs over, rails cross freely, elevated track stands above the ground, and signals and stops stand beside track.
+
 **`packages/renderer/src/railPlanner.ts`: the planner.**
 - A* over rail ends. From an end, any piece with an end at the same point facing back can follow, and its far end becomes the next state.
-- Cost is track length plus the prototypes' `extra_planner_penalty`. A curve can't directly follow another curve.
+- Cost is track length plus the prototypes' `extra_planner_penalty`.
 - `supportsFor` places rail supports so that every elevated piece stays within `support_range` of a support or of the ramp it climbed out of.
 
 **`packages/renderer/src/railPlacement.ts`: the link to the blueprint.**

@@ -11,18 +11,20 @@ import type { PlatformBox } from "./neighbours/platform.js";
 import { buildWireNetwork, resolveWires, terminalFor, type ResolvedWire, type WireNetwork } from "./neighbours/wires.js";
 import { drawSupplyAreas, drawWires, type SupplyArea } from "./draw/wireDraw.js";
 import { collectEntity, collectInserterPlatform, type CollectContext } from "./draw/collect.js";
-import { paint, paintPlain, drawOutline, drawHoverHighlight, drawRailStartArrow, drawUndergroundLine, type PaintTally } from "./draw/paint.js";
+import { paint, paintPlain, drawOutline, drawHoverHighlight, drawRailStartArrow, drawSignalHandle, drawUndergroundLine, type PaintTally } from "./draw/paint.js";
 import { getHoverHighlightSprite, getUndergroundLinesSprite } from "./hoverHighlightSprite.js";
 import { compareDrawCommands, type DrawCommand } from "./draw/commands.js";
 import { planBake, type BakePlan } from "./draw/bake.js";
 import { drawInserter } from "./sprites/inserter.js";
 import { SpatialIndex, type IndexedBox } from "./spatialIndex.js";
+import { boxHitsEntity, entitiesCollide } from "./collision.js";
 import { isRail, railHighlightBox, type RailEnd, type RailPiece } from "./railGeometry.js";
 import {
   buildRailIndex,
   isRailPlannerItem,
   isRailSnapped,
   railStartAt,
+  signalSlotsNear,
   plannerTargetsElevated,
   previewRail,
   railsideSlot,
@@ -904,6 +906,24 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
     return visualLookup.get(name);
   }
 
+  function footprintOfEntity(e: PlacedEntity): [number, number] {
+    const visual = visualFor(e.name);
+    return visual ? effectiveFootprint(visual, e.direction) : FALLBACK_FOOTPRINT;
+  }
+
+  /** Entities a box-drag selection touches: the spatial index's footprint
+   *  boxes narrowed to what each entity really covers, so dragging beside a
+   *  curve doesn't pick it up. */
+  function entitiesInBox(left: number, top: number, right: number, bottom: number): Set<number> {
+    const box = { left, top, right, bottom };
+    const out = new Set<number>();
+    for (const id of spatialIndex.queryRect(left, top, right, bottom)) {
+      const e = entityById.get(id);
+      if (e && boxHitsEntity(box, e, footprintOfEntity)) out.add(id);
+    }
+    return out;
+  }
+
   /** Factorio snaps placement so the footprint's edges land on the tile
    *  grid: a footprint dimension's parity determines whether its CENTER
    *  coordinate is an integer or a half-integer. An odd-width footprint
@@ -1073,6 +1093,12 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
         const right = snapped.x + gfw / 2 - epsilon;
         const bottom = snapped.y + gfh / 2 - epsilon;
         const overlapping = spatialIndex.queryRect(left, top, right, bottom);
+        // The spatial index is only the broad phase: track blocks just the
+        // tiles it runs over, not its whole square footprint.
+        const blockers = [...overlapping].filter((id) => {
+          const other = entityById.get(id);
+          return other !== undefined && entitiesCollide(ghost!, other, footprintOfEntity);
+        });
         // A ghost exactly on top of a same-named entity at its own tile is
         // still a valid placement — it rebuilds that entity in place with
         // the ghost's own facing/quality (see index.ts's placeEntity), the
@@ -1083,10 +1109,10 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
         // rebuild.
         ghostCanPlace = isRailSnapped(mode.entityName)
           ? railsideOk(slot, overlapping)
-          : overlapping.size === 0 ||
-          (overlapping.size === 1 &&
+          : blockers.length === 0 ||
+          (blockers.length === 1 &&
             (() => {
-              const only = entityById.get([...overlapping][0]!);
+              const only = entityById.get(blockers[0]!);
               return only?.name === mode.entityName && only.x === snapped.x && only.y === snapped.y;
             })());
       }
@@ -1151,7 +1177,11 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
           pg.x + gfw / 2 - epsilon,
           pg.y + gfh / 2 - epsilon,
         );
-        return overlapping.size === 0;
+        for (const id of overlapping) {
+          const other = entityById.get(id);
+          if (other && entitiesCollide(pg, other, footprintOfEntity)) return false;
+        }
+        return true;
       });
     }
 
@@ -1405,7 +1435,7 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
       // hit-test if the drag ended this instant.
       const corner = getHoverHighlightSprite();
       if (corner) {
-        const inBox = spatialIndex.queryRect(left, top, right, bottom);
+        const inBox = entitiesInBox(left, top, right, bottom);
         for (const num of inBox) {
           const entity = entityById.get(num);
           const visual = entity && visualFor(entity.name);
@@ -1429,6 +1459,13 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
     phases.overlays = performance.now() - tOverlays;
 
     const tGhostDraw = performance.now();
+    // A held signal shows a handle at every free slot along nearby track,
+    // under the ghost, so the snapped ghost sits on top of its own handle.
+    if (mode.kind === "place" && ghostWorldPos && (mode.entityName === "rail-signal" || mode.entityName === "rail-chain-signal")) {
+      for (const slot of signalSlotsNear(currentRailIndex(), ghostWorldPos.x, ghostWorldPos.y)) {
+        drawSignalHandle(ctx, slot.x, slot.y, slot.direction);
+      }
+    }
     if (ghost) {
       const visual = visualFor(ghost.name);
       const ghostTint = ghostCanPlace ? GHOST_VALID_TINT : GHOST_INVALID_TINT;
@@ -2376,7 +2413,7 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
           const right = Math.max(boxDownWorldPos.x, boxDragCurrentWorldPos.x);
           const top = Math.min(boxDownWorldPos.y, boxDragCurrentWorldPos.y);
           const bottom = Math.max(boxDownWorldPos.y, boxDragCurrentWorldPos.y);
-          hitSet = spatialIndex.queryRect(left, top, right, bottom);
+          hitSet = entitiesInBox(left, top, right, bottom);
         } else if (boxDownWorldPos) {
           const hit = spatialIndex.hitTest(boxDownWorldPos.x, boxDownWorldPos.y);
           if (hit !== undefined) hitSet = new Set([hit]);

@@ -38,33 +38,19 @@ test("straight ahead plans straight rails only", () => {
   assert.ok(connected(north, pieces));
 });
 
-test("a 90° turn is built the way the game builds it", () => {
-  // The game's own full curve, south then east: a curve never follows a
-  // curve directly, there's always a straight piece of that angle between.
-  const start: RailEnd = { x: 221, y: 256, dir: 8, elevated: false };
-  const pieces = planRail({ start, target: { x: 244, y: 277 }, targetElevated: false, blocked: open });
+test("a 90° turn takes the tightest corner: curves back to back", () => {
+  // The minimal corner: curve A, B, B, A with nothing between.
+  const start: RailEnd = { x: 303, y: 276, dir: 8, elevated: false };
+  const pieces = planRail({ start, target: { x: 316, y: 289 }, targetElevated: false, blocked: open });
   assert.deepEqual(
     pieces.map((p) => [p.name, p.x, p.y, p.direction]),
     [
-      ["curved-rail-a", 221, 258, 8],
-      ["half-diagonal-rail", 223, 263, 0],
-      ["curved-rail-b", 225, 267, 8],
-      ["straight-rail", 228, 270, 6],
-      ["curved-rail-b", 231, 273, 14],
-      ["half-diagonal-rail", 235, 275, 6],
-      ["curved-rail-a", 240, 277, 14],
-      ["straight-rail", 243, 277, 4],
+      ["curved-rail-a", 303, 278, 8],
+      ["curved-rail-b", 305, 283, 8],
+      ["curved-rail-b", 309, 287, 14],
+      ["curved-rail-a", 314, 289, 14],
     ],
   );
-});
-
-test("two curves never touch", () => {
-  for (const target of [{ x: 30, y: -20 }, { x: -25, y: -25 }, { x: 15, y: -60 }, { x: 40, y: 10 }]) {
-    const names = planRail({ start: north, target, targetElevated: false, blocked: open }).map((p) => p.name);
-    for (let i = 1; i < names.length; i++) {
-      assert.ok(!(names[i - 1]!.includes("curved") && names[i]!.includes("curved")), names.join(" "));
-    }
-  }
 });
 
 test("a shallow slope uses half-diagonal track", () => {
