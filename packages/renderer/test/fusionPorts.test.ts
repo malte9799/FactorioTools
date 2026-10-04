@@ -140,4 +140,41 @@ test("a generator's intake facing another generator's fluoroketone output stays 
   assert.equal(sheets(collect(lower, [upper])).filter((s) => s === "pipe-cover-north.png").length, 2);
 });
 
+/* ---------- mining drills: optional ports hide until plumbed ---------- */
+
+const covers = (commands: DrawCommand[]) => sheets(commands).filter((s) => /^pipe-cover-(north|east|south|west)\.png$/.test(s));
+
+test("a lone mining drill shows no pipe covers", () => {
+  assert.deepEqual(covers(collect(entity("electric-mining-drill", 0, 0))), []);
+  assert.deepEqual(covers(collect(entity("big-mining-drill", 0.5, 0.5))), []);
+});
+
+test("drills side by side with no pipe anywhere stay closed", () => {
+  const a = entity("electric-mining-drill", 0, 0);
+  const b = entity("electric-mining-drill", 3, 0);
+  assert.deepEqual(covers(collect(a, [b])), []);
+});
+
+test("a pipe on a drill's port opens the drill, capping its other ports", () => {
+  // East port at local (1, 0) facing east; the pipe sits one tile out.
+  const drill = entity("electric-mining-drill", 0, 0);
+  const pipe = entity("pipe", 2, 0);
+  assert.deepEqual(covers(collect(drill, [pipe])).sort(), ["pipe-cover-south.png", "pipe-cover-west.png"]);
+});
+
+test("a pipe beside a drill but off its port leaves it closed", () => {
+  const drill = entity("electric-mining-drill", 0, 0);
+  assert.deepEqual(covers(collect(drill, [entity("pipe", 2, 1)])), []);
+});
+
+test("a fed drill opens the whole row chained off it", () => {
+  const pipe = entity("pipe", -2, 0);
+  const a = entity("electric-mining-drill", 0, 0);
+  const b = entity("electric-mining-drill", 3, 0);
+  const c = entity("electric-mining-drill", 6, 0);
+  assert.deepEqual(covers(collect(a, [pipe, b, c])), ["pipe-cover-south.png"]);
+  assert.deepEqual(covers(collect(b, [pipe, a, c])), ["pipe-cover-south.png"]);
+  assert.deepEqual(covers(collect(c, [pipe, a, b])).sort(), ["pipe-cover-east.png", "pipe-cover-south.png"]);
+});
+
 console.log(`\n${passed} passed`);
