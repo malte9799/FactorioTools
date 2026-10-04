@@ -47,7 +47,9 @@ Plus a live map seed viewer.
   </tr>
   <tr>
     <td width="50%">
-      <img src="docs/screenshots/simulation.webp" alt="Simulation pane with inserter capacity research and belt stacking controls">
+      <img src="docs/screenshots/belt-sim.gif" alt="Science packs riding a belt through a splitter, down an underground and round a curve, where an inserter lifts them onto a belt that side-loads back into the main line" width="100%">
+      <br><br>
+      <img src="docs/screenshots/circuit-display.gif" alt="A combinator counting up on a red wire while a display panel shows the value as a battery bar that fills and changes colour from red to green" width="100%">
     </td>
     <td width="50%" valign="top">
       <h3>⏱️ Simulates belts tick by tick</h3>
@@ -60,8 +62,6 @@ Plus a live map seed viewer.
       combinators on separate red and green networks — Each, Anything and
       Everything included — switch belts, inserters and machines on and off,
       read their contents, and light lamps and display panels.
-      <br><br>
-      <img src="docs/screenshots/circuit-display.gif" alt="A combinator counting up on a red wire while a display panel shows the value as a battery bar that fills and changes colour from red to green" width="100%">
     </td>
   </tr>
   <tr>
