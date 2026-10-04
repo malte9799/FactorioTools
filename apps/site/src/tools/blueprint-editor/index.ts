@@ -977,6 +977,9 @@ export function mountBlueprintEditor(root: HTMLElement): () => void {
     currentBookTree = null;
     librarySidebar?.refresh();
     blueprints = [];
+    // No longer the library entry that was open: a plain save must not
+    // write the grid over it.
+    setOpenEntry(undefined);
     picker.replaceChildren();
     picker.hidden = true;
     input.value = "";
@@ -2754,11 +2757,13 @@ export function mountBlueprintEditor(root: HTMLElement): () => void {
       void saveCurrentAs();
       return;
     }
-    const bpString = currentBpString();
-    if (!bpString) {
+    // An open entry emptied out is an edit like any other, so it saves as
+    // an empty blueprint; one that was empty all along has nothing to save.
+    if (!entities.length && !hasUnsavedChanges) {
       setStatus("Nothing to save yet.", "error");
       return;
     }
+    const bpString = encodeBlueprintString({ blueprint: toBlueprint(entities, currentTemplate(), wires) });
     try {
       replaceContentsInLibrary(entry.id, bpString);
     } catch (err) {
@@ -2766,6 +2771,15 @@ export function mountBlueprintEditor(root: HTMLElement): () => void {
       return;
     }
     hasUnsavedChanges = false;
+    // The autosave still holds what was there before the canvas was
+    // emptied; a reload must not bring that back as this entry.
+    if (!entities.length) {
+      try {
+        localStorage.removeItem(AUTOSAVE_KEY);
+      } catch {
+        /* storage unavailable — not worth surfacing here */
+      }
+    }
     librarySidebar.refresh();
     setStatus(`Saved “${entry.label}”.`, "info", true);
   }
