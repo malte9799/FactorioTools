@@ -104,7 +104,17 @@ export function computeRailBlocks(rails: RailPiece[], signalled: (x: number, y: 
     }
   });
   for (const group of byJoint.values()) {
-    if (jointCut(group[0]!.end)) continue;
+    if (jointCut(group[0]!.end)) {
+      // A signal divides the two sides of a joint, never one side: pieces
+      // leaving it the same way are a switch, overlapping from the joint
+      // on, and a train in one occupies the other.
+      for (let i = 0; i < group.length; i++) {
+        for (let j = i + 1; j < group.length; j++) {
+          if (group[i]!.end.dir === group[j]!.end.dir) union(group[i]!.index, group[j]!.index);
+        }
+      }
+      continue;
+    }
     for (let i = 1; i < group.length; i++) union(group[0]!.index, group[i]!.index);
   }
   // Crossing track: pieces sharing a tile whose centrelines actually cross.
@@ -135,6 +145,7 @@ export function computeRailBlocks(rails: RailPiece[], signalled: (x: number, y: 
   });
 
   const markers: RailBlockMarker[] = [];
+  const markerAt = new Set<string>();
   const neighbours: Set<number>[] = Array.from({ length: blockOf.size }, () => new Set());
   for (const group of byJoint.values()) {
     if (!jointCut(group[0]!.end)) continue;
@@ -144,8 +155,16 @@ export function computeRailBlocks(rails: RailPiece[], signalled: (x: number, y: 
       // this end lets trains leave through it, one facing out lets them in.
       const exit = signalled(end.x, end.y, (end.dir + 8) % 16);
       const entry = signalled(end.x, end.y, end.dir);
-      markers.push({ x: end.x, y: end.y, dir: end.dir, block, kind: exit && entry ? "diamond" : exit ? "exit" : "entry" });
-      for (const other of group) if (other.index !== index) neighbours[block]!.add(pieces[other.index]!.block);
+      // Branches of a switch share their block and so their marker.
+      const key = `${end.x},${end.y},${end.dir},${block}`;
+      if (!markerAt.has(key)) {
+        markerAt.add(key);
+        markers.push({ x: end.x, y: end.y, dir: end.dir, block, kind: exit && entry ? "diamond" : exit ? "exit" : "entry" });
+      }
+      for (const other of group) {
+        const otherBlock = pieces[other.index]!.block;
+        if (otherBlock !== block) neighbours[block]!.add(otherBlock);
+      }
     }
   }
 

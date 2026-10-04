@@ -75,4 +75,20 @@ test("a curve leaving a switch past a signal is its own block, though it shares 
   assert.notEqual(blocks.colors[curve], blocks.colors[main]);
 });
 
+test("a switch just past a signal is one block, both branches", () => {
+  // Track runs north into the joint (1,0), signalled there; past it a
+  // straight and a curve both leave the joint northward.
+  const rails: RailPiece[] = [
+    { name: "straight-rail", x: 1, y: 1, direction: 0 },
+    { name: "straight-rail", x: 1, y: -1, direction: 0 },
+    { name: "curved-rail-a", x: 1, y: -2, direction: 0 },
+  ];
+  const blocks = computeRailBlocks(rails, (x, y, dir) => x === 1 && y === 0 && dir === 8);
+  const [before, straight, curve] = blocks.pieces.map((p) => p.block);
+  assert.equal(straight, curve);
+  assert.notEqual(before, straight);
+  // One marker per side of the joint, not one per branch.
+  assert.equal(blocks.markers.length, 2);
+});
+
 console.log(`${passed} passed`);
