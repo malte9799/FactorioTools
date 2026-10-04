@@ -1,4 +1,4 @@
-import { ROTATION_TEST_BLUEPRINT, DEBUG_BLUEPRINT, RED_SCIENCE_240_BLUEPRINT, GREEN_SCIENCE_240_BLUEPRINT } from "@factoriotools/engine";
+import { ROTATION_TEST_BLUEPRINT, loadDebugBlueprint, RED_SCIENCE_240_BLUEPRINT, GREEN_SCIENCE_240_BLUEPRINT } from "@factoriotools/engine";
 import type { BlueprintTreeNode } from "@factoriotools/engine";
 import {
   listSaved,
@@ -75,7 +75,12 @@ interface BuiltinEntry {
   /** Item icon shown in front of the label — built-ins have no rich-text
    *  name of their own to take one from. */
   icon: string;
-  bpString: string;
+  /** The string itself, or a loader for one too big for the main bundle. */
+  bpString: string | (() => Promise<string>);
+}
+
+function builtinString(entry: BuiltinEntry): Promise<string> {
+  return typeof entry.bpString === "string" ? Promise.resolve(entry.bpString) : entry.bpString();
 }
 
 /** Debug fixtures, listed loose at the top of the panel the way the game's
@@ -84,7 +89,7 @@ interface BuiltinEntry {
  *  calculator should reproduce. */
 const BUILTINS: BuiltinEntry[] = [
   { id: "builtin-rotation-test", label: "Rotation test", icon: "inserter", bpString: ROTATION_TEST_BLUEPRINT },
-  { id: "builtin-debug-lab", label: "Debug lab", icon: "lab", bpString: DEBUG_BLUEPRINT },
+  { id: "builtin-debug-lab", label: "Debug lab", icon: "lab", bpString: loadDebugBlueprint },
   { id: "builtin-red-science-240", label: "Red science 240/s", icon: "assembling-machine-1", bpString: RED_SCIENCE_240_BLUEPRINT },
   { id: "builtin-green-science-240", label: "Green science 240/s", icon: "assembling-machine-2", bpString: GREEN_SCIENCE_240_BLUEPRINT },
 ];
@@ -598,12 +603,17 @@ export function buildLibrarySidebar(container: HTMLElement, callbacks: LibraryCa
           {
             key,
             iconName: entry.icon,
-            onClick: () => callbacks.onLoad(entry.bpString),
+            onClick: () => {
+              builtinString(entry).then(
+                (bpString) => callbacks.onLoad(bpString),
+                () => callbacks.notify(`Couldn't load ${entry.label}.`, "error"),
+              );
+            },
             // A built-in can't be deleted, but duplicating one is how it
             // becomes an editable library entry.
-            onDuplicate: () => {
+            onDuplicate: async () => {
               try {
-                saveToLibrary(entry.bpString, `${entry.label} copy`);
+                saveToLibrary(await builtinString(entry), `${entry.label} copy`);
               } catch (err) {
                 callbacks.notify(saveFailureMessage(err, "Couldn't duplicate that blueprint."), "error");
               }

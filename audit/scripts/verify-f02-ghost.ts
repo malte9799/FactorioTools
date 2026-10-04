@@ -3,7 +3,8 @@
  *  -Richtung dieselben Klassifikationen liefern wie ein frischer Neuaufbau,
  *  und zählt, wie viele Neuaufbauten der Cache einspart. */
 import { readFileSync } from "node:fs";
-import { decodeBlueprintString, collectBlueprints, normaliseEntities, DEBUG_BLUEPRINT } from "../../packages/engine/src/index.js";
+import { decodeBlueprintString, collectBlueprints, normaliseEntities } from "../../packages/engine/src/index.js";
+import { DEBUG_BLUEPRINT } from "../../packages/engine/src/data/debug-lab.js";
 import type { GameData, RenderCatalog, PlacedEntity } from "../../packages/engine/src/index.js";
 import { buildVisualLookup, makeConnectorPredicates, activeFluidConnections } from "../../packages/renderer/src/entityLookup.js";
 import { buildGrid } from "../../packages/renderer/src/neighbours/grid.js";
