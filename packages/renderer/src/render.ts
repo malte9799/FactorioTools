@@ -811,6 +811,8 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
   let railPreviewKey = "";
   let railPreviewCache: RailPreview | null = null;
   let railDragMoved = false;
+  /** The camera panned (WASD) during the held press: the gesture is void. */
+  let railPressPanned = false;
   // The current press started on open ground: a plain click there lays just
   // the held piece and leaves no plan behind; only a drag plans on from it.
   let railPressOnGround = false;
@@ -857,6 +859,7 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
   function railPress(): void {
     if (mode.kind !== "place" || !ghostWorldPos) return;
     railDragMoved = false;
+    railPressPanned = false;
     railPressOnGround = false;
     // With a plan already going, the press only starts the gesture: the
     // release lays the preview where the cursor ends up, so a drag never
@@ -1644,8 +1647,10 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
     if (mode.kind === "place") {
       ghostWorldPos = worldAtScreenPoint(lastPointer.x, lastPointer.y);
       invalidate();
+      // A rail press is locked to where the camera was: panning (WASD)
+      // while it's held voids it, so nothing is laid on release.
       if (isPlacingDrag) {
-        if (isRailPlannerItem(mode.entityName)) railDragMoved = true;
+        if (isRailPlannerItem(mode.entityName)) railPressPanned = true;
         else placeAtGhost();
       }
     }
@@ -2516,8 +2521,8 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
     if (isPlacingDrag && mode.kind === "place" && isRailPlannerItem(mode.entityName)) {
       // A press-drag-release lays the dragged track in one go, and a click
       // with a plan going lays that plan. A cancelled gesture (the browser
-      // took the pointer away) lays nothing.
-      const cancelled = e.type === "pointercancel";
+      // took the pointer away, or the camera panned mid-press) lays nothing.
+      const cancelled = e.type === "pointercancel" || railPressPanned;
       const hasPlan = (currentRailPreview()?.pieces.length ?? 0) > 0;
       const laysPlan = !cancelled && hasPlan && (railDragMoved || railPressAnchored);
       if (railPendingPiece && !cancelled) {
@@ -2538,6 +2543,7 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
     if (isPlacingDrag && canvas.hasPointerCapture(e.pointerId)) canvas.releasePointerCapture(e.pointerId);
     isPlacingDrag = false;
     railDragMoved = false;
+    railPressPanned = false;
     if (!isPanning) return;
     isPanning = false;
     // The deferred idle-mode click-vs-drag decision (see onPointerDown):
