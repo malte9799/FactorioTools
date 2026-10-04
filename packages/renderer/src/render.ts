@@ -2234,6 +2234,10 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
       if (!slot || !railsideOk(slot)) return;
       const key = `${slot.x},${slot.y}`;
       if (placedThisGesture.has(key)) return;
+      // One train stop per click: once one is down, the ghost snaps to the
+      // free slot next to it, and a drag (or a jittery click) would drop a
+      // second stop there.
+      if (mode.entityName === "train-stop" && placedThisGesture.size > 0) return;
       placedThisGesture.add(key);
       placeCallback?.(slot.x, slot.y, slot.direction);
       return;
