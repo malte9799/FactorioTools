@@ -8,11 +8,11 @@ import { buildGrid, NeighbourGrid, step, toCardinal } from "./neighbours/grid.js
 import { buildFluidNetwork, FluidNetwork } from "./neighbours/fluid.js";
 import { buildHeatNetwork, HeatNetwork } from "./neighbours/heat.js";
 import type { PlatformBox } from "./neighbours/platform.js";
-import { buildWireNetwork, resolveWires, terminalFor, type ResolvedWire, type WireNetwork } from "./neighbours/wires.js";
+import { buildWireNetwork, resolveWires, terminalFor, terminalSideAt, type ResolvedWire, type WireNetwork } from "./neighbours/wires.js";
 import { drawSupplyAreas, drawWires, type SupplyArea } from "./draw/wireDraw.js";
 import { collectEntity, collectInserterPlatform, type CollectContext } from "./draw/collect.js";
-import { paint, paintPlain, drawOutline, drawHoverHighlight, drawRailStartArrow, drawBlockedCross, drawSignalHandle, drawUndergroundLine, type PaintTally } from "./draw/paint.js";
-import { getHoverHighlightSprite, getUndergroundLinesSprite } from "./hoverHighlightSprite.js";
+import { paint, paintPlain, drawOutline, drawDirectionArrows, drawHoverHighlight, drawInserterIndication, drawRailStartArrow, drawBlockedCross, drawSignalHandle, drawUndergroundLine, type PaintTally } from "./draw/paint.js";
+import { getHoverHighlightSprite, getIndicationSprites, getUndergroundLinesSprite } from "./hoverHighlightSprite.js";
 import { compareDrawCommands, type DrawCommand } from "./draw/commands.js";
 import { planBake, type BakePlan } from "./draw/bake.js";
 import { drawInserter } from "./sprites/inserter.js";
@@ -544,6 +544,10 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
    *  hoverCallback (an app-level subscriber, which may not even be set) so
    *  the hover-highlight overlay always has something to draw from. */
   let hoveredEntityNumber: number | undefined;
+  /** Which half of the hovered entity the cursor is over — only ever 2 on
+   *  the output half of a combinator. A held wire attaches to this half, so
+   *  wire mode highlights just it. */
+  let hoveredSide: 1 | 2 = 1;
   let altMode = false;
   let altModeLayers: AltModeLayers = ALL_ALT_MODE_LAYERS;
   let animationFrame = 0;
@@ -924,6 +928,15 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
       if (e && boxHitsEntity(box, e, footprintOfEntity)) out.add(id);
     }
     return out;
+  }
+
+  /** Which terminal of entity `entityNumber` a held wire would attach to
+   *  at a world point — the same question the app's wire click asks, so the
+   *  half that is highlighted is the half that gets wired. */
+  function sideAt(entityNumber: number, world: { x: number; y: number }): 1 | 2 {
+    const entity = entityById.get(entityNumber);
+    if (!entity || mode.kind !== "wire" || mode.color === "copper") return 1;
+    return terminalSideAt(entity, visualFor(entity.name), entity.direction, mode.color, world);
   }
 
   /** Factorio snaps placement so the footprint's edges land on the tile
@@ -1403,7 +1416,24 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
       const visual = hovered && visualFor(hovered.name);
       if (hovered && visual) {
         drawUndergroundPair(hovered, corner);
-        highlightEntity(hovered, visual, corner);
+        if (mode.kind === "wire" && visual.outputWireConnections) {
+          // A held wire attaches to one half of a combinator — bracket just
+          // the half under the cursor (input behind, output ahead).
+          const { dx, dy } = step(toCardinal(hovered.direction));
+          const sign = hoveredSide === 2 ? 0.5 : -0.5;
+          drawHoverHighlight(ctx, corner, hovered.x + dx * sign, hovered.y + dy * sign, 1, 1);
+        } else {
+          highlightEntity(hovered, visual, corner);
+        }
+        // A combinator shows which way signals flow through it.
+        const arrows = visual.outputWireConnections && getIndicationSprites();
+        if (arrows) drawDirectionArrows(ctx, arrows.arrow, hovered.x, hovered.y, toCardinal(hovered.direction));
+        // An inserter also shows where it picks up (bar) and drops (arrow).
+        const indication = visual.inserterGraphics && getIndicationSprites();
+        if (indication) {
+          const reach = hovered.name === "long-handed-inserter" ? 2 : 1;
+          drawInserterIndication(ctx, indication, hovered.x, hovered.y, toCardinal(hovered.direction), reach);
+        }
       }
     }
     // The ghost itself gets no yellow brackets — only its would-be pair.
@@ -2502,8 +2532,10 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
   const onHoverMove = (e: PointerEvent) => {
     const world = worldAtPointer(e);
     const hit = spatialIndex.hitTest(world.x, world.y);
-    if (hit !== hoveredEntityNumber) {
+    const side = hit === undefined ? 1 : sideAt(hit, world);
+    if (hit !== hoveredEntityNumber || side !== hoveredSide) {
       hoveredEntityNumber = hit;
+      hoveredSide = side;
       invalidate(); // the highlighted corners moved (or appeared/vanished)
     }
     hoverCallback?.(hit, e);

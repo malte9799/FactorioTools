@@ -253,7 +253,12 @@ export function canWire(visual: ResolvedVisual | undefined, color: WireColor): b
 
 /** Adds the wire if it is absent, removes it if it is present, and reports
  *  which happened. One gesture toggles, so clicking the same pair twice is a
- *  no-op overall rather than stacking duplicate wires. */
+ *  no-op overall rather than stacking duplicate wires.
+ *
+ *  Side 1 is what a pole-to-pole copper wire uses, and a plain (non-
+ *  combinator) circuit terminal too; side 2 is a combinator's output. The
+ *  same two entities joined on different sides are different wires, and a
+ *  combinator's own input may be wired to its own output. */
 export function toggleWire(
   wires: WireLink[],
   color: WireColor,

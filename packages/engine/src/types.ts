@@ -229,7 +229,9 @@ export type GraphicsLayer = {
    *  facing's own entry is missing. */
   | { sprites: Partial<Record<Dir4Name, Sprite>>; per: "dir4" }
   | { sprites: Partial<Record<Dir8Name, Sprite>>; per: "dir8" }
-  /** Keyed by a connector's variant name (pipe/wall connection shapes). */
+  /** Keyed by a connector's variant name (pipe/wall connection shapes, or
+   *  a combinator's display symbol as `<symbol>-<facing>`, e.g.
+   *  `plus-north`). */
   | { sprites: Record<string, Sprite>; per: "connection" }
   /** One cover sprite per cardinal facing, drawn once per unconnected
    *  fluid-box connection point rather than baked into a single per-entity
@@ -291,7 +293,7 @@ export interface EntityGraphics {
 
 /** Names a neighbour-classification rule; the rules live in
  *  packages/renderer/src/neighbours. */
-export type ConnectorKind = "pipe" | "heat-pipe" | "wall" | "belt" | "platform";
+export type ConnectorKind = "pipe" | "heat-pipe" | "wall" | "belt" | "platform" | "combinator";
 
 
 export interface MachineProto {
@@ -299,6 +301,10 @@ export interface MachineProto {
   kind: MachineKind;
   /** crafting_speed, researching_speed or mining_speed depending on kind. */
   speed: number;
+  /** Labs only: the share of a science pack one research unit uses up
+   *  (science_pack_drain_rate_percent / 100). Absent means a whole pack; a
+   *  biolab's is 0.5. */
+  packDrain?: number;
   categories: string[];
   moduleSlots: number;
   /** Effects the machine will accept. Undefined means all. */

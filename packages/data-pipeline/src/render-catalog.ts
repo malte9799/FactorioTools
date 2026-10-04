@@ -7,6 +7,7 @@ import type { LocaleTables } from "./locale.js";
 import {
   animationListGraphics,
   beltAnimationAxis,
+  combinatorDisplayLayer,
   directionColumnGraphics,
   heatConnectionPatchLayers,
   heatConnectionsOf,
@@ -763,7 +764,27 @@ function platformGraphics(connections: any): GraphicsLayer[] | undefined {
   }));
 }
 
+/** The largest y-shift among an entity's body (Object-layer) sprites — the
+ *  sort position anything drawn on top of the body has to clear. */
+export function bodyShiftY(graphics: EntityGraphics | undefined): number {
+  let max = 0;
+  for (const layer of graphics?.layers ?? []) {
+    if (layer.layer !== Layer.Object || !("sprites" in layer)) continue;
+    const sprites: Sprite[] = "per" in layer ? (Object.values(layer.sprites) as Sprite[]) : [layer.sprites];
+    for (const sprite of sprites) max = Math.max(max, sprite.shift?.[1] ?? 0);
+  }
+  return max;
+}
+
+/** Prototype tables whose entities show their operation on a display. */
+const COMBINATOR_TABLES = new Set(["arithmetic-combinator", "decider-combinator", "selector-combinator"]);
+
 const ROTATES_FOOTPRINT = new Set([
+  // 1x2 combinators: without the swap an east/west-facing one snapped (and
+  // hit-tested) as if it still stood upright, half a tile off the grid.
+  "arithmetic-combinator",
+  "decider-combinator",
+  "selector-combinator",
   "splitter",
   "fast-splitter",
   "express-splitter",
@@ -1058,6 +1079,10 @@ export function buildRenderCatalog(raw: Raw, locale: LocaleTables, version: stri
     const extraLayers = [...coverLayers, ...heatPatchLayers, ...heatCoverLayers];
     if (extraLayers.length > 0) {
       graphics = { ...(graphics ?? { layers: [] }), layers: [...(graphics?.layers ?? []), ...extraLayers] };
+    }
+    const display = COMBINATOR_TABLES.has(proto.type) ? combinatorDisplayLayer(proto, bodyShiftY(graphics)) : undefined;
+    if (display && graphics) {
+      graphics = { ...graphics, layers: [...graphics.layers, display], connector: "combinator" };
     }
     entities[proto.name] = {
       name: proto.name,

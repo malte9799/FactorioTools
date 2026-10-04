@@ -51,7 +51,20 @@ export interface BeltCap {
   row: number;
   dx: number;
   dy: number;
+  /** Tiles to pull the piece back toward the belt it closes off, on top of
+   *  the whole-tile dx/dy — see START_CAP_INSET. */
+  inset: number;
 }
+
+/** A North/South start cap's art begins on the exact pixel row the body's
+ *  art stops on (measured off the sheet: body 30..95 / cap 96.. for North,
+ *  cap ..31 / body 32.. for South), where every other cap overlaps its body
+ *  by 2px or more. Flush edges open a 1px seam wherever the two frames
+ *  land on a fractional pixel (each one's edge row fades out on its own
+ *  and the two half-faded rows don't add back up to opaque) — most visible
+ *  in a ghost, which is baked with smoothing on. Pulling the cap 2 sheet
+ *  pixels back gives it the same overlap the end caps already have. */
+const START_CAP_INSET = 2 / 64;
 
 export interface BeltCell {
   /** Row for the belt body — straight or, unless forceStraight, a curve. */
@@ -208,10 +221,11 @@ export function classifyBeltCell(
   // other, so neither cap was suppressed.
   const caps: BeltCap[] = [];
   if (!occupiesConnection(x, y, inputSide, grid, isBeltLike)) {
-    caps.push({ kind: "start", row: START_CAP[facing], ...offsetTowards(behind) });
+    const vertical = facing === Dir.North || facing === Dir.South;
+    caps.push({ kind: "start", row: START_CAP[facing], ...offsetTowards(behind), inset: vertical ? START_CAP_INSET : 0 });
   }
   if (!occupiesConnection(x, y, facing, grid, isBeltLike)) {
-    caps.push({ kind: "end", row: END_CAP[facing], ...offsetTowards(facing) });
+    caps.push({ kind: "end", row: END_CAP[facing], ...offsetTowards(facing), inset: 0 });
   }
 
   return { row, caps };

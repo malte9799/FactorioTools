@@ -1,92 +1,49 @@
 import type { InserterGraphics, PlacedEntity } from "@factoriotools/engine";
 import type { SpriteAtlas, SpriteSurface } from "../spriteAtlas.js";
-import { toCardinal } from "../neighbours/grid.js";
+import { step, toCardinal, type Cardinal } from "../neighbours/grid.js";
 import { PIXELS_PER_TILE } from "../draw/commands.js";
 import { drawOutline, TINT_ALPHA } from "../draw/paint.js";
 
 const tiles = (pixels: number, scale = 1) => (pixels * scale) / PIXELS_PER_TILE;
 
-/** Per-direction placement for one of the two arm segments — mirrors the
- *  reference renderer's (teoxoy/factorio-blueprint-editor spriteDataBuilder
- *  draw_inserter) hardcoded transform table, itself reverse-engineered from
- *  the real game: Factorio draws the arm as two independently rotated/
- *  squished static sprites, not a computed IK solve or an animated sheet.
- *  `rotAngle` in degrees, `squishY` divides the sprite's on-screen height
- *  (its length, since these images are tall and thin), `x`/`y` in tiles from
- *  the entity's center — both sprites anchor at their own bottom-center, so
- *  the arm segment's root always stays at the pivot and only its far end
- *  (which is what "reach" means here) moves. */
-interface ArmSegment {
-  rotAngle: number;
-  squishY: number;
-  x: number;
-  y: number;
-}
-
-const NO_OFFSET: ArmSegment = { rotAngle: 0, squishY: 1, x: 0, y: 0 };
-
-/** Standard (short) inserters: 45° elbow bend on the two diagonals, and a
- *  purely-foreshortened (no in-plane angle) bend on north/south. */
-const ARM_ANGLE = 45;
-const STANDARD_BY_DIR: Record<number, { hand: ArmSegment; arm: ArmSegment }> = {
-  12: { // west
-    hand: { rotAngle: -ARM_ANGLE - 90, squishY: 2.5, x: -0.325, y: -0.325 },
-    arm: { rotAngle: -ARM_ANGLE, squishY: 1.9, x: 0.03, y: 0.03 },
-  },
-  4: { // east
-    hand: { rotAngle: ARM_ANGLE + 90, squishY: 2.5, x: 0.325, y: -0.325 },
-    arm: { rotAngle: ARM_ANGLE, squishY: 1.9, x: -0.03, y: 0.03 },
-  },
-  8: { // south
-    hand: { rotAngle: 180, squishY: 1.75, x: 0, y: 0.03 },
-    arm: { rotAngle: 180, squishY: 7, x: 0, y: -0.03 },
-  },
-  0: { // north
-    hand: { ...NO_OFFSET, squishY: 3, y: -0.5 },
-    arm: { ...NO_OFFSET, squishY: 1.4, y: 0.05 },
-  },
-};
+/** The arm is two static sprites — handBase from the pivot to the elbow,
+ *  handOpen from the elbow to the hand — each stretched and rotated to span
+ *  its own two end points. Posed the way a powered, idle inserter rests in
+ *  the game: hand hovering over the pickup spot a full reach out, elbow
+ *  raised over the midpoint. (A freshly placed, still unpowered one holds
+ *  its hand in closer — the reference editor's pose, and what this drew
+ *  before.) Numbers measured off an in-game screenshot of all four facings,
+ *  in tiles, for the default hand_size. */
+const REACH = 1;
+/** How far up the screen the raised elbow sits from the midpoint. */
+const ELBOW_LIFT = 0.26;
+/** The hand hovers slightly above the ground it reaches over. */
+const HAND_LIFT = 0.03;
 
 /** Factorio's own default `hand_size` (confirmed via InserterPrototype docs:
  *  "Used to determine how long the arm of the inserter is when drawing it.
  *  ... Default value: 0.75") — every vanilla inserter except long-handed
- *  leaves this field unset, so this is what STANDARD_BY_DIR's hand-tuned
- *  numbers are implicitly calibrated against. */
+ *  leaves this field unset. */
 const DEFAULT_HAND_SIZE = 0.75;
 
-/** Scales one direction's {hand, arm} segment pair by `ratio` — dividing
- *  squishY (so the sprite renders `ratio` times TALLER, i.e. reaches
- *  further) and multiplying the pivot offset by the same ratio. Angles are
- *  left untouched: hand_size lengthens the arm, it doesn't change the bend,
- *  and STANDARD_BY_DIR's angles are already visually verified. */
-function scaleSegment(seg: ArmSegment, ratio: number): ArmSegment {
-  return { rotAngle: seg.rotAngle, squishY: seg.squishY / ratio, x: seg.x * ratio, y: seg.y * ratio };
-}
-
 /** Long-handed-inserter is the one vanilla inserter with a non-default
- *  hand_size (1.5, i.e. exactly 2× DEFAULT_HAND_SIZE) — confirmed by its
- *  pickup/insert positions also being ~2× a regular inserter's (±2/2.2
- *  tiles vs ±1/1.2). A first attempt at copying the reference renderer's own
- *  hardcoded long-handed numbers looked plausible in isolation but its
- *  offsets don't actually scale to the real ~2-tile reach (confirmed by
- *  placing chests at the true pickup/insert tiles and see the hand fall
- *  short) — deriving the table from the verified STANDARD_BY_DIR by the
- *  real hand_size ratio instead guarantees the reach is correct by
- *  construction, and generalises to any modded inserter's hand_size too
- *  (see buildByDirTable below). */
-function scaleByDirTable(
-  base: Record<number, { hand: ArmSegment; arm: ArmSegment }>,
-  ratio: number,
-): Record<number, { hand: ArmSegment; arm: ArmSegment }> {
-  const scaled: Record<number, { hand: ArmSegment; arm: ArmSegment }> = {};
-  for (const [dir, segs] of Object.entries(base)) {
-    scaled[Number(dir)] = { hand: scaleSegment(segs.hand, ratio), arm: scaleSegment(segs.arm, ratio) };
-  }
-  return scaled;
+ *  hand_size (1.5, i.e. exactly 2× DEFAULT_HAND_SIZE) — its pickup/insert
+ *  positions are ~2× a regular inserter's too, so the whole pose scales. */
+const LONG_HANDED_RATIO = 1.5 / DEFAULT_HAND_SIZE;
+
+interface Point {
+  x: number;
+  y: number;
 }
 
-const LONG_HANDED_RATIO = 1.5 / DEFAULT_HAND_SIZE;
-const LONG_HANDED_BY_DIR = scaleByDirTable(STANDARD_BY_DIR, LONG_HANDED_RATIO);
+/** Elbow and hand, in tiles from the pivot, for an arm reaching toward
+ *  `cardinal`. */
+function armPose(cardinal: Cardinal, ratio: number): { elbow: Point; hand: Point } {
+  const { dx, dy } = step(cardinal);
+  const hand = { x: dx * REACH * ratio, y: (dy * REACH - HAND_LIFT) * ratio };
+  const elbow = { x: hand.x / 2, y: hand.y / 2 - ELBOW_LIFT * ratio };
+  return { elbow, hand };
+}
 
 /** Inserters are composited from a platform plate and a hand rotated to face
  *  the drop side, rather than drawn from a packed sheet — so the arm bypasses
@@ -135,13 +92,12 @@ export function drawInserter(
   drawArm(ctx, entity, g, handBase, handOpen);
 }
 
-/** Generous upper bound on how far the hand segment's far tip can land past
- *  the pivot across every direction/inserter-type combination in
- *  STANDARD_BY_DIR/LONG_HANDED_BY_DIR (the worst case, long-handed north, is
- *  about 1.3 tiles) — a footprint big enough to hold the whole composited
- *  inserter (platform + outstretched hand) at any rotation is a square
+/** Generous upper bound on how far the hand's far tip can land past the
+ *  pivot (the worst case, long-handed, is 2 tiles out plus half the claw's
+ *  width) — a footprint big enough to hold the whole composited inserter
+ *  (platform + outstretched hand) at any rotation is a square
  *  (2*MAX_REACH + platform span) on a side, centered on the entity. */
-const MAX_REACH = 1.5;
+const MAX_REACH = 2.5;
 
 function inserterOffscreenSpan(g: InserterGraphics): number {
   const platformSpan = Math.max(tiles(g.platform.frameWidth, g.platform.scale), tiles(g.platform.frameHeight, g.platform.scale));
@@ -184,26 +140,26 @@ function drawTintedInserter(
   ctx.drawImage(off, entity.x - span / 2, entity.y - span / 2, span, span);
 }
 
-/** Draws one arm segment (hand or base) anchored bottom-center at the
- *  entity's pivot, per the reference renderer's transform: translate by
- *  `seg.x`/`seg.y` tiles, rotate by `seg.rotAngle` degrees around that
- *  point, then draw the sprite with its bottom edge AT the pivot (anchor
- *  0.5, 1 in Pixi terms) so it extends outward from there — `seg.squishY`
- *  shrinks/stretches that extension, which is what actually varies the
- *  segment's apparent reach per direction. */
+/** Draws one arm segment running from `from` to `to` (tiles from the
+ *  entity's centre): the sprite's bottom edge sits on `from`, its top edge on
+ *  `to`, at its natural width — so the stretch along its length is what
+ *  foreshortens a segment pointing toward or away from the camera. */
 function drawArmSegment(
   ctx: CanvasRenderingContext2D,
   entity: PlacedEntity,
   img: SpriteSurface,
   sprite: { frameWidth: number; frameHeight: number; scale?: number },
-  seg: ArmSegment,
+  from: Point,
+  to: Point,
 ): void {
   const w = tiles(sprite.frameWidth, sprite.scale);
-  const h = tiles(sprite.frameHeight, sprite.scale) / seg.squishY;
+  const dx = to.x - from.x;
+  const dy = to.y - from.y;
   ctx.save();
-  ctx.translate(entity.x + seg.x, entity.y + seg.y);
-  ctx.rotate((seg.rotAngle * Math.PI) / 180);
-  ctx.drawImage(img, -w / 2, -h, w, h);
+  ctx.translate(entity.x + from.x, entity.y + from.y);
+  ctx.rotate(Math.atan2(dx, -dy));
+  const length = Math.hypot(dx, dy);
+  ctx.drawImage(img, -w / 2, -length, w, length);
   ctx.restore();
 }
 
@@ -231,8 +187,8 @@ function drawPlatform(
 }
 
 /** The arm alone: two independently rotated/squished static sprites, not a
- *  single stretched piece — see ARM_ANGLE's doc comment. hand (handOpen, the
- *  grabber) lands at the drop side; arm (handBase) stays near the pivot and
+ *  single stretched piece — see armPose. hand (handOpen, the grabber) lands
+ *  on the side the inserter faces; arm (handBase) stays near the pivot and
  *  is drawn LAST so it overlaps the hand, matching the real game's
  *  foreground arm. Always drawn on top of whatever else is on screen — see
  *  drawInserter's own doc comment for why that's correct for the arm but not
@@ -244,11 +200,10 @@ function drawArm(
   handBase: SpriteSurface,
   handOpen: SpriteSurface,
 ): void {
-  const cardinal = toCardinal(entity.direction);
-  const byDir = entity.name === "long-handed-inserter" ? LONG_HANDED_BY_DIR : STANDARD_BY_DIR;
-  const segs = byDir[cardinal] ?? byDir[0]!;
-  drawArmSegment(ctx, entity, handOpen, g.handOpen, segs.hand);
-  drawArmSegment(ctx, entity, handBase, g.handBase, segs.arm);
+  const ratio = entity.name === "long-handed-inserter" ? LONG_HANDED_RATIO : 1;
+  const { elbow, hand } = armPose(toCardinal(entity.direction), ratio);
+  drawArmSegment(ctx, entity, handOpen, g.handOpen, elbow, hand);
+  drawArmSegment(ctx, entity, handBase, g.handBase, { x: 0, y: 0 }, elbow);
 }
 
 /** Platform + arm together, for the placement ghost's tinted preview — which

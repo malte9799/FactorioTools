@@ -195,6 +195,20 @@ test("an entity cannot be wired to itself", () => {
   assert.equal(result.wires.length, 0);
 });
 
+test("toggleWire treats a combinator's two sides as separate terminals", () => {
+  const input = toggleWire([], "red", 1, 2, 1, 1).wires;
+  const both = toggleWire(input, "red", 1, 2, 1, 2);
+  assert.equal(both.connected, true);
+  assert.equal(both.wires.length, 2, "input and output of the same pair coexist");
+
+  const back = toggleWire(both.wires, "red", 2, 1, 2, 1);
+  assert.equal(back.connected, false);
+  assert.deepEqual(back.wires, input, "only the output-side wire is removed");
+
+  const loop = toggleWire([], "green", 5, 5, 1, 2);
+  assert.equal(loop.connected, true, "a combinator's input can feed from its own output");
+});
+
 /* ---------- Which entities accept which colours ---------- */
 
 test("poles accept copper and circuit wires", () => {

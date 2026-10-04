@@ -3,6 +3,7 @@ import type { ResolvedVisual } from "../entityLookup.js";
 import { dir4Name, dir8Name, toCardinal, opposite, splitterLaneCells, step, Dir, type Cardinal, type NeighbourGrid } from "../neighbours/grid.js";
 import { classifyPipe } from "../neighbours/pipe.js";
 import { classifyWall } from "../neighbours/wall.js";
+import { combinatorSymbol } from "../sprites/combinatorSymbol.js";
 import { classifyBeltCell, undergroundSideLoad, type BeltCap } from "../neighbours/beltGraph.js";
 import { classifyPlatform, type PlatformBox } from "../neighbours/platform.js";
 import type { FluidNetwork } from "../neighbours/fluid.js";
@@ -198,6 +199,10 @@ function resolveFrame(entity: PlacedEntity, visual: ResolvedVisual, ctx: Collect
       break;
     case "wall":
       frame.connectionName = classifyWall(x, y, ctx.grid, ctx.isWallLike);
+      break;
+    case "combinator":
+      // Not a neighbour rule: the display shows the entity's own operation.
+      frame.connectionName = `${combinatorSymbol(entity)}-${dir4Name(entity.direction)}`;
       break;
     case "belt": {
       if (entity.name.includes("splitter")) {
@@ -601,7 +606,12 @@ export function collectEntity(
       // after the lane) still paints over it.
       const capPriority = entity.undergroundType === undefined;
       for (const cap of caps) {
-        push(out, sprite, column, cap.row, entity, layer.layer, order, alpha, cap.dx, cap.dy, capPriority, undefined, laneRecenter);
+        // The inset only moves where the cap lands — yBias hands it back to
+        // the sort key, so the cap still ties (and, with capPriority, wins)
+        // against whatever sits on the whole tile it covers.
+        const insetX = -cap.dx * cap.inset;
+        const insetY = -cap.dy * cap.inset;
+        push(out, sprite, column, cap.row, entity, layer.layer, order, alpha, cap.dx + insetX, cap.dy + insetY, capPriority, undefined, laneRecenter, -insetY);
       }
     }
   });
