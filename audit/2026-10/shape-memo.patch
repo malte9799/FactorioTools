@@ -1,0 +1,45 @@
+diff --git a/packages/renderer/src/render.ts b/packages/renderer/src/render.ts
+index 31c80af..d37344c 100644
+--- a/packages/renderer/src/render.ts
++++ b/packages/renderer/src/render.ts
+@@ -1723,13 +1723,24 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
+   }
+ 
+   /** Re-probes one entity against its real neighbours, for the minority whose
+-   *  isolated shape did not match. Deliberately not memoised on the shared
+-   *  key: the whole reason it is being called is that this entity's shape
+-   *  differs from its type's, so caching it under the type would poison the
+-   *  fast path for every other instance. */
+-  function probeShape(entity: PlacedEntity, visual: ResolvedVisual, baseCtx: CollectContext, expected: number): AnimProfile {
+-    const profile = probe(entity, visual, baseCtx);
+-    return profile.commandCount === expected ? profile : NO_ANIMATION;
++   *  isolated shape did not match. Not memoised on the shared type key —
++   *  this entity's shape differs from its type's, so that would poison the
++   *  fast path for every other instance — but on the type key plus the
++   *  frame-0 commands it actually emitted: two belts that drew the same
++   *  cells at frame 0 animate the same way. Unmemoised, every scene rebuild
++   *  (each pan or zoom frame, each edit) re-probed every belt in a run with
++   *  257 collect passes. */
++  const shapeProfiles = new Map<string, AnimProfile>();
++  function probeShape(entity: PlacedEntity, visual: ResolvedVisual, baseCtx: CollectContext, emitted: DrawCommand[]): AnimProfile {
++    const key = `${entity.name}|${entity.direction}|${Math.abs(Math.round(entity.x) + Math.round(entity.y)) % 2}|${entity.undergroundType ?? ""}|`
++      + emitted.map((c) => `${c.sheet}:${c.sx}:${c.sy}:${c.layer}:${c.order}`).join(";");
++    let profile = shapeProfiles.get(key);
++    if (!profile) {
++      const probed = probe(entity, visual, baseCtx);
++      profile = probed.commandCount === emitted.length ? probed : NO_ANIMATION;
++      shapeProfiles.set(key, profile);
++    }
++    return profile;
+   }
+ 
+   function animProfileFor(entity: PlacedEntity, visual: ResolvedVisual, baseCtx: CollectContext): AnimProfile {
+@@ -2053,7 +2064,7 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
+       const emitted = commands.length - before;
+       const usable = profile.animated.length === 0 || profile.commandCount === emitted
+         ? profile
+-        : probeShape(entity, visual, baseCtx, emitted);
++        : probeShape(entity, visual, baseCtx, commands.slice(before));
+       for (let k = 0; k < usable.animated.length; k++) {
+         const local = usable.animated[k]!;
+         const command = commands[before + local];
