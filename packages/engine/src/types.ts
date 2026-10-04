@@ -194,7 +194,11 @@ export type FrameAxis =
    *  `column` picks by "animation" (slowed way down, see its own doc
    *  comment) to cycle through the row's red/orange/green frames, while
    *  `row` uses this to pick the direction row directly. */
-  | { by: "direction16" };
+  | { by: "direction16" }
+  /** A sheet packing one frame per 16-way facing, `lineLength` frames to a
+   *  row — rail-signal's rail_piece patch: the facing picks the frame, split
+   *  into this column/row pair. */
+  | { by: "direction16Grid"; axis: "column" | "row"; lineLength: number };
 
 /** One drawable piece of an entity.
  *

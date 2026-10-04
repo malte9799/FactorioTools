@@ -527,6 +527,21 @@ function railSignalGraphics(proto: any): EntityGraphics | undefined {
       row: { by: "direction16" },
     });
   }
+  // The cables from the signal to the rail beside it (rail_piece): one frame
+  // per facing in a line_length grid. Its align_to_frame_index picks a
+  // slightly different frame for some rail shapes; frame = facing is the
+  // plain one the game uses on straight track. Drawn over the rails, under
+  // the signal itself.
+  const piece = toSprite(proto.ground_picture_set?.rail_piece?.sprites);
+  if (piece) {
+    const lineLength = proto.ground_picture_set.rail_piece.sprites.line_length ?? 1;
+    layers.unshift({
+      layer: Layer.LowerObject,
+      sprites: { ...piece, columns: lineLength },
+      column: { by: "direction16Grid", axis: "column", lineLength },
+      row: { by: "direction16Grid", axis: "row", lineLength },
+    });
+  }
   return layers.length > 0 ? { layers } : undefined;
 }
 

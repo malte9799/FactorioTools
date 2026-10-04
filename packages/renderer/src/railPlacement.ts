@@ -22,6 +22,7 @@ import {
   type RailSlot,
 } from "./railGeometry.js";
 import { planEnd, planRail, RAIL_PLAN_LENGTH_LIMIT, supportsFor } from "./railPlanner.js";
+import { computeRailBlocks, type RailBlocks } from "./railBlocks.js";
 
 /** Held items that drive the rail planner rather than placing one entity.
  *  The ramp item plans toward the elevated layer, climbing a ramp first
@@ -58,6 +59,8 @@ export interface RailIndex {
   /** Joint sides (slotGroup) that already hold a signal. */
   takenSignalGroups: Set<string>;
   hasRails: boolean;
+  /** The blocks signals divide ground track into, worked out on first use. */
+  blocks(): RailBlocks;
 }
 
 /** Tiles under an entity's centred footprint. */
@@ -109,6 +112,7 @@ export function buildRailIndex(entities: PlacedEntity[], footprintOf: (e: Placed
     if (signalsAt.has(`${slot.x},${slot.y},${slot.direction}`)) takenSignalGroups.add(slotGroup(slot));
   }
 
+  let blocks: RailBlocks | undefined;
   return {
     blocked: (tx, ty, elevated) => !elevated && groundTaken.has(`${tx},${ty}`),
     railsAt,
@@ -123,6 +127,7 @@ export function buildRailIndex(entities: PlacedEntity[], footprintOf: (e: Placed
     railsideTaken,
     takenSignalGroups,
     hasRails: rails.length > 0,
+    blocks: () => (blocks ??= computeRailBlocks(rails, (x, y, dir) => takenSignalGroups.has(`${x},${y},${dir}`))),
   };
 }
 
@@ -206,6 +211,14 @@ export function railsideSlot(index: RailIndex, name: string, x: number, y: numbe
 
 /** How far from the cursor a held signal shows its placement handles. */
 export const SIGNAL_HANDLE_RANGE = 12;
+
+/** How far from the cursor a held train stop shows its placement handles. */
+export const STOP_HANDLE_RANGE = 16;
+
+/** Free train stop slots within `radius` of a point. */
+export function stopSlotsNear(index: RailIndex, x: number, y: number, radius = STOP_HANDLE_RANGE): RailSlot[] {
+  return index.stopSlots.filter((s) => Math.hypot(s.x - x, s.y - y) <= radius && !index.railsideTaken.has(`${s.x},${s.y}`));
+}
 
 /** Free signal slots within `radius` of a point — where a held signal shows
  *  a handle on the track. */

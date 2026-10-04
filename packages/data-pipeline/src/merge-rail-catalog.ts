@@ -40,6 +40,8 @@ const RAIL_TABLES = [
   "elevated-curved-rail-b",
   "rail-ramp",
   "rail-support",
+  "rail-signal",
+  "rail-chain-signal",
 ];
 
 /** The game's English names — the rail export carries no locale files. */
@@ -54,6 +56,8 @@ const NAMES: Record<string, string> = {
   "elevated-curved-rail-b": "Elevated curved rail",
   "rail-ramp": "Rail ramp",
   "rail-support": "Rail support",
+  "rail-signal": "Rail signal",
+  "rail-chain-signal": "Rail chain signal",
 };
 
 function required(name: string): string {

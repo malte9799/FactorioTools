@@ -306,6 +306,10 @@ function axisIndex(axis: GraphicsLayer["column"], frame: EntityFrame): number {
     // IS the row directly, no 256-scaling needed (their sheet is a genuine
     // 16-row grid, one row per placement facing).
     case "direction16": return frame.rawDirection;
+    case "direction16Grid": {
+      const index = ((frame.rawDirection % 16) + 16) % 16;
+      return axis.axis === "column" ? index % axis.lineLength : Math.floor(index / axis.lineLength);
+    }
   }
 }
 

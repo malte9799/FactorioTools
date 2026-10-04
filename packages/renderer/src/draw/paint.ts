@@ -278,35 +278,97 @@ export function drawHoverHighlight(
   ctx.restore();
 }
 
-/** A held signal's placement handle, as the game draws them along track: a
- *  small green rounded square on the slot, with a stem straight across to
- *  the rail. The rail runs to the right of the signal's 16-way `direction`,
- *  through the joint (ex, ey); the stem stops where the rail is, 0.75 tiles
- *  from the track's centreline, so it neither falls short nor crosses it. */
-export function drawSignalHandle(ctx: CanvasRenderingContext2D, slot: { x: number; y: number; direction: number; ex?: number; ey?: number }): void {
-  const { x, y } = slot;
-  const a = (slot.direction * Math.PI) / 8;
-  const ux = Math.sin(a);
-  const uy = -Math.cos(a);
-  // Right of travel, toward the track.
-  const rx = -uy;
-  const ry = ux;
-  const half = 0.22;
-  const lateral = slot.ex !== undefined && slot.ey !== undefined ? Math.abs((slot.ex - x) * rx + (slot.ey - y) * ry) : 1.5;
+/** A placement handle, as the game draws them along track for a held signal
+ *  or train stop: a green rounded square on the slot, with a stem straight
+ *  across to the rail. The stem runs along (towardX, towardY), a unit vector
+ *  pointing at the track, and stops `gap` short of the track's centreline —
+ *  at the rail — `lateral` tiles away; `half` is half the square's side. */
+export function drawRailHandle(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  towardX: number,
+  towardY: number,
+  lateral: number,
+  half: number,
+): void {
   const stem = lateral - half - 0.75;
   ctx.save();
   ctx.strokeStyle = "#33d433";
-  ctx.lineWidth = 0.08;
+  ctx.lineWidth = half * 0.36;
   ctx.lineJoin = "round";
   if (stem >= 0.1) {
     ctx.beginPath();
-    ctx.moveTo(x + rx * half, y + ry * half);
-    ctx.lineTo(x + rx * (half + stem), y + ry * (half + stem));
+    ctx.moveTo(x + towardX * half, y + towardY * half);
+    ctx.lineTo(x + towardX * (half + stem), y + towardY * (half + stem));
     ctx.stroke();
   }
   ctx.beginPath();
-  ctx.roundRect(x - half, y - half, half * 2, half * 2, 0.1);
+  ctx.roundRect(x - half, y - half, half * 2, half * 2, half * 0.45);
   ctx.stroke();
+  ctx.restore();
+}
+
+/** A held signal's handle: the rail runs to the right of the signal's
+ *  16-way `direction`, through its joint (ex, ey). */
+export function drawSignalHandle(ctx: CanvasRenderingContext2D, slot: { x: number; y: number; direction: number; ex?: number; ey?: number }): void {
+  const a = (slot.direction * Math.PI) / 8;
+  const rx = Math.cos(a);
+  const ry = Math.sin(a);
+  const lateral = slot.ex !== undefined && slot.ey !== undefined ? Math.abs((slot.ex - slot.x) * rx + (slot.ey - slot.y) * ry) : 1.5;
+  drawRailHandle(ctx, slot.x, slot.y, rx, ry, lateral, 0.22);
+}
+
+/** A held train stop's handle, about a tile across: the stop stands two
+ *  tiles to the right of travel, so the rail is to its left. */
+export function drawStopHandle(ctx: CanvasRenderingContext2D, slot: { x: number; y: number; direction: number }): void {
+  const a = (slot.direction * Math.PI) / 8;
+  drawRailHandle(ctx, slot.x, slot.y, -Math.cos(a), -Math.sin(a), 2, 0.5);
+}
+
+/** One block's stretch of track centreline, as a held signal shows it:
+ *  `points` in world tiles, drawn as a solid line in the block's colour. */
+export function drawRailBlockLine(ctx: CanvasRenderingContext2D, points: [number, number][], color: string): void {
+  if (points.length < 2) return;
+  ctx.save();
+  ctx.strokeStyle = color;
+  ctx.lineWidth = 0.14;
+  ctx.lineCap = "round";
+  ctx.lineJoin = "round";
+  ctx.beginPath();
+  ctx.moveTo(points[0]![0], points[0]![1]);
+  for (let i = 1; i < points.length; i++) ctx.lineTo(points[i]![0], points[i]![1]);
+  ctx.stroke();
+  ctx.restore();
+}
+
+/** Where a block line ends at a signalled joint: a triangle pointing into
+ *  the joint (a signal there governs trains leaving this way), or a diamond.
+ *  `dir` is the outward 16-way direction of the track end at (x, y). */
+export function drawRailBlockMarker(ctx: CanvasRenderingContext2D, x: number, y: number, dir: number, kind: "arrow" | "diamond", color: string): void {
+  const a = (dir * Math.PI) / 8;
+  const ux = Math.sin(a);
+  const uy = -Math.cos(a);
+  // Sit just inside the end, so the two blocks' markers meet at the joint.
+  const cx = x - ux * 0.32;
+  const cy = y - uy * 0.32;
+  ctx.save();
+  ctx.translate(cx, cy);
+  ctx.rotate(a);
+  ctx.beginPath();
+  if (kind === "arrow") {
+    ctx.moveTo(0, -0.3);
+    ctx.lineTo(0.24, 0.12);
+    ctx.lineTo(-0.24, 0.12);
+  } else {
+    ctx.moveTo(0, -0.26);
+    ctx.lineTo(0.2, 0);
+    ctx.lineTo(0, 0.26);
+    ctx.lineTo(-0.2, 0);
+  }
+  ctx.closePath();
+  ctx.fillStyle = color;
+  ctx.fill();
   ctx.restore();
 }
 

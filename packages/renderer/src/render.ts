@@ -11,20 +11,22 @@ import type { PlatformBox } from "./neighbours/platform.js";
 import { buildWireNetwork, resolveWires, terminalFor, terminalSideAt, type ResolvedWire, type WireNetwork } from "./neighbours/wires.js";
 import { drawSupplyAreas, drawWires, type SupplyArea } from "./draw/wireDraw.js";
 import { collectEntity, collectInserterPlatform, type CollectContext } from "./draw/collect.js";
-import { paint, paintPlain, drawOutline, drawDirectionArrows, drawHoverHighlight, drawInserterIndication, drawRailStartArrow, drawBlockedCross, drawSignalHandle, drawUndergroundLine, type PaintTally } from "./draw/paint.js";
+import { paint, paintPlain, drawOutline, drawDirectionArrows, drawHoverHighlight, drawInserterIndication, drawRailStartArrow, drawBlockedCross, drawSignalHandle, drawStopHandle, drawRailBlockLine, drawRailBlockMarker, drawUndergroundLine, type PaintTally } from "./draw/paint.js";
 import { getHoverHighlightSprite, getIndicationSprites, getUndergroundLinesSprite } from "./hoverHighlightSprite.js";
 import { compareDrawCommands, type DrawCommand } from "./draw/commands.js";
 import { planBake, type BakePlan } from "./draw/bake.js";
 import { drawInserter } from "./sprites/inserter.js";
 import { SpatialIndex, type IndexedBox } from "./spatialIndex.js";
 import { boxHitsEntity, entitiesCollide } from "./collision.js";
-import { isRail, railHighlightBox, type RailEnd, type RailPiece } from "./railGeometry.js";
+import { RAIL_BLOCK_COLORS } from "./railBlocks.js";
+import { isRail, railCentreline, railHighlightBox, type RailEnd, type RailPiece } from "./railGeometry.js";
 import {
   buildRailIndex,
   isRailPlannerItem,
   isRailSnapped,
   railStartAt,
   signalSlotsNear,
+  stopSlotsNear,
   plannerTargetsElevated,
   previewRail,
   railsideSlot,
@@ -1500,12 +1502,25 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
     phases.overlays = performance.now() - tOverlays;
 
     const tGhostDraw = performance.now();
-    // A held signal shows a handle at every free slot along nearby track,
-    // under the ghost, so the snapped ghost sits on top of its own handle.
+    // A held signal shows the rail blocks signals divide track into, as a
+    // line down the middle of the track in each block's colour, and a handle
+    // at every free slot along nearby track. Both go under the ghost, so the
+    // snapped ghost sits on top of its own handle. A held train stop shows
+    // its own, larger handles.
     if (mode.kind === "place" && ghostWorldPos && (mode.entityName === "rail-signal" || mode.entityName === "rail-chain-signal")) {
-      for (const slot of signalSlotsNear(currentRailIndex(), ghostWorldPos.x, ghostWorldPos.y)) {
+      const index = currentRailIndex();
+      const blocks = index.blocks();
+      for (const { piece, block } of blocks.pieces) {
+        const color = RAIL_BLOCK_COLORS[blocks.colors[block]!]!;
+        drawRailBlockLine(ctx, railCentreline(piece.name, piece.direction, 12).map(([x, y]) => [piece.x + x, piece.y + y]), color);
+      }
+      for (const m of blocks.markers) drawRailBlockMarker(ctx, m.x, m.y, m.dir, m.kind, RAIL_BLOCK_COLORS[blocks.colors[m.block]!]!);
+      for (const slot of signalSlotsNear(index, ghostWorldPos.x, ghostWorldPos.y)) {
         drawSignalHandle(ctx, slot);
       }
+    }
+    if (mode.kind === "place" && ghostWorldPos && mode.entityName === "train-stop") {
+      for (const slot of stopSlotsNear(currentRailIndex(), ghostWorldPos.x, ghostWorldPos.y)) drawStopHandle(ctx, slot);
     }
     if (ghost) {
       const visual = visualFor(ghost.name);
