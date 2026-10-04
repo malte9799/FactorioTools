@@ -522,7 +522,9 @@ export function collectEntity(
       const state = frame.fluidPoints.find((p) => p.local.x === x && p.local.y === y && p.local.direction === direction)?.state;
       // No such point right now (its fluid box is switched off): no port, no art.
       if (!state) return;
-      const { open, connected, sibling = connected, siblingMixed = sibling } = layer.columns;
+      // A mixed pair carries no fluid, so unless the layer has art for it
+      // the port is simply open.
+      const { open, connected, sibling = connected, siblingMixed = open } = layer.columns;
       const column = { open, connected, sibling, siblingMixed }[state];
       const sprite = layer.sprites[dir4Name(entity.direction)];
       if (sprite && column !== undefined) push(out, sprite, column, 0, entity, layer.layer, order, alpha);

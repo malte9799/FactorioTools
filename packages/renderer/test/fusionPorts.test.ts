@@ -130,4 +130,14 @@ test("a lone generator shows no intake, and round covers only on its two fluorok
   assert.equal(drawn.filter((s) => /^pipe-cover-(north|east|south|west)\.png$/.test(s)).length, 2);
 });
 
+test("a generator's intake facing another generator's fluoroketone output stays closed", () => {
+  // Two north-facing generators stacked in line: the upper one's intakes
+  // (its south end, x +-1) sit right on the lower one's fluoroketone
+  // outputs — same prototype, different fluid, nothing flows.
+  const upper = entity("fusion-generator", 2.5, 2.5, 0);
+  const lower = entity("fusion-generator", 2.5, 7.5, 0);
+  assert.ok(sheets(collect(upper, [lower])).every((s) => !s.includes("-input-")));
+  assert.equal(sheets(collect(lower, [upper])).filter((s) => s === "pipe-cover-north.png").length, 2);
+});
+
 console.log(`\n${passed} passed`);

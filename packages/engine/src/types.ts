@@ -235,8 +235,8 @@ export type GraphicsLayer = {
    *  for each state of that point: `open` (nothing attached), `connected`
    *  (a matching fluid connection), `sibling` (meeting a same-category port
    *  of another entity of the same prototype — falls back to `connected`),
-   *  `siblingMixed` (meeting a different-category port of one — falls back
-   *  to `sibling`). A state with no column draws nothing: a
+   *  `siblingMixed` (meeting a different-category port of one, so no fluid
+   *  flows — falls back to `open`). A state with no column draws nothing: a
    *  fusion-generator's plasma intake only exists while something feeds
    *  it. */
   | {
