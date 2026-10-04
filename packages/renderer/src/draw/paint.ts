@@ -244,13 +244,19 @@ export function drawHoverHighlight(
   w: number,
   h: number,
   style: CursorBoxStyle = "regular",
+  /** Turns the box about its centre, clockwise in radians — rails lie at an
+   *  angle, and their brackets follow them. */
+  angle = 0,
+  /** Side length that picks the bracket size: the shorter side, so a long
+   *  thin footprint (track, a long building) keeps small brackets. */
+  tierSide = Math.min(w, h),
 ): void {
-  const tier = CURSOR_BOX_TIERS.find((t) => Math.min(w, h) <= t.maxSide)!;
+  const tier = CURSOR_BOX_TIERS.find((t) => tierSide <= t.maxSide)!;
   const sy = CURSOR_BOX_ROW[style];
-  const left = x - w / 2;
-  const top = y - h / 2;
-  const right = x + w / 2;
-  const bottom = y + h / 2;
+  const left = -w / 2;
+  const top = -h / 2;
+  const right = w / 2;
+  const bottom = h / 2;
 
   const corners: { cx: number; cy: number; rotationDeg: number }[] = [
     { cx: left, cy: top, rotationDeg: 0 },
@@ -260,6 +266,8 @@ export function drawHoverHighlight(
   ];
 
   ctx.save();
+  ctx.translate(x, y);
+  if (angle) ctx.rotate(angle);
   for (const c of corners) {
     ctx.save();
     ctx.translate(c.cx, c.cy);
@@ -267,6 +275,174 @@ export function drawHoverHighlight(
     ctx.drawImage(sheet, tier.x, sy, 64, 64, 0, 0, 1, 1);
     ctx.restore();
   }
+  ctx.restore();
+}
+
+/** A placement handle, as the game draws them along track for a held signal
+ *  or train stop: a green rounded square on the slot, with a stem straight
+ *  across to the rail. The stem runs along (towardX, towardY), a unit vector
+ *  pointing at the track, and stops `gap` short of the track's centreline —
+ *  at the rail — `lateral` tiles away; `half` is half the square's side. */
+export function drawRailHandle(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  towardX: number,
+  towardY: number,
+  lateral: number,
+  half: number,
+): void {
+  const stem = lateral - half - 0.75;
+  ctx.save();
+  ctx.strokeStyle = "#33d433";
+  ctx.lineWidth = half * 0.36;
+  ctx.lineJoin = "round";
+  if (stem >= 0.1) {
+    ctx.beginPath();
+    ctx.moveTo(x + towardX * half, y + towardY * half);
+    ctx.lineTo(x + towardX * (half + stem), y + towardY * (half + stem));
+    ctx.stroke();
+  }
+  ctx.beginPath();
+  ctx.roundRect(x - half, y - half, half * 2, half * 2, half * 0.45);
+  ctx.stroke();
+  ctx.restore();
+}
+
+/** A held signal's handle: the rail runs to the right of the signal's
+ *  16-way `direction`, through its joint (ex, ey). */
+export function drawSignalHandle(ctx: CanvasRenderingContext2D, slot: { x: number; y: number; direction: number; ex?: number; ey?: number }): void {
+  const a = (slot.direction * Math.PI) / 8;
+  const rx = Math.cos(a);
+  const ry = Math.sin(a);
+  const lateral = slot.ex !== undefined && slot.ey !== undefined ? Math.abs((slot.ex - slot.x) * rx + (slot.ey - slot.y) * ry) : 1.5;
+  drawRailHandle(ctx, slot.x, slot.y, rx, ry, lateral, 0.22);
+}
+
+/** A held train stop's handle, about a tile across: the stop stands two
+ *  tiles to the right of travel, so the rail is to its left. */
+export function drawStopHandle(ctx: CanvasRenderingContext2D, slot: { x: number; y: number; direction: number }): void {
+  const a = (slot.direction * Math.PI) / 8;
+  drawRailHandle(ctx, slot.x, slot.y, -Math.cos(a), -Math.sin(a), 2, 0.5);
+}
+
+/** One block's stretch of track centreline, as a held signal shows it:
+ *  `points` in world tiles, drawn as a solid line in the block's colour. */
+export function drawRailBlockLine(ctx: CanvasRenderingContext2D, points: [number, number][], color: string): void {
+  if (points.length < 2) return;
+  ctx.save();
+  ctx.strokeStyle = color;
+  ctx.lineWidth = 0.09;
+  ctx.lineCap = "round";
+  ctx.lineJoin = "round";
+  ctx.beginPath();
+  ctx.moveTo(points[0]![0], points[0]![1]);
+  for (let i = 1; i < points.length; i++) ctx.lineTo(points[i]![0], points[i]![1]);
+  ctx.stroke();
+  ctx.restore();
+}
+
+/** How far short of a signalled joint a block line stops, where its marker
+ *  takes over. */
+export const RAIL_BLOCK_MARKER_INSET = 0.3;
+
+/** `points` with `fromStart` and `fromEnd` of its length cut off. */
+export function trimPolyline(points: [number, number][], fromStart: number, fromEnd: number): [number, number][] {
+  const cut = (pts: [number, number][], by: number): [number, number][] => {
+    let left = by;
+    for (let i = 1; i < pts.length; i++) {
+      const [ax, ay] = pts[i - 1]!;
+      const [bx, by2] = pts[i]!;
+      const seg = Math.hypot(bx - ax, by2 - ay);
+      if (seg >= left) {
+        const t = seg === 0 ? 0 : left / seg;
+        return [[ax + (bx - ax) * t, ay + (by2 - ay) * t], ...pts.slice(i)];
+      }
+      left -= seg;
+    }
+    return [];
+  };
+  const head = fromStart > 0 ? cut(points, fromStart) : points;
+  return fromEnd > 0 ? cut([...head].reverse(), fromEnd).reverse() : head;
+}
+
+/** Where a block line ends at a signalled joint: a triangle pointing out
+ *  through the joint ("exit") or in from it ("entry"), or a diamond. Each
+ *  sits just inside its own piece, so the two blocks' markers face each
+ *  other across the joint with a sliver of gap. `dir` is the outward 16-way
+ *  direction of the track end at (x, y). */
+export function drawRailBlockMarker(ctx: CanvasRenderingContext2D, x: number, y: number, dir: number, kind: "exit" | "entry" | "diamond", color: string): void {
+  // Local frame: -y points out through the joint at the origin.
+  const gap = 0.08;
+  const len = 0.28;
+  const half = 0.19;
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.rotate((dir * Math.PI) / 8);
+  ctx.beginPath();
+  if (kind === "exit") {
+    ctx.moveTo(0, gap);
+    ctx.lineTo(half, gap + len);
+    ctx.lineTo(-half, gap + len);
+  } else if (kind === "entry") {
+    ctx.moveTo(half, gap);
+    ctx.lineTo(-half, gap);
+    ctx.lineTo(0, gap + len);
+  } else {
+    const cy = gap + 0.18;
+    ctx.moveTo(0, cy - 0.18);
+    ctx.lineTo(0.15, cy);
+    ctx.lineTo(0, cy + 0.18);
+    ctx.lineTo(-0.15, cy);
+  }
+  ctx.closePath();
+  ctx.fillStyle = color;
+  ctx.fill();
+  ctx.restore();
+}
+
+/** The game's "can't build" cross: a red X about a tile across, centred on
+ *  (x, y) — the rail planner shows it at the cursor when no track can get
+ *  any closer. */
+export function drawBlockedCross(ctx: CanvasRenderingContext2D, x: number, y: number): void {
+  const r = 0.4;
+  ctx.save();
+  ctx.lineCap = "round";
+  ctx.beginPath();
+  ctx.moveTo(x - r, y - r);
+  ctx.lineTo(x + r, y + r);
+  ctx.moveTo(x + r, y - r);
+  ctx.lineTo(x - r, y + r);
+  ctx.strokeStyle = "#a01818";
+  ctx.lineWidth = 0.28;
+  ctx.stroke();
+  ctx.strokeStyle = "#f25a5a";
+  ctx.lineWidth = 0.17;
+  ctx.stroke();
+  ctx.restore();
+}
+
+/** The rail planner's start arrow, as the game draws it on track: a
+ *  rounded green triangle whose flat side runs across the rail's centre
+ *  (x, y) and whose tip points along the 16-way `dir`, toward the end the
+ *  plan would leave from. */
+export function drawRailStartArrow(ctx: CanvasRenderingContext2D, x: number, y: number, dir: number): void {
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.rotate((dir * Math.PI) / 8);
+  ctx.beginPath();
+  ctx.moveTo(0, -0.58);
+  ctx.lineTo(0.62, 0.02);
+  ctx.lineTo(-0.62, 0.02);
+  ctx.closePath();
+  ctx.lineJoin = "round";
+  // A wide round-joined stroke gives the soft corners; the fill covers its
+  // inner half, leaving a darker green rim.
+  ctx.lineWidth = 0.16;
+  ctx.strokeStyle = "#3a9e2a";
+  ctx.stroke();
+  ctx.fillStyle = "#56c63b";
+  ctx.fill();
   ctx.restore();
 }
 

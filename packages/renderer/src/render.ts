@@ -11,13 +11,31 @@ import type { PlatformBox } from "./neighbours/platform.js";
 import { buildWireNetwork, resolveWires, terminalFor, terminalSideAt, type ResolvedWire, type WireNetwork } from "./neighbours/wires.js";
 import { drawSupplyAreas, drawWires, type SupplyArea } from "./draw/wireDraw.js";
 import { collectEntity, collectInserterPlatform, type CollectContext } from "./draw/collect.js";
-import { paint, paintPlain, drawOutline, drawDirectionArrows, drawHoverHighlight, drawInserterIndication, drawUndergroundLine, type PaintTally } from "./draw/paint.js";
+import { paint, paintPlain, drawOutline, drawDirectionArrows, drawHoverHighlight, drawInserterIndication, drawRailStartArrow, drawBlockedCross, drawSignalHandle, drawStopHandle, drawRailBlockLine, drawRailBlockMarker, trimPolyline, RAIL_BLOCK_MARKER_INSET, drawUndergroundLine, type PaintTally } from "./draw/paint.js";
 import { getHoverHighlightSprite, getIndicationSprites, getUndergroundLinesSprite } from "./hoverHighlightSprite.js";
 import { compareDrawCommands, type DrawCommand } from "./draw/commands.js";
 import { planBake, type BakePlan } from "./draw/bake.js";
 import { collectTiles, paintTiles, type TileScene } from "./draw/tiles.js";
 import { drawInserter } from "./sprites/inserter.js";
 import { SpatialIndex, type IndexedBox } from "./spatialIndex.js";
+import { boxHitsEntity, entitiesCollide } from "./collision.js";
+import { RAIL_BLOCK_COLORS } from "./railBlocks.js";
+import { isRail, railCentreline, railHighlightBox, type RailEnd, type RailPiece, type RailSlot } from "./railGeometry.js";
+import {
+  buildRailIndex,
+  isRailPlannerItem,
+  isRailSnapped,
+  railStartAt,
+  signalSlotsNear,
+  stopSlotsNear,
+  plannerTargetsElevated,
+  previewRail,
+  railsideSlot,
+  railsideSlotTaken,
+  startPiece,
+  type RailIndex,
+  type RailPreview,
+} from "./railPlacement.js";
 
 /** Milliseconds spent in each phase of one draw(). */
 export interface FramePhases {
@@ -285,6 +303,13 @@ export interface BlueprintRenderer {
    *  grid-snapped-by-caller — see index.ts) world position and the ghost's
    *  current facing (see rotateGhost) at the moment of the click. */
   onPlace(callback: (worldX: number, worldY: number, direction: number) => void): void;
+  /** Fires when the rail planner lays track: the pieces in order from the
+   *  start (some may already exist — the app keeps those as they are) and
+   *  the supports that carry any elevated part. */
+  onPlaceRails(callback: (pieces: RailPiece[], supports: RailPiece[]) => void): void;
+  /** Drops the rail planner's start point, if one is set. True when there
+   *  was one, so Escape can cancel the plan before it puts the item away. */
+  cancelRailPlan(): boolean;
   /** Fires on a left-click in 'idle' mode that landed on an entity —
    *  matches the real game's own "click a building to open it" behavior.
    *  Never fires for a click that misses (that starts a pan instead, see
@@ -438,6 +463,7 @@ function gcd(a: number, b: number): number {
  *  green-means-go, red-means-blocked cursor-item convention. */
 const GHOST_VALID_TINT = "#4caf50";
 const GHOST_INVALID_TINT = "#e53935";
+
 
 /** Mounts a self-contained Canvas2D blueprint renderer into `container`,
  *  wiring up Factorio-feel pan/zoom (see camera.ts) and hover hit-testing
@@ -780,6 +806,91 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
   }
   let ghostDirection = 0;
 
+  // Rail planner state. railAnchor is where the next track starts — set by
+  // pressing on a free rail end (or anywhere, which lays the held straight
+  // piece first), then moved to the end of each placement so track can be
+  // laid on in stages, like the game's own rail item.
+  let railAnchor: RailEnd | null = null;
+  let railIndex: RailIndex | null = null;
+  let railIndexVersion = -1;
+  let railPreviewKey = "";
+  let railPreviewCache: RailPreview | null = null;
+  let railDragMoved = false;
+  /** The camera panned (WASD) during the held press: the gesture is void. */
+  let railPressPanned = false;
+  // The current press started on open ground: a plain click there lays just
+  // the held piece and leaves no plan behind; only a drag plans on from it.
+  let railPressOnGround = false;
+  // The current press began with a plan already set: its release lays it.
+  let railPressAnchored = false;
+  // The held piece a press on open ground starts from, laid on release.
+  let railPendingPiece: RailPiece | null = null;
+  // Shift plans all the way to the cursor, past the rail item's length limit.
+  let shiftHeld = false;
+
+  function currentRailIndex(): RailIndex {
+    if (!railIndex || railIndexVersion !== entitiesVersion) {
+      railIndex = buildRailIndex(entities, (e) => {
+        const visual = visualFor(e.name);
+        return visual ? effectiveFootprint(visual, e.direction) : FALLBACK_FOOTPRINT;
+      });
+      railIndexVersion = entitiesVersion;
+    }
+    return railIndex;
+  }
+
+  /** The track the planner would lay from the anchor to the cursor. */
+  function currentRailPreview(): RailPreview | null {
+    if (mode.kind !== "place" || !railAnchor || !ghostWorldPos) return null;
+    const target = { x: Math.round(ghostWorldPos.x), y: Math.round(ghostWorldPos.y) };
+    const elevated = plannerTargetsElevated(mode.entityName);
+    const key = `${entitiesVersion}|${railAnchor.x},${railAnchor.y},${railAnchor.dir},${railAnchor.elevated}|${target.x},${target.y}|${elevated}|${shiftHeld}`;
+    if (key !== railPreviewKey) {
+      railPreviewKey = key;
+      railPreviewCache = previewRail(currentRailIndex(), railAnchor, target, elevated, shiftHeld);
+    }
+    return railPreviewCache;
+  }
+
+  /** Lays the previewed track and moves the anchor to where it ends. */
+  function commitRailPreview(): void {
+    const preview = currentRailPreview();
+    if (!preview || preview.pieces.length === 0) return;
+    railPlaceCallback?.(preview.pieces, preview.supports);
+    railAnchor = preview.end;
+    invalidate();
+  }
+
+  function railPress(): void {
+    if (mode.kind !== "place" || !ghostWorldPos) return;
+    railDragMoved = false;
+    railPressPanned = false;
+    railPressOnGround = false;
+    // With a plan already going, the press only starts the gesture: the
+    // release lays the preview where the cursor ends up, so a drag never
+    // lays the old preview first and then a second one.
+    if (railAnchor) {
+      railPressAnchored = true;
+      return;
+    }
+    railPressAnchored = false;
+    const start = railStartAt(currentRailIndex(), ghostWorldPos.x, ghostWorldPos.y);
+    if (start) {
+      railAnchor = start.end;
+    } else {
+      // Nothing to continue: the held straight piece is the start. It's laid
+      // on release, not now, so a cancelled press leaves nothing behind; a
+      // drag plans on from its end facing the held direction, a click lays
+      // just the piece.
+      const elevated = plannerTargetsElevated(mode.entityName) && mode.entityName !== "rail-ramp";
+      const { piece, end } = startPiece(ghostWorldPos.x, ghostWorldPos.y, ghostDirection, elevated);
+      railPendingPiece = piece;
+      railAnchor = end;
+      railPressOnGround = true;
+    }
+    invalidate();
+  }
+
   // Shared drag-box state for the three box-drag action modes (copyBox/
   // cutBox/deleteBox). The box is tracked in world space (converted once per
   // pointer event via worldAtPointer) rather than screen space, since world
@@ -819,6 +930,24 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
 
   function visualFor(name: string): ResolvedVisual | undefined {
     return visualLookup.get(name);
+  }
+
+  function footprintOfEntity(e: PlacedEntity): [number, number] {
+    const visual = visualFor(e.name);
+    return visual ? effectiveFootprint(visual, e.direction) : FALLBACK_FOOTPRINT;
+  }
+
+  /** Entities a box-drag selection touches: the spatial index's footprint
+   *  boxes narrowed to what each entity really covers, so dragging beside a
+   *  curve doesn't pick it up. */
+  function entitiesInBox(left: number, top: number, right: number, bottom: number): Set<number> {
+    const box = { left, top, right, bottom };
+    const out = new Set<number>();
+    for (const id of spatialIndex.queryRect(left, top, right, bottom)) {
+      const e = entityById.get(id);
+      if (e && boxHitsEntity(box, e, footprintOfEntity)) out.add(id);
+    }
+    return out;
   }
 
   /** Which terminal of entity `entityNumber` a held wire would attach to
@@ -896,11 +1025,44 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
     let previewGrid = grid;
     let previewFluidNetwork = fluidNetwork;
     let previewHeatNetwork = heatNetwork;
-    if (mode.kind === "place" && ghostWorldPos) {
+    // Rail planner preview: the whole planned track, green, laid in full on
+    // the next press or release.
+    const railGhosts: { entity: PlacedEntity; tint: string }[] = [];
+    let railArrow: { x: number; y: number; dir: number } | null = null;
+    let railBlocked: { x: number; y: number } | null = null;
+    if (mode.kind === "place" && ghostWorldPos && isRailPlannerItem(mode.entityName)) {
+      const preview = currentRailPreview();
+      const index = currentRailIndex();
+      const asGhost = (p: RailPiece): PlacedEntity => ({ entityNumber: -1, name: p.name, x: p.x, y: p.y, direction: p.direction, quality: "normal", modules: [], filterItems: [] });
+      if (railPendingPiece) railGhosts.push({ entity: asGhost(railPendingPiece), tint: GHOST_VALID_TINT });
+      if (preview) {
+        // No track can get any closer to the cursor: a red X says so.
+        if (preview.pieces.length === 0) railBlocked = { x: ghostWorldPos.x, y: ghostWorldPos.y };
+        for (const p of preview.pieces) railGhosts.push({ entity: asGhost(p), tint: GHOST_VALID_TINT });
+        for (const sp of preview.supports) railGhosts.push({ entity: asGhost(sp), tint: GHOST_VALID_TINT });
+      } else {
+        // No plan yet: on a placed rail an arrow shows where a press would
+        // start building — toward the end on the cursor's half of it; over
+        // open ground just the held straight piece, which R turns 8 ways.
+        const start = railStartAt(index, ghostWorldPos.x, ghostWorldPos.y);
+        if (start) {
+          railArrow = { x: start.piece.x, y: start.piece.y, dir: start.end.dir };
+        } else {
+          const elevated = plannerTargetsElevated(mode.entityName) && mode.entityName !== "rail-ramp";
+          const { piece } = startPiece(ghostWorldPos.x, ghostWorldPos.y, ghostDirection, elevated);
+          railGhosts.push({ entity: asGhost(piece), tint: GHOST_VALID_TINT });
+        }
+      }
+    } else if (mode.kind === "place" && ghostWorldPos) {
       const ghostVisual = visualFor(mode.entityName);
       if (ghostVisual) {
         const [gfw, gfh] = effectiveFootprint(ghostVisual, ghostDirection);
-        const snapped = { x: snapAxis(ghostWorldPos.x, gfw), y: snapAxis(ghostWorldPos.y, gfh) };
+        // Signals and train stops snap onto the slots beside placed track
+        // and take the slot's facing.
+        const slot = isRailSnapped(mode.entityName)
+          ? railsideSlot(currentRailIndex(), mode.entityName, ghostWorldPos.x, ghostWorldPos.y, ghostDirection)
+          : undefined;
+        const snapped = slot ? { x: slot.x, y: slot.y } : { x: snapAxis(ghostWorldPos.x, gfw), y: snapAxis(ghostWorldPos.y, gfh) };
         const previewKey = `${entitiesVersion}|${mode.entityName}|${snapped.x},${snapped.y}|${ghostDirection}`;
         const previewStale = previewKey !== ghostPreviewKey;
         if (previewStale) {
@@ -915,7 +1077,7 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
           y: snapped.y,
           // A paired exit is stored with its travel direction, the
           // reverse of how it's held (see autoUnderground).
-          direction: ghostUnderground?.direction ?? ghostDirection,
+          direction: slot?.direction ?? ghostUnderground?.direction ?? ghostDirection,
           quality: mode.quality ?? "normal",
           modules: [],
           filterItems: [],
@@ -970,6 +1132,12 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
         const right = snapped.x + gfw / 2 - epsilon;
         const bottom = snapped.y + gfh / 2 - epsilon;
         const overlapping = spatialIndex.queryRect(left, top, right, bottom);
+        // The spatial index is only the broad phase: track blocks just the
+        // tiles it runs over, not its whole square footprint.
+        const blockers = [...overlapping].filter((id) => {
+          const other = entityById.get(id);
+          return other !== undefined && entitiesCollide(ghost!, other, footprintOfEntity);
+        });
         // A ghost exactly on top of a same-named entity at its own tile is
         // still a valid placement — it rebuilds that entity in place with
         // the ghost's own facing/quality (see index.ts's placeEntity), the
@@ -978,11 +1146,12 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
         // overlapping entities, or one of a different name, still blocks —
         // there's no single existing entity a click there could sensibly
         // rebuild.
-        ghostCanPlace =
-          overlapping.size === 0 ||
-          (overlapping.size === 1 &&
+        ghostCanPlace = isRailSnapped(mode.entityName)
+          ? railsideOk(slot, overlapping)
+          : blockers.length === 0 ||
+          (blockers.length === 1 &&
             (() => {
-              const only = entityById.get([...overlapping][0]!);
+              const only = entityById.get(blockers[0]!);
               return only?.name === mode.entityName && only.x === snapped.x && only.y === snapped.y;
             })());
       }
@@ -1047,7 +1216,11 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
           pg.x + gfw / 2 - epsilon,
           pg.y + gfh / 2 - epsilon,
         );
-        return overlapping.size === 0;
+        for (const id of overlapping) {
+          const other = entityById.get(id);
+          if (other && entitiesCollide(pg, other, footprintOfEntity)) return false;
+        }
+        return true;
       });
     }
 
@@ -1247,12 +1420,22 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
       drawHoverHighlight(ctx, corner, partner.x, partner.y, 1, 1, "pair");
     };
 
+    // Track gets its brackets turned to lie along the rail, as in the game.
+    const highlightEntity = (entity: PlacedEntity, visual: ResolvedVisual, sheet: HTMLImageElement) => {
+      if (isRail(entity.name)) {
+        const box = railHighlightBox(entity.name, entity.direction);
+        drawHoverHighlight(ctx, sheet, entity.x + box.cx, entity.y + box.cy, box.w, box.h, "regular", box.angle, Math.min(box.w, box.h));
+        return;
+      }
+      const [fw, fh] = effectiveFootprint(visual, entity.direction);
+      drawHoverHighlight(ctx, sheet, entity.x, entity.y, fw, fh);
+    };
+
     const corner = getHoverHighlightSprite();
     if (hoveredEntityNumber !== undefined && corner) {
       const hovered = entityById.get(hoveredEntityNumber);
       const visual = hovered && visualFor(hovered.name);
       if (hovered && visual) {
-        const [fw, fh] = effectiveFootprint(visual, hovered.direction);
         drawUndergroundPair(hovered, corner);
         if (mode.kind === "wire" && visual.outputWireConnections) {
           // A held wire attaches to one half of a combinator — bracket just
@@ -1261,7 +1444,7 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
           const sign = hoveredSide === 2 ? 0.5 : -0.5;
           drawHoverHighlight(ctx, corner, hovered.x + dx * sign, hovered.y + dy * sign, 1, 1);
         } else {
-          drawHoverHighlight(ctx, corner, hovered.x, hovered.y, fw, fh);
+          highlightEntity(hovered, visual, corner);
         }
         // A combinator shows which way signals flow through it.
         const arrows = visual.outputWireConnections && getIndicationSprites();
@@ -1308,13 +1491,12 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
       // hit-test if the drag ended this instant.
       const corner = getHoverHighlightSprite();
       if (corner) {
-        const inBox = spatialIndex.queryRect(left, top, right, bottom);
+        const inBox = entitiesInBox(left, top, right, bottom);
         for (const num of inBox) {
           const entity = entityById.get(num);
           const visual = entity && visualFor(entity.name);
           if (!entity || !visual) continue;
-          const [fw, fh] = effectiveFootprint(visual, entity.direction);
-          drawHoverHighlight(ctx, corner, entity.x, entity.y, fw, fh);
+          highlightEntity(entity, visual, corner);
         }
       }
     }
@@ -1333,6 +1515,27 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
     phases.overlays = performance.now() - tOverlays;
 
     const tGhostDraw = performance.now();
+    // A held signal shows the rail blocks signals divide track into, as a
+    // line down the middle of the track in each block's colour, and a handle
+    // at every free slot along nearby track. Both go under the ghost, so the
+    // snapped ghost sits on top of its own handle. A held train stop shows
+    // its own, larger handles.
+    if (mode.kind === "place" && ghostWorldPos && (mode.entityName === "rail-signal" || mode.entityName === "rail-chain-signal")) {
+      const index = currentRailIndex();
+      const blocks = index.blocks();
+      for (const { piece, block, cut } of blocks.pieces) {
+        const color = RAIL_BLOCK_COLORS[blocks.colors[block]!]!;
+        const line = railCentreline(piece.name, piece.direction, 12).map(([x, y]): [number, number] => [piece.x + x, piece.y + y]);
+        drawRailBlockLine(ctx, trimPolyline(line, cut[0] ? RAIL_BLOCK_MARKER_INSET : 0, cut[1] ? RAIL_BLOCK_MARKER_INSET : 0), color);
+      }
+      for (const m of blocks.markers) drawRailBlockMarker(ctx, m.x, m.y, m.dir, m.kind, RAIL_BLOCK_COLORS[blocks.colors[m.block]!]!);
+      for (const slot of signalSlotsNear(index, ghostWorldPos.x, ghostWorldPos.y)) {
+        drawSignalHandle(ctx, slot);
+      }
+    }
+    if (mode.kind === "place" && ghostWorldPos && mode.entityName === "train-stop") {
+      for (const slot of stopSlotsNear(currentRailIndex(), ghostWorldPos.x, ghostWorldPos.y)) drawStopHandle(ctx, slot);
+    }
     if (ghost) {
       const visual = visualFor(ghost.name);
       const ghostTint = ghostCanPlace ? GHOST_VALID_TINT : GHOST_INVALID_TINT;
@@ -1344,7 +1547,7 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
           drawInserter(ctx, atlas, ghost, visual.inserterGraphics, ghostTint, tintedRes);
         } else if (visual.graphics) {
           const ghostCommands: DrawCommand[] = [];
-          collectEntity(ghostCommands, ghost, visual, { grid: previewGrid, fluidNetwork: previewFluidNetwork, heatNetwork: previewHeatNetwork, ...connectors, platformBoxes, animationFrame }, 1);
+          collectEntity(ghostCommands, ghost, withoutRailPatch(visual), { grid: previewGrid, fluidNetwork: previewFluidNetwork, heatNetwork: previewHeatNetwork, ...connectors, platformBoxes, animationFrame }, 1);
           for (const c of ghostCommands) c.tint = ghostTint;
           paint(ctx, atlas, ghostCommands, tintedRes);
         }
@@ -1370,6 +1573,24 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
       }
       drawQualityBadge(ctx, iconAtlas, pg, visual);
     }
+
+    if (railGhosts.length > 0) {
+      // One paint call per tint for the whole plan, so every piece's bed
+      // sorts under every piece's rails, same as placed track (a tinted
+      // batch is washed in a single colour, so tints can't share one).
+      const byTint = new Map<string, DrawCommand[]>();
+      for (const { entity, tint } of railGhosts) {
+        const visual = visualFor(entity.name);
+        if (!visual?.graphics) continue;
+        const commands = byTint.get(tint) ?? byTint.set(tint, []).get(tint)!;
+        const start = commands.length;
+        collectEntity(commands, entity, visual, { grid: previewGrid, fluidNetwork: previewFluidNetwork, heatNetwork: previewHeatNetwork, ...connectors, platformBoxes, animationFrame }, 1);
+        for (let i = start; i < commands.length; i++) commands[i]!.tint = tint;
+      }
+      for (const commands of byTint.values()) paint(ctx, atlas, commands, tintedRes);
+    }
+    if (railArrow) drawRailStartArrow(ctx, railArrow.x, railArrow.y, railArrow.dir);
+    if (railBlocked) drawBlockedCross(ctx, railBlocked.x, railBlocked.y);
 
     phases.ghost += performance.now() - tGhostDraw;
 
@@ -1431,7 +1652,12 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
     if (mode.kind === "place") {
       ghostWorldPos = worldAtScreenPoint(lastPointer.x, lastPointer.y);
       invalidate();
-      if (isPlacingDrag) placeAtGhost();
+      // A rail press is locked to where the camera was: panning (WASD)
+      // while it's held voids it, so nothing is laid on release.
+      if (isPlacingDrag) {
+        if (isRailPlannerItem(mode.entityName)) railPressPanned = true;
+        else placeAtGhost();
+      }
     }
   }
 
@@ -1976,14 +2202,63 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
     eraseAtScreenPoint(e.clientX, e.clientY);
   }
 
+  /** A signal/stop slot is free when nothing but track already stands on
+   *  it. `overlapping` is the spatial query over the ghost's own box, when
+   *  the caller already has one. */
+  function railsideOk(slot: RailSlot | undefined, overlapping?: ReadonlySet<number>): boolean {
+    if (!slot) return false;
+    const index = currentRailIndex();
+    if (railsideSlotTaken(index, slot)) return false;
+    const hits = overlapping ?? spatialIndex.queryRect(slot.x - 0.49, slot.y - 0.49, slot.x + 0.49, slot.y + 0.49);
+    for (const id of hits) {
+      const e = entityById.get(id);
+      if (e && !isRailPlannerItem(e.name)) {
+        // A footprint that only brushes the slot from a neighbouring tile
+        // (track, or a signal next door) doesn't block it.
+        if (Math.abs(e.x - slot.x) < 0.5 && Math.abs(e.y - slot.y) < 0.5) return false;
+        if (!isRailSnapped(e.name)) {
+          const visual = visualFor(e.name);
+          const [w, h] = visual ? effectiveFootprint(visual, e.direction) : FALLBACK_FOOTPRINT;
+          if (Math.abs(e.x - slot.x) < w / 2 && Math.abs(e.y - slot.y) < h / 2) return false;
+        }
+      }
+    }
+    return true;
+  }
+
   /** Places at the ghost's current snapped grid cell if that cell hasn't
    *  already been placed into during this drag — matching the real game's
    *  drag-to-place-a-line-of-belts/walls feel: hold left-click and drag to
    *  keep placing wherever the ghost lands, one placement per cell instead
    *  of one per pointermove event (which would fire many times over the
    *  same cell at normal drag speeds). */
+  /** A signal's ghost without the cables to the rail beside it (its
+   *  rail_piece layer, the one laid out in a direction16Grid): those belong
+   *  to a signal standing on track, not to one still in hand. */
+  function withoutRailPatch(visual: ResolvedVisual): ResolvedVisual {
+    const layers = visual.graphics?.layers;
+    if (!layers?.some((l) => l.column?.by === "direction16Grid")) return visual;
+    return { ...visual, graphics: { ...visual.graphics!, layers: layers.filter((l) => l.column?.by !== "direction16Grid") } };
+  }
+
   function placeAtGhost(): void {
     if (mode.kind !== "place" || !ghostWorldPos) return;
+    // Track only ever goes down through the rail planner, which snaps it to
+    // the rail grid and lays whole pieces end to end.
+    if (isRailPlannerItem(mode.entityName)) return;
+    if (isRailSnapped(mode.entityName)) {
+      const index = currentRailIndex();
+      const slot = railsideSlot(index, mode.entityName, ghostWorldPos.x, ghostWorldPos.y, ghostDirection);
+      if (!slot || !railsideOk(slot)) return;
+      const key = `${slot.x},${slot.y}`;
+      if (placedThisGesture.has(key)) return;
+      // One signal or stop per click: a drag (or a jittery click) would
+      // otherwise drop another on each slot it passes.
+      if (placedThisGesture.size > 0) return;
+      placedThisGesture.add(key);
+      placeCallback?.(slot.x, slot.y, slot.direction);
+      return;
+    }
     const visual = visualFor(mode.entityName);
     const [fw, fh] = visual ? effectiveFootprint(visual, ghostDirection) : FALLBACK_FOOTPRINT;
     const snapped = { x: snapAxis(ghostWorldPos.x, fw), y: snapAxis(ghostWorldPos.y, fh) };
@@ -2042,6 +2317,14 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
       if (activeTouches.size > 2) return; // ignore a third finger entirely
     }
 
+    if (e.button === 2 && railAnchor) {
+      // While track is being planned, right-click drops the plan rather
+      // than mining whatever is under the cursor.
+      railAnchor = null;
+      railPendingPiece = null;
+      invalidate();
+      return;
+    }
     if (e.button === 2) {
       if (e.altKey) {
         // Alt+right-click is its own gesture (see onAltRightClickEntity) —
@@ -2068,7 +2351,14 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
     if (mode.kind === "place") {
       isPlacingDrag = true;
       placedThisGesture = new Set();
-      placeAtGhost();
+      shiftHeld = e.shiftKey;
+      if (isRailPlannerItem(mode.entityName)) {
+        // Captured so a drag that ends off the canvas still lays its track.
+        canvas.setPointerCapture(e.pointerId);
+        railPress();
+      } else {
+        placeAtGhost();
+      }
       return;
     }
 
@@ -2145,8 +2435,12 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
     }
     if (mode.kind === "place") {
       ghostWorldPos = worldAtPointer(e);
+      shiftHeld = e.shiftKey;
       invalidate(); // the ghost follows the cursor, so the picture changed
-      if (isPlacingDrag) placeAtGhost();
+      if (isPlacingDrag) {
+        if (isRailPlannerItem(mode.entityName)) railDragMoved = true;
+        else placeAtGhost();
+      }
     }
     if (mode.kind === "paste") {
       ghostWorldPos = worldAtPointer(e); // reuses the same field the single ghost uses
@@ -2217,7 +2511,7 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
           const right = Math.max(boxDownWorldPos.x, boxDragCurrentWorldPos.x);
           const top = Math.min(boxDownWorldPos.y, boxDragCurrentWorldPos.y);
           const bottom = Math.max(boxDownWorldPos.y, boxDragCurrentWorldPos.y);
-          hitSet = spatialIndex.queryRect(left, top, right, bottom);
+          hitSet = entitiesInBox(left, top, right, bottom);
         } else if (boxDownWorldPos) {
           const hit = spatialIndex.hitTest(boxDownWorldPos.x, boxDownWorldPos.y);
           if (hit !== undefined) hitSet = new Set([hit]);
@@ -2245,7 +2539,32 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
       }
       return;
     }
+    if (isPlacingDrag && mode.kind === "place" && isRailPlannerItem(mode.entityName)) {
+      // A press-drag-release lays the dragged track in one go, and a click
+      // with a plan going lays that plan. A cancelled gesture (the browser
+      // took the pointer away, or the camera panned mid-press) lays nothing.
+      const cancelled = e.type === "pointercancel" || railPressPanned;
+      const hasPlan = (currentRailPreview()?.pieces.length ?? 0) > 0;
+      const laysPlan = !cancelled && hasPlan && (railDragMoved || railPressAnchored);
+      if (railPendingPiece && !cancelled) {
+        // The start piece goes down with the dragged plan, as one step.
+        const preview = laysPlan ? currentRailPreview()! : null;
+        railPlaceCallback?.(preview ? [railPendingPiece, ...preview.pieces] : [railPendingPiece], preview?.supports ?? []);
+        railAnchor = preview ? preview.end : null;
+      } else if (laysPlan) {
+        commitRailPreview();
+      } else if (railPressOnGround) {
+        railAnchor = null;
+      }
+      railPendingPiece = null;
+      railPressOnGround = false;
+      railPressAnchored = false;
+      invalidate();
+    }
+    if (isPlacingDrag && canvas.hasPointerCapture(e.pointerId)) canvas.releasePointerCapture(e.pointerId);
     isPlacingDrag = false;
+    railDragMoved = false;
+    railPressPanned = false;
     if (!isPanning) return;
     isPanning = false;
     // The deferred idle-mode click-vs-drag decision (see onPointerDown):
@@ -2267,6 +2586,7 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
 
   let hoverCallback: ((entityNumber: number | undefined, e: PointerEvent) => void) | null = null;
   let placeCallback: ((worldX: number, worldY: number, direction: number) => void) | null = null;
+  let railPlaceCallback: ((pieces: RailPiece[], supports: RailPiece[]) => void) | null = null;
   let selectCallback: ((entityNumber: number) => void) | null = null;
   let eraseCallback: ((entityNumber: number) => void) | null = null;
   let altRightClickCallback: ((entityNumber: number) => void) | null = null;
@@ -2315,6 +2635,10 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
   const isTypingTarget = () =>
     document.activeElement instanceof HTMLInputElement || document.activeElement instanceof HTMLTextAreaElement;
   const onKeyDown = (e: KeyboardEvent) => {
+    if (e.key === "Shift" && !shiftHeld) {
+      shiftHeld = true;
+      if (railAnchor) invalidate();
+    }
     const key = e.key.toLowerCase();
     if (key !== "w" && key !== "a" && key !== "s" && key !== "d") return;
     if (e.metaKey || e.ctrlKey || e.altKey || isTypingTarget()) return;
@@ -2322,6 +2646,10 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
     heldKeys.add(key);
   };
   const onKeyUp = (e: KeyboardEvent) => {
+    if (e.key === "Shift" && shiftHeld) {
+      shiftHeld = false;
+      if (railAnchor) invalidate();
+    }
     heldKeys.delete(e.key.toLowerCase());
   };
   // A key can go down, then the window loses focus (alt-tab, DevTools)
@@ -2388,12 +2716,16 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
     for (const e of entities) {
       const visual = visualFor(e.name);
       const [w, h] = visual ? effectiveFootprint(visual, e.direction) : FALLBACK_FOOTPRINT;
-      const box = {
+      const rail = isRail(e.name) ? railHighlightBox(e.name, e.direction) : undefined;
+      const box: IndexedBox = {
         entityNumber: e.entityNumber,
         left: e.x - w / 2,
         top: e.y - h / 2,
         right: e.x + w / 2,
         bottom: e.y + h / 2,
+        // Track is hovered by the same turned box its brackets draw round,
+        // not by its (mostly empty) axis-aligned footprint.
+        turned: rail && { cx: e.x + rail.cx, cy: e.y + rail.cy, w: rail.w, h: rail.h, angle: rail.angle },
       };
       boxes.push(box);
       if (connectors.isPlatformLike(e.name)) platformBoxes.push(box);
@@ -2515,6 +2847,12 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
         boxDragCurrentWorldPos = undefined;
         boxDragMoved = false;
       }
+      // A rail plan belongs to the item that started it: putting the item
+      // away, or swapping between ground and elevated track, drops it.
+      if (newMode.kind !== "place" || mode.kind !== "place" || newMode.entityName !== mode.entityName) {
+        railAnchor = null;
+        railPendingPiece = null;
+      }
       mode = newMode;
       invalidate();
       if (mode.kind !== "place" && mode.kind !== "paste") {
@@ -2577,6 +2915,16 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
     },
     onPlace(callback) {
       placeCallback = callback;
+    },
+    onPlaceRails(callback) {
+      railPlaceCallback = callback;
+    },
+    cancelRailPlan() {
+      if (!railAnchor) return false;
+      railAnchor = null;
+      railPendingPiece = null;
+      invalidate();
+      return true;
     },
     onSelect(callback) {
       selectCallback = callback;

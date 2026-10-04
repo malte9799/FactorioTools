@@ -10,6 +10,20 @@ export interface IndexedBox {
   top: number;
   right: number;
   bottom: number;
+  /** A tighter, rotated box for hit-testing (track), inside the axis-aligned
+   *  one above, which still drives bucketing and rect queries. */
+  turned?: { cx: number; cy: number; w: number; h: number; angle: number };
+}
+
+function insideTurned(t: NonNullable<IndexedBox["turned"]>, x: number, y: number): boolean {
+  const dx = x - t.cx;
+  const dy = y - t.cy;
+  const cos = Math.cos(t.angle);
+  const sin = Math.sin(t.angle);
+  // Rotate the point back by the box's clockwise angle.
+  const lx = dx * cos + dy * sin;
+  const ly = -dx * sin + dy * cos;
+  return Math.abs(lx) <= t.w / 2 && Math.abs(ly) <= t.h / 2;
 }
 
 const BUCKET_SIZE = 8; // tiles; larger than any real entity footprint
@@ -46,6 +60,7 @@ export class SpatialIndex {
     for (let i = bucket.length - 1; i >= 0; i--) {
       const box = bucket[i]!;
       if (worldX >= box.left && worldX <= box.right && worldY >= box.top && worldY <= box.bottom) {
+        if (box.turned && !insideTurned(box.turned, worldX, worldY)) continue;
         return box.entityNumber;
       }
     }

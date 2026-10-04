@@ -13,3 +13,8 @@ export * from "./entityDraw.js";
 export * from "./entityPreview.js";
 export * from "./render.js";
 export * from "./recordingSummary.js";
+export * from "./railGeometry.js";
+export * from "./railPlanner.js";
+export * from "./railPlacement.js";
+export * from "./collision.js";
+export * from "./railBlocks.js";

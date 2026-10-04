@@ -17,14 +17,12 @@ import {
   ROTATION_TEST_BLUEPRINT,
   DEBUG_BLUEPRINT,
   TIMESCALE_FACTOR,
-  boxOf,
-  overlaps,
   remapSelectionForPaste,
   refreshSignalItems,
   stripRichText,
 } from "@factoriotools/engine";
 import type { CalculationResult, Timescale, Blueprint, BlueprintTreeNode, PlacedEntity, QualityName, MachineGroup, ModuleStack, ThroughputContext, BottleneckSubgroup, BpSignalId, WireColor, WireLink } from "@factoriotools/engine";
-import { mountRenderer, isPoleLike, isUndergroundLike, autoUnderground, undergroundPartner, isTwoDirectionOnly, rotationStep, effectiveFootprint, rotateAroundCenter, summariseRecording, slowestFrames, worstPhase, autoConnectPole, canWire, dropWiresFor, terminalSideAt, toggleWire, type BlueprintRenderer, type HighlightRole } from "@factoriotools/renderer";
+import { mountRenderer, entitiesCollide, isRail, isElevatedRail, railTiles, railKey, type RailPiece, isPoleLike, isUndergroundLike, autoUnderground, undergroundPartner, isTwoDirectionOnly, rotationStep, effectiveFootprint, rotateAroundCenter, summariseRecording, slowestFrames, worstPhase, autoConnectPole, canWire, dropWiresFor, terminalSideAt, toggleWire, type BlueprintRenderer, type HighlightRole } from "@factoriotools/renderer";
 import { buildRecipeCard, renderResults, type ViewOptions } from "./legacy-view/panels.js";
 import { icon } from "./legacy-view/icons.js";
 import { makeFloatingWindow } from "../../window-manager.js";
@@ -412,6 +410,9 @@ interface ExampleBlueprint {
  *  one hand-picked fixture, so "Load an example" gives a different real
  *  build each time instead of always the same small demo. */
 let examplePool: Promise<ExampleBlueprint[]> | undefined;
+/** Stand beside track rather than on it — see placeEntity's collision rule. */
+const RAILSIDE = new Set(["rail-signal", "rail-chain-signal", "train-stop"]);
+
 function loadExamplePool(): Promise<ExampleBlueprint[]> {
   if (!examplePool) {
     examplePool = fetch("./data/example-blueprints.json")
@@ -1547,19 +1548,14 @@ export function mountBlueprintEditor(root: HTMLElement): () => void {
       });
       return;
     }
-    // In real Factorio nothing shares a tile (elevated rails are the one
-    // exception, out of scope here) — reject a placement whose footprint box
-    // overlaps any already-placed entity's box, the same box math the rate
-    // calculator's beacon-range check already uses. Unknown-footprint
-    // entities fall back to 1x1, matching buildVisualLookup's own default.
-    const newVisual = visualLookup().get(name);
-    const newFootprint = newVisual ? effectiveFootprint(newVisual, direction) : ([1, 1] as [number, number]);
-    const newBox = boxOf(worldX, worldY, newFootprint);
-    const collides = entities.some((e) => {
-      const visual = visualLookup().get(e.name);
-      const footprint = visual ? effectiveFootprint(visual, e.direction) : ([1, 1] as [number, number]);
-      return overlaps(newBox, boxOf(e.x, e.y, footprint));
-    });
+    // In real Factorio nothing shares a tile — reject a placement that
+    // collides with any already-placed entity (entitiesCollide: footprint
+    // boxes, except that track blocks only the tiles it runs over, elevated
+    // track blocks nothing on the ground, and signals and train stops stand
+    // beside track). Unknown-footprint entities fall back to 1x1, matching
+    // buildVisualLookup's own default.
+    const candidate: PlacedEntity = { entityNumber: -1, name, x: worldX, y: worldY, direction, quality, modules: [], filterItems: [] };
+    const collides = entities.some((e) => entitiesCollide(candidate, e, footprintOfEntity));
     if (collides) {
       setStatus("Can't build here — something else already occupies that space.", "error");
       return;
@@ -1591,6 +1587,48 @@ export function mountBlueprintEditor(root: HTMLElement): () => void {
       // applyEdit as the placement, so the pole and its wires undo together
       // rather than as two separate steps.
       wires = autoConnectPole(newEntity, entities, wires, visualLookup().get.bind(visualLookup()), isPoleLike);
+    });
+  }
+
+  function footprintOfEntity(e: PlacedEntity): [number, number] {
+    const visual = visualLookup().get(e.name);
+    return visual ? effectiveFootprint(visual, e.direction) : [1, 1];
+  }
+
+  /** Lays planned track (and the supports under its elevated part) as one
+   *  undo step. Pieces already in place are kept as they are; a piece that
+   *  would land on something other than track is skipped, which only
+   *  happens when the blueprint changed under a stale plan. */
+  function placeRails(pieces: RailPiece[], supports: RailPiece[]) {
+    const have = new Set(entities.filter((e) => isRail(e.name)).map((e) => railKey(e)));
+    const taken = new Set<string>();
+    for (const e of entities) {
+      if (isRail(e.name) || RAILSIDE.has(e.name)) continue;
+      const visual = visualLookup().get(e.name);
+      const [w, h] = visual ? effectiveFootprint(visual, e.direction) : [1, 1];
+      for (let ty = Math.floor(e.y - h / 2 + 0.01); ty < Math.ceil(e.y + h / 2 - 0.01); ty++) {
+        for (let tx = Math.floor(e.x - w / 2 + 0.01); tx < Math.ceil(e.x + w / 2 - 0.01); tx++) taken.add(`${tx},${ty}`);
+      }
+    }
+    const fresh = pieces.filter((p) => {
+      if (have.has(railKey(p))) return false;
+      have.add(railKey(p));
+      return isElevatedRail(p.name) || railTiles(p).every(([tx, ty]) => !taken.has(`${tx},${ty}`));
+    });
+    const freshSupports = supports.filter((sp) => !entities.some((e) => e.name === "rail-support" && e.x === sp.x && e.y === sp.y));
+    if (fresh.length === 0 && freshSupports.length === 0) return;
+    applyEdit(() => {
+      const added = [...fresh, ...freshSupports].map((p): PlacedEntity => ({
+        entityNumber: nextEntityNumber++,
+        name: p.name,
+        x: p.x,
+        y: p.y,
+        direction: p.direction,
+        quality: "normal",
+        modules: [],
+        filterItems: [],
+      }));
+      entities = [...entities, ...added];
     });
   }
 
@@ -1889,6 +1927,7 @@ export function mountBlueprintEditor(root: HTMLElement): () => void {
       if (!paletteSelection) return;
       placeEntity(worldX, worldY, paletteSelection, direction, paletteQuality);
     });
+    renderer.onPlaceRails(placeRails);
     renderer.onSelect((entityNumber) => {
       const entity = entities.find((e) => e.entityNumber === entityNumber);
       if (!entity) {
@@ -2007,12 +2046,8 @@ export function mountBlueprintEditor(root: HTMLElement): () => void {
       );
       nextEntityNumber = remapped.nextNumber;
 
-      const footprintOf = (e: PlacedEntity): [number, number] => {
-        const visual = visualLookup().get(e.name);
-        return visual ? effectiveFootprint(visual, e.direction) : ([1, 1] as [number, number]);
-      };
       const collidesWithAny = (e: PlacedEntity, against: PlacedEntity[]) =>
-        against.some((other) => overlaps(boxOf(e.x, e.y, footprintOf(e)), boxOf(other.x, other.y, footprintOf(other))));
+        against.some((other) => entitiesCollide(e, other, footprintOfEntity));
 
       let toPlace = remapped.entities;
       let toRemoveFirst: number[] = [];
@@ -3330,6 +3365,12 @@ export function mountBlueprintEditor(root: HTMLElement): () => void {
   // a (default, no-op) menu state.
   window.addEventListener("keydown", (e) => {
     if (e.key !== "Escape") return;
+    // A rail plan in progress drops back to just holding the rail item.
+    if (renderer.cancelRailPlan()) {
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      return;
+    }
     if (!boxModeOn && !pasteArmed) return;
     e.preventDefault();
     e.stopImmediatePropagation();
@@ -3568,6 +3609,12 @@ export function mountBlueprintEditor(root: HTMLElement): () => void {
       // second press on the same spot — toggle back to idle instead of
       // re-picking the identical thing, so 'q' twice on one spot clears it.
       setMode("idle");
+    } else if (entity && isRail(entity.name)) {
+      // Track is laid by the rail item, whatever piece is pointed at: the
+      // ramp item for elevated track, plain rail for the rest.
+      const item = isElevatedRail(entity.name) || entity.name === "rail-ramp" ? "rail-ramp" : "straight-rail";
+      if (item === paletteSelection) setMode("idle");
+      else setMode({ place: item, quality: "normal", direction: entity.name === "straight-rail" ? entity.direction : undefined });
     } else if (entity) {
       // The pipette also picks up the hovered entity's own quality and
       // facing, not just its type — matches the real game's own
@@ -3838,6 +3885,10 @@ export function mountBlueprintEditor(root: HTMLElement): () => void {
     loadDebugLab() {
       input.value = DEBUG_BLUEPRINT;
       load(DEBUG_BLUEPRINT);
+    },
+    /** Every placed entity's name, position and facing. */
+    listEntities() {
+      return entities.map((e) => ({ name: e.name, x: e.x, y: e.y, direction: e.direction }));
     },
     /** Hide every floating GUI window for an unobstructed screenshot. */
     hideWindows() {
