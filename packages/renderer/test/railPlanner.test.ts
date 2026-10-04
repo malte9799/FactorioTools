@@ -86,7 +86,8 @@ test("going up a layer inserts a ramp and continues elevated", () => {
 test("a long elevated run gets supports at most 22 tiles apart", () => {
   const start: RailEnd = { x: 1, y: 0, dir: 0, elevated: true };
   const pieces = planRail({ start, target: { x: 1, y: -80 }, targetElevated: true, blocked: open });
-  const supports = supportsFor(start, pieces, () => false, () => false);
+  const { supports, covered } = supportsFor(start, pieces, () => false, () => false);
+  assert.ok(covered);
   const ys = supports.map((s) => s.y).sort((a, b) => b - a);
   assert.equal(ys[0], 0, "the unsupported start gets one");
   for (let i = 1; i < ys.length; i++) assert.ok(ys[i - 1]! - ys[i]! <= 22, `gap ${ys[i - 1]} → ${ys[i]}`);
@@ -124,6 +125,12 @@ test("without Shift a far turn heads the cursor's way and stops at the limit", (
 test("without Shift, a cursor no track can get closer to gets no plan", () => {
   // Just beside the end, at right angles: every piece leads away from it.
   assert.deepEqual(planRail({ start: north, target: { x: 4, y: 1 }, targetElevated: false, blocked: open, maxLength: RAIL_PLAN_LENGTH_LIMIT }), []);
+});
+
+test("elevated track with nowhere to stand a support isn't covered", () => {
+  const start: RailEnd = { x: 1, y: 0, dir: 0, elevated: true };
+  const pieces = planRail({ start, target: { x: 1, y: -60 }, targetElevated: true, blocked: open });
+  assert.equal(supportsFor(start, pieces, () => false, () => true).covered, false);
 });
 
 console.log(`${passed} passed`);

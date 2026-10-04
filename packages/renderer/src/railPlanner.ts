@@ -258,8 +258,11 @@ export function supportsFor(
   pieces: RailPiece[],
   supported: (x: number, y: number) => boolean,
   blocked: (x: number, y: number, direction: number) => boolean,
-): RailPiece[] {
+): { supports: RailPiece[]; covered: boolean } {
   const out: RailPiece[] = [];
+  // False once some stretch of deck can't be held up — every spot a support
+  // could stand on along it is taken.
+  let covered = true;
   let at = start;
   // Track length since the last thing holding the deck up, and how far that
   // thing reaches.
@@ -288,17 +291,22 @@ export function supportsFor(
     if (reach < 0) {
       // Unsupported start: hold it up right where the deck begins.
       if (!blocked(at.x, at.y, at.dir)) place(at);
+      else covered = false;
       reach = SUPPORT_RANGE;
       since = 0;
     }
     since += len;
     // The far side of this piece must stay within reach of the last support
     // AND of the next one; a support every 2 * range keeps both true.
-    if (since > reach + SUPPORT_RANGE - 1 && candidate) {
-      place(candidate);
-      since -= candidateSince;
-      reach = SUPPORT_RANGE;
-      candidate = undefined;
+    if (since > reach + SUPPORT_RANGE - 1) {
+      if (candidate) {
+        place(candidate);
+        since -= candidateSince;
+        reach = SUPPORT_RANGE;
+        candidate = undefined;
+      } else if (since > reach + SUPPORT_RANGE) {
+        covered = false;
+      }
     }
     if (!blocked(next.x, next.y, next.dir)) {
       candidate = next;
@@ -307,6 +315,9 @@ export function supportsFor(
     at = next;
   }
   // Leave the far end of the run held up too.
-  if (reach >= 0 && since > reach && candidate) place(candidate);
-  return out;
+  if (reach >= 0 && since > reach) {
+    if (candidate) place(candidate);
+    else covered = false;
+  }
+  return { supports: out, covered };
 }

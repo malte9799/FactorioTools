@@ -152,7 +152,11 @@ export interface RailPreview {
 export function previewRail(index: RailIndex, start: RailEnd, target: { x: number; y: number }, targetElevated: boolean, unlimited: boolean): RailPreview {
   const maxLength = unlimited ? undefined : RAIL_PLAN_LENGTH_LIMIT;
   const pieces = planRail({ start, target, targetElevated, blocked: index.blocked, maxLength });
-  const supports = supportsFor(start, pieces, index.supported, (x, y) => index.supportBlocked(x, y)).filter((s) => !index.supported(s.x, s.y));
+  const held = supportsFor(start, pieces, index.supported, (x, y) => index.supportBlocked(x, y));
+  // Elevated track that can't be held up anywhere along a stretch isn't
+  // buildable: no plan, so the red X shows instead.
+  if (!held.covered) return { pieces: [], supports: [], end: start };
+  const supports = held.supports.filter((s) => !index.supported(s.x, s.y));
   return { pieces, supports, end: planEnd(start, pieces) };
 }
 

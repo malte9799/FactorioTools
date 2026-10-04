@@ -812,6 +812,8 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
   // The current press started on open ground: a plain click there lays just
   // the held piece and leaves no plan behind; only a drag plans on from it.
   let railPressOnGround = false;
+  // The current press began with a plan already set: its release lays it.
+  let railPressAnchored = false;
   // Shift plans all the way to the cursor, past the rail item's length limit.
   let shiftHeld = false;
 
@@ -852,10 +854,14 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
     if (mode.kind !== "place" || !ghostWorldPos) return;
     railDragMoved = false;
     railPressOnGround = false;
+    // With a plan already going, the press only starts the gesture: the
+    // release lays the preview where the cursor ends up, so a drag never
+    // lays the old preview first and then a second one.
     if (railAnchor) {
-      commitRailPreview();
+      railPressAnchored = true;
       return;
     }
+    railPressAnchored = false;
     const start = railStartAt(currentRailIndex(), ghostWorldPos.x, ghostWorldPos.y);
     if (start) {
       railAnchor = start.end;
@@ -2480,11 +2486,15 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
       return;
     }
     if (isPlacingDrag && mode.kind === "place" && isRailPlannerItem(mode.entityName)) {
-      // A press-drag-release lays the dragged track in one go.
-      const laid = railDragMoved && (currentRailPreview()?.pieces.length ?? 0) > 0;
-      if (laid) commitRailPreview();
+      // A press-drag-release lays the dragged track in one go, and a click
+      // with a plan going lays that plan. A cancelled gesture (the browser
+      // took the pointer away) lays nothing.
+      const cancelled = e.type === "pointercancel";
+      const hasPlan = (currentRailPreview()?.pieces.length ?? 0) > 0;
+      if (!cancelled && hasPlan && (railDragMoved || railPressAnchored)) commitRailPreview();
       else if (railPressOnGround) railAnchor = null;
       railPressOnGround = false;
+      railPressAnchored = false;
       invalidate();
     }
     if (isPlacingDrag && canvas.hasPointerCapture(e.pointerId)) canvas.releasePointerCapture(e.pointerId);
