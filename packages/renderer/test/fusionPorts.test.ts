@@ -80,10 +80,10 @@ test("an east-facing reactor swaps them: plasma E/W, coolant N/S", () => {
   assert.deepEqual(pieceColumns(collect(entity("fusion-reactor", 3, 3, 4))), { 1: 0, 2: 0, 3: 1, 4: 1, 5: 0, 6: 0, 7: 1, 8: 1 });
 });
 
-test("a pipe opens the coolant port it touches and no other", () => {
+test("a pipe on a coolant port leaves the reactor's own art alone", () => {
   // West edge, upper port: tile (0.5, 1.5), so the pipe sits at (-0.5, 1.5).
   const cols = pieceColumns(collect(entity("fusion-reactor", 3, 3, 0), [entity("pipe", -0.5, 1.5)]));
-  assert.deepEqual(cols, { 1: 1, 2: 1, 3: 0, 4: 0, 5: 1, 6: 1, 7: 0, 8: 2 });
+  assert.deepEqual(cols, { 1: 1, 2: 1, 3: 0, 4: 0, 5: 1, 6: 1, 7: 0, 8: 0 });
 });
 
 test("a pipe against a plasma port neither connects nor uncaps it", () => {
@@ -97,18 +97,25 @@ test("a pipe against a plasma port neither connects nor uncaps it", () => {
   assert.notDeepEqual(sheets(collect(joined, [reactor])), sheets(collect(joined)));
 });
 
-test("two reactors side by side bridge their touching ports", () => {
-  const cols = pieceColumns(collect(entity("fusion-reactor", 3, 3, 0), [entity("fusion-reactor", 9, 3, 0)]));
+test("two reactors side by side join coolant to coolant, plasma to plasma", () => {
+  const beside = pieceColumns(collect(entity("fusion-reactor", 3, 3, 0), [entity("fusion-reactor", 9, 3, 0)]));
+  assert.deepEqual(beside, { 1: 1, 2: 1, 3: 2, 4: 2, 5: 1, 6: 1, 7: 0, 8: 0 });
+  const below = pieceColumns(collect(entity("fusion-reactor", 3, 3, 0), [entity("fusion-reactor", 3, 9, 0)]));
+  assert.deepEqual(below, { 1: 1, 2: 1, 3: 0, 4: 0, 5: 3, 6: 3, 7: 0, 8: 0 });
+});
+
+test("a coolant side meeting a rotated neighbour's plasma side gets the plain plating", () => {
+  const cols = pieceColumns(collect(entity("fusion-reactor", 3, 3, 0), [entity("fusion-reactor", 9, 3, 4)]));
   assert.deepEqual(cols, { 1: 1, 2: 1, 3: 4, 4: 4, 5: 1, 6: 1, 7: 0, 8: 0 });
 });
 
-test("a generator opens the reactor plasma port feeding it, and grows that one intake", () => {
+test("a generator plugs onto the reactor's plasma port as-is, and grows that one intake", () => {
   // Generator north of the reactor, facing north: its intakes are at its
   // south end, local (-1, 2) and (1, 2). Centred at x=2.5 the left one
   // lands on (1.5, -0.5), straight above the reactor's north-west port.
   const reactor = entity("fusion-reactor", 3, 3, 0);
   const generator = entity("fusion-generator", 2.5, -2.5, 0);
-  assert.equal(pieceColumns(collect(reactor, [generator]))[1], 3);
+  assert.equal(pieceColumns(collect(reactor, [generator]))[1], 1);
   assert.equal(pieceColumns(collect(reactor, [generator]))[2], 1);
   const drawn = sheets(collect(generator, [reactor]));
   assert.ok(drawn.includes("fusion-generator-north-input-1.png"));

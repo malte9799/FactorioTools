@@ -453,9 +453,12 @@ function artilleryTurretGraphics(proto: any): EntityGraphics | undefined {
  *  the pieces don't.
  *
  *  Each piece is a 5-frame sheet, and the frame is the port's state, not
- *  animation: 0 = coolant port capped (the ordinary round pipe cover),
- *  1 = plasma port capped (the angular cap), 2 = coolant pipe attached,
- *  3 = plasma attached, 4 = bridged to a neighbouring reactor. Whether a
+ *  animation. 0 = coolant port (the ordinary round pipe flange), 1 = plasma
+ *  port (the angular one) — the same frame whether the port is bare or has
+ *  a pipe/generator on it, confirmed against the game: a generator's own
+ *  intake housing plugs straight onto frame 1. 2..4 only appear between
+ *  two reactors: 2 = coolant meeting coolant, 3 = plasma meeting plasma,
+ *  4 = a coolant port meeting a plasma one (plating, no pipe). Whether a
  *  connection is plasma or coolant is its own neighbour_connectable
  *  category against graphics_set.plasma_category; what it's attached to
  *  comes from the fluid-box point sitting half a tile inside it (the
@@ -483,7 +486,8 @@ function fusionReactorConnectionLayers(proto: any): GraphicsLayer[] {
     );
     if (point < 0) throw new Error(`${proto.name}: no fluid point behind neighbour connection ${slot}`);
     const plasma = connections[slot].category === gs.plasma_category;
-    const columns = plasma ? { open: 1, connected: 3, sibling: 4 } : { open: 0, connected: 2, sibling: 4 };
+    const own = plasma ? 1 : 0;
+    const columns = { open: own, connected: own, sibling: plasma ? 3 : 2, siblingMixed: 4 };
     if (northPiece?.shadow && eastPiece?.shadow) {
       layers.push({ layer: Layer.Shadow, sprites: { north: northPiece.shadow, east: eastPiece.shadow }, per: "fluid-point", point, columns });
     }

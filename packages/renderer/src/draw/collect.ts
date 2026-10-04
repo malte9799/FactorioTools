@@ -6,7 +6,7 @@ import { classifyWall } from "../neighbours/wall.js";
 import { combinatorSymbol } from "../sprites/combinatorSymbol.js";
 import { classifyBeltCell, undergroundSideLoad, type BeltCap } from "../neighbours/beltGraph.js";
 import { classifyPlatform, type PlatformBox } from "../neighbours/platform.js";
-import type { FluidNetwork } from "../neighbours/fluid.js";
+import type { FluidNetwork, FluidPointState } from "../neighbours/fluid.js";
 import type { HeatNetwork } from "../neighbours/heat.js";
 import { PIXELS_PER_TILE, type DrawCommand } from "./commands.js";
 
@@ -79,7 +79,7 @@ interface EntityFrame {
   /** What each of this entity's own fluid-box connection points is plugged
    *  into, in declaration order (matching a `fluid-point` layer's own
    *  `point` index) — see FluidNetwork.stateOf. */
-  fluidPoints: ("open" | "connected" | "sibling")[];
+  fluidPoints: FluidPointState[];
   /** Every heat-network connection point this entity has that the real
    *  heat network graph found NO neighbour for — same "unconnected only"
    *  rule as unconnectedPipeCovers (confirmed against the reference
@@ -158,7 +158,7 @@ function resolveFrame(entity: PlacedEntity, visual: ResolvedVisual, ctx: Collect
     // cover above.
     fluidPoints: ctx.fluidNetwork
       .pointsFor(entity.entityNumber)
-      .map((p) => (entity.entityNumber === -1 ? "open" : ctx.fluidNetwork.stateOf(p))),
+      .map((p): FluidPointState => (entity.entityNumber === -1 ? "open" : ctx.fluidNetwork.stateOf(p))),
     // Fixed [0, 1.5] offset rotated by the ENTITY's own placement direction
     // (not the connection point's facing), and sprite picked by
     // entityDirection+8 — both taken verbatim from the reference renderer's
@@ -519,7 +519,8 @@ export function collectEntity(
     // state the layer names no column for.
     if ("per" in layer && layer.per === "fluid-point") {
       const state = frame.fluidPoints[layer.point] ?? "open";
-      const column = state === "sibling" ? layer.columns.sibling ?? layer.columns.connected : layer.columns[state];
+      const { open, connected, sibling = connected, siblingMixed = sibling } = layer.columns;
+      const column = { open, connected, sibling, siblingMixed }[state];
       const sprite = layer.sprites[dir4Name(entity.direction)];
       if (sprite && column !== undefined) push(out, sprite, column, 0, entity, layer.layer, order, alpha);
       return;

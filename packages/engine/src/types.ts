@@ -231,15 +231,17 @@ export type GraphicsLayer = {
    *  (declaration order); `sprites` is keyed by the entity's facing and
    *  already carries its own baked shift. `columns` names the sheet column
    *  for each state of that point: `open` (nothing attached), `connected`
-   *  (a matching fluid connection), `sibling` (attached to another entity of
-   *  the same prototype — falls back to `connected` when absent). A state
-   *  with no column draws nothing: a fusion-generator's plasma intake only
-   *  exists while something feeds it. */
+   *  (a matching fluid connection), `sibling` (meeting a same-category port
+   *  of another entity of the same prototype — falls back to `connected`),
+   *  `siblingMixed` (meeting a different-category port of one — falls back
+   *  to `sibling`). A state with no column draws nothing: a
+   *  fusion-generator's plasma intake only exists while something feeds
+   *  it. */
   | {
       sprites: Partial<Record<Dir4Name, Sprite>>;
       per: "fluid-point";
       point: number;
-      columns: { open?: number; connected?: number; sibling?: number };
+      columns: { open?: number; connected?: number; sibling?: number; siblingMixed?: number };
     }
   /** One small pipe-stub cap per `heat_buffer.connections` entry, drawn at
    *  every point — unlike pipe-covers (drawn only when unconnected), a

@@ -41,6 +41,8 @@ function rotatePoint(point: PipeConnectionPoint, entityDirection: number): { x: 
   return { x, y, direction };
 }
 
+export type FluidPointState = "open" | "connected" | "sibling" | "siblingMixed";
+
 export interface WorldPipeConnection {
   entityNumber: number;
   entityName: string;
@@ -119,15 +121,17 @@ export class FluidNetwork {
     return this.facing(point).some((c) => sharesCategory(point, c));
   }
 
-  /** What `point` is plugged into, for `per: "fluid-point"` art: `sibling`
-   *  when it meets a port of another entity of the same prototype — two
-   *  fusion reactors side by side bridge every touching port, whatever its
-   *  fluid (Factorio's neighbour_connectable pairs plasma with coolant
-   *  ports too, which the fluid categories alone would call unconnected) —
-   *  else `connected` for any real fluid connection, else `open`. */
-  stateOf(point: WorldPipeConnection): "open" | "connected" | "sibling" {
+  /** What `point` is plugged into, for `per: "fluid-point"` art. Meeting a
+   *  port of another entity of the same prototype wins over everything
+   *  else: `sibling` when the two ports share a category, `siblingMixed`
+   *  when they don't — two fusion reactors side by side pair up every
+   *  touching port (Factorio's neighbour_connectable matches plasma with
+   *  coolant ports too), though no fluid flows through a mixed pair.
+   *  Otherwise `connected` for a real fluid connection, else `open`. */
+  stateOf(point: WorldPipeConnection): FluidPointState {
     const peers = this.facing(point);
-    if (peers.some((c) => c.entityName === point.entityName)) return "sibling";
+    const siblings = peers.filter((c) => c.entityName === point.entityName);
+    if (siblings.length > 0) return siblings.some((c) => sharesCategory(point, c)) ? "sibling" : "siblingMixed";
     return peers.some((c) => sharesCategory(point, c)) ? "connected" : "open";
   }
 
