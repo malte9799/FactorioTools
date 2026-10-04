@@ -146,7 +146,7 @@ const covers = (commands: DrawCommand[]) => sheets(commands).filter((s) => /^pip
 
 test("a lone mining drill shows no pipe covers", () => {
   assert.deepEqual(covers(collect(entity("electric-mining-drill", 0, 0))), []);
-  assert.deepEqual(covers(collect(entity("big-mining-drill", 0.5, 0.5))), []);
+  assert.deepEqual(covers(collect(entity("big-mining-drill", 0, 0))), []);
 });
 
 test("drills side by side with no pipe anywhere stay closed", () => {
@@ -175,6 +175,26 @@ test("a fed drill opens the whole row chained off it", () => {
   assert.deepEqual(covers(collect(a, [pipe, b, c])), ["pipe-cover-south.png"]);
   assert.deepEqual(covers(collect(b, [pipe, a, c])), ["pipe-cover-south.png"]);
   assert.deepEqual(covers(collect(c, [pipe, a, b])).sort(), ["pipe-cover-east.png", "pipe-cover-south.png"]);
+});
+
+test("a plumbed drill swaps to its wet-mining art, an unused one keeps the dry art", () => {
+  const wet = (commands: DrawCommand[]) => sheets(commands).filter((s) => /-wet|-pipe-connections/.test(s));
+  const electric = entity("electric-mining-drill", 0, 0);
+  assert.deepEqual(wet(collect(electric)), []);
+  assert.ok(sheets(collect(electric)).includes("electric-mining-drill-N.png"));
+  const fed = sheets(collect(electric, [entity("pipe", 2, 0)]));
+  assert.ok(fed.includes("electric-mining-drill-N-wet.png"));
+  assert.ok(fed.includes("electric-mining-drill-N-wet-front.png"));
+  assert.ok(!fed.includes("electric-mining-drill-N.png"));
+
+  // West port at local (-2, -1) facing west; the pipe sits one tile out.
+  const big = entity("big-mining-drill", 0, 0);
+  assert.deepEqual(wet(collect(big)), []);
+  assert.deepEqual(wet(collect(big, [entity("pipe", -3, -1)])).sort(), [
+    "big-mining-drill-N-pipe-connections-front.png",
+    "big-mining-drill-N-pipe-connections-shadow.png",
+    "big-mining-drill-N-pipe-connections.png",
+  ]);
 });
 
 console.log(`\n${passed} passed`);

@@ -202,6 +202,12 @@ export type GraphicsLayer = {
    *  big-mining-drill's top-nozzle.png must always draw under top.png
    *  despite having the less-negative, "wins by default" shift). */
   ySortBias?: number;
+  /** Set on a layer that only draws in one of a mining drill's two looks:
+   *  `true` for its wet-mining art (the extra pipework Factorio swaps in
+   *  once the drill takes fluid), `false` for the dry art it replaces.
+   *  Absent on everything both looks share. The renderer treats a drill as
+   *  plumbed whenever its fluid ports are showing. */
+  plumbed?: boolean;
 } & (
   | { sprites: Sprite }
   /** Partial: some Factorio entities (e.g. electric-mining-drill's small

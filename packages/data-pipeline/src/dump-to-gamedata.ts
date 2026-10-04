@@ -211,6 +211,8 @@ function machineAnimation(proto: any): any {
 
 const TRANSIENT_EFFECT_FILENAME = /scorchmark|scorch-mark|particles?\.png$/i;
 
+const PIECE_SHADOW_FILENAME = /-pipe-connections-shadow\.[^/]+$/;
+
 const DIR4 = ["north", "east", "south", "west"] as const;
 
 /** Some machines build their body from working_visualisations entries that
@@ -296,6 +298,9 @@ function alwaysDrawnPieces(entityName: string, workingVisualisations: any[] | un
     // the transition-only entry would otherwise double up as a duplicate
     // sprite drawn at the exact same shift.
     if (entry.enabled_in_animated_shift_during_waypoint_stop === false) continue;
+    // A wet drill's fluid windows are white masks tinted by whatever fluid
+    // is in the drill; a blueprint has none, so the window stays empty.
+    if (typeof entry.apply_tint === "string" && entry.apply_tint.startsWith("input-fluid")) continue;
 
     if (DIR4.some((d) => entry[`${d}_animation`])) {
       // A direction's own `{dir}_animation` can hold more than one non-
@@ -328,6 +333,14 @@ function alwaysDrawnPieces(entityName: string, workingVisualisations: any[] | un
         else if (isFull) full.push({ layer: Layer.Object, sprites, per: "dir4" });
         else partial.push({ layer: Layer.Object, sprites, per: "dir4" });
       }
+      // Shadows of these pieces are otherwise dropped; the wet pipework's
+      // own is the one that visibly goes missing.
+      const shadows: Partial<Record<(typeof DIR4)[number], Sprite>> = {};
+      for (const d of DIR4) {
+        const shadow = unwrapAll(entry[`${d}_animation`] ?? entry.animation).find((l) => l.shadow && PIECE_SHADOW_FILENAME.test(l.sprite.sheet));
+        if (shadow) shadows[d] = shadow.sprite;
+      }
+      if (Object.keys(shadows).length > 0) bottom.unshift({ layer: Layer.Shadow, sprites: shadows, per: "dir4" });
       continue;
     }
 
@@ -382,7 +395,41 @@ const BODY_TIER_OVERRIDES: Record<string, Layer> = {
   "electromagnetic-plant": Layer.LowerObject,
 };
 
+/** A mining drill ships a second, complete graphics set for when it takes
+ *  fluid (`wet_mining_graphics_set`: the same machine with pipework added).
+ *  Both are built the same way and merged into one layer list: a layer the
+ *  two share is kept once, the rest are tagged `plumbed` false (dry only)
+ *  or true (wet only) for the renderer to pick between. */
 function graphicsForMachine(proto: any): EntityGraphics | undefined {
+  const dry = graphicsForGraphicsSet(proto);
+  if (!dry || !proto.wet_mining_graphics_set) return dry;
+  const wet = graphicsForGraphicsSet({ ...proto, graphics_set: proto.wet_mining_graphics_set });
+  if (!wet) return dry;
+  const key = (l: GraphicsLayer) => JSON.stringify(l);
+  const dryKeys = new Set(dry.layers.map(key));
+  const wetKeys = new Set(wet.layers.map(key));
+  // Shared layers keep their dry position; each wet-only layer goes in just
+  // ahead of the next shared layer that follows it in the wet list.
+  const layers: GraphicsLayer[] = [];
+  let w = 0;
+  for (const layer of dry.layers) {
+    if (!wetKeys.has(key(layer))) {
+      layers.push({ ...layer, plumbed: false });
+      continue;
+    }
+    for (; w < wet.layers.length && key(wet.layers[w]!) !== key(layer); w++) {
+      if (!dryKeys.has(key(wet.layers[w]!))) layers.push({ ...wet.layers[w]!, plumbed: true });
+    }
+    w++;
+    layers.push(layer);
+  }
+  for (; w < wet.layers.length; w++) {
+    if (!dryKeys.has(key(wet.layers[w]!))) layers.push({ ...wet.layers[w]!, plumbed: true });
+  }
+  return { ...dry, layers };
+}
+
+function graphicsForGraphicsSet(proto: any): EntityGraphics | undefined {
   const graphics = directionColumnGraphics(machineAnimation(proto));
   if (!graphics) return undefined;
 
