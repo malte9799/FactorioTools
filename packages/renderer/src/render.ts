@@ -1644,7 +1644,10 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
     if (mode.kind === "place") {
       ghostWorldPos = worldAtScreenPoint(lastPointer.x, lastPointer.y);
       invalidate();
-      if (isPlacingDrag) placeAtGhost();
+      if (isPlacingDrag) {
+        if (isRailPlannerItem(mode.entityName)) railDragMoved = true;
+        else placeAtGhost();
+      }
     }
   }
 
@@ -2217,6 +2220,9 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
    *  same cell at normal drag speeds). */
   function placeAtGhost(): void {
     if (mode.kind !== "place" || !ghostWorldPos) return;
+    // Track only ever goes down through the rail planner, which snaps it to
+    // the rail grid and lays whole pieces end to end.
+    if (isRailPlannerItem(mode.entityName)) return;
     if (isRailSnapped(mode.entityName)) {
       const index = currentRailIndex();
       const slot = railsideSlot(index, mode.entityName, ghostWorldPos.x, ghostWorldPos.y, ghostDirection);
