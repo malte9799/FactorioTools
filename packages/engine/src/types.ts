@@ -610,6 +610,12 @@ export interface MenuPosition {
 export interface RenderCatalog {
   version: string;
   entities: Record<string, RenderEntityProto>;
+  /** Fast-replace group per placeable entity name, spanning both this
+   *  catalog and GameData (the prototype's `fast_replaceable_group`). Two
+   *  entities sharing a group and a footprint can be built over one
+   *  another. Optional: absent from datasets generated before the editor
+   *  needed it, where only a same-name rebuild is allowed. */
+  replaceGroups?: Record<string, string>;
   /** Build-menu tabs, keyed by item-group name, already sorted by `order`. */
   menuGroups: MenuGroup[];
   /** Build-menu slot per entity name, spanning both this catalog and

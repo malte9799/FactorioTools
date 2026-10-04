@@ -24,7 +24,7 @@ import {
   stripRichText,
 } from "@factoriotools/engine";
 import type { CalculationResult, Timescale, Blueprint, BlueprintTreeNode, PlacedEntity, QualityName, MachineGroup, ModuleStack, ThroughputContext, BottleneckSubgroup, BpSignalId, WireColor, WireLink } from "@factoriotools/engine";
-import { mountRenderer, isPoleLike, isUndergroundLike, autoUnderground, undergroundPartner, isTwoDirectionOnly, rotationStep, effectiveFootprint, rotateAroundCenter, summariseRecording, slowestFrames, worstPhase, autoConnectPole, canWire, dropWiresFor, terminalSideAt, toggleWire, type BlueprintRenderer, type HighlightRole } from "@factoriotools/renderer";
+import { mountRenderer, isPoleLike, isUndergroundLike, canBuildOver, undergroundForPlacement, undergroundPartner, isTwoDirectionOnly, rotationStep, effectiveFootprint, rotateAroundCenter, summariseRecording, slowestFrames, worstPhase, autoConnectPole, canWire, dropWiresFor, terminalSideAt, toggleWire, type BlueprintRenderer, type HighlightRole } from "@factoriotools/renderer";
 import { buildRecipeCard, renderResults, type ViewOptions } from "./legacy-view/panels.js";
 import { icon } from "./legacy-view/icons.js";
 import { makeFloatingWindow } from "../../window-manager.js";
@@ -1518,23 +1518,30 @@ export function mountBlueprintEditor(root: HTMLElement): () => void {
     recipeWindow.hide();
   }
 
-  /** Placing over an existing entity of the SAME name at the SAME tile with
-   *  a different quality selected upgrades that entity's quality in place
-   *  instead of adding a duplicate on top of it — matches the real game's
-   *  own "build over it with a higher-quality item to upgrade" convention,
-   *  per the user's own design (chosen instead of a quality field in the
-   *  entity GUI, which no longer exists). A different NAME at the same tile
-   *  still adds a new entity rather than silently replacing something
-   *  incompatible — only a same-name, different-quality rebuild counts as
-   *  an upgrade. */
   /** How far an underground-belt tier can tunnel (0 for loaders, which
    *  never pair). */
   function undergroundMaxDistance(name: string): number {
     return getData().undergroundBelts?.[name]?.maxDistance ?? 0;
   }
 
+  /** Building over an existing entity at the SAME spot rebuilds it in place
+   *  instead of colliding with it — the real game's own build-over
+   *  convention. Over the same entity that re-faces it or changes its
+   *  quality (chosen instead of a quality field in the entity GUI, which no
+   *  longer exists); over another one from its fast-replace group with the
+   *  same footprint (any inserter over any inserter, a turbine over a steam
+   *  engine — see canBuildOver) it swaps the entity, keeping its wires and
+   *  whatever settings the new one can still hold. Anything else there
+   *  still blocks the placement. */
   function placeEntity(worldX: number, worldY: number, name: string, direction: number, quality: QualityName) {
-    const existing = entities.find((e) => e.name === name && e.x === worldX && e.y === worldY);
+    const lookup = visualLookup();
+    const existing = entities.find((e) =>
+      canBuildOver(e, name, worldX, worldY, direction, (n) => lookup.get(n), getRenderCatalog().replaceGroups),
+    );
+    if (existing && existing.name !== name) {
+      replaceEntity(existing, name, direction, quality);
+      return;
+    }
     if (existing) {
       // Building the exact same thing again (same quality AND facing) is a
       // no-op; otherwise this rebuild-in-place upgrades whichever of the two
@@ -1567,7 +1574,7 @@ export function mountBlueprintEditor(root: HTMLElement): () => void {
     // Auto-paired like the game (and render.ts's ghost): held facing back
     // at an entrance in range, this becomes its exit.
     const underground = isUndergroundLike(name)
-      ? autoUnderground(entities, name, worldX, worldY, direction, undergroundMaxDistance(name))
+      ? undergroundForPlacement(entities, name, worldX, worldY, direction, undergroundMaxDistance(name), undefined)
       : undefined;
     applyEdit(() => {
       const newEntity: PlacedEntity = {
@@ -1591,6 +1598,43 @@ export function mountBlueprintEditor(root: HTMLElement): () => void {
       // applyEdit as the placement, so the pole and its wires undo together
       // rather than as two separate steps.
       wires = autoConnectPole(newEntity, entities, wires, visualLookup().get.bind(visualLookup()), isPoleLike);
+    });
+  }
+
+  /** The swap half of placeEntity: turns `target` into `name` where it
+   *  stands. It keeps its entityNumber, so every wire on it survives, and
+   *  its settings carry over except the ones the new entity can't hold — a
+   *  recipe it can't craft is cleared and modules beyond its slot count are
+   *  dropped. An underground swapped for another tier stays the same end of
+   *  its pair and takes the other end along when the new tier still reaches
+   *  it, the way the game upgrades a pair. */
+  function replaceEntity(target: PlacedEntity, name: string, direction: number, quality: QualityName) {
+    const data = getData();
+    const underground = isUndergroundLike(name)
+      ? undergroundForPlacement(entities, name, target.x, target.y, direction, undergroundMaxDistance(name), target)
+      : undefined;
+    const partner =
+      underground && target.undergroundType !== undefined
+        ? undergroundPartner(entities, target, undergroundMaxDistance(target.name))
+        : undefined;
+    const partnerInReach =
+      partner && Math.abs(partner.x - target.x) + Math.abs(partner.y - target.y) <= undergroundMaxDistance(name) ? partner : undefined;
+    const machine = data.machines[name];
+    const moduleSlots = machine?.moduleSlots ?? data.beacons[name]?.moduleSlots ?? 0;
+    applyEdit(() => {
+      target.name = name;
+      target.quality = quality;
+      target.direction = underground?.direction ?? direction;
+      target.undergroundType = underground?.undergroundType;
+      const recipe = target.recipe ? data.recipes[target.recipe] : undefined;
+      if (!recipe || !machine?.categories.includes(recipe.category)) target.recipe = undefined;
+      target.modules = collapseModules(
+        expandModuleSlots(target.modules)
+          .slice(0, moduleSlots)
+          .filter((slot) => slot !== null),
+      );
+      if (partnerInReach) partnerInReach.name = name;
+      entities = [...entities];
     });
   }
 
