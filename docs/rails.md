@@ -60,7 +60,7 @@ full pipeline produces them (`render-catalog.ts`: `railGraphics`,
 
 When only rail data is at hand, `merge-rail-catalog` rebuilds just those
 entries and copies their sprite sheets. Its inputs:
-- a rail-only export, as on the `claude/rail-pipeline-data` branch: `rail-data/rail-prototypes.json` plus `rail-data/sprites/`
+- a rail-only export (see below for making one): `rail-data/rail-prototypes.json` plus `rail-data/sprites/`
 - or the full dump and the Factorio data directory
 
 ```sh

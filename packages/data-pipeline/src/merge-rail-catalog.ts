@@ -8,9 +8,9 @@
  * The full pipeline (dump-to-gamedata → extract-sprites) produces the same
  * entries; this exists for when only the rail data is at hand. Inputs:
  *
- *   RAIL_DUMP     a JSON object of prototype tables, e.g. rail-data/
- *                 rail-prototypes.json from the claude/rail-pipeline-data
- *                 branch, or the whole data-raw-dump.json
+ *   RAIL_DUMP     a JSON object of prototype tables, e.g. a rail-only
+ *                 rail-data/rail-prototypes.json (docs/rails.md says how
+ *                 to export one), or the whole data-raw-dump.json
  *   RAIL_SPRITES  root holding the referenced PNGs by mod path
  *                 (rail-data/sprites, or Factorio's Contents/data)
  *
