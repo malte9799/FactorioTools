@@ -1001,6 +1001,13 @@ export function mountBlueprintEditor(root: HTMLElement): () => void {
   const debugPollHandle = setInterval(refreshDebug, DEBUG_POLL_MS);
 
   let blueprints: Blueprint[] = [];
+  /** Which of `blueprints` is on the canvas (a book holds several). */
+  let selectedBlueprint = 0;
+  /** What a blueprint built from the canvas keeps from the one it was
+   *  opened as: its name, description, icons and grid settings. */
+  function currentTemplate(): Pick<Blueprint, "item" | "label" | "version"> & Partial<Blueprint> {
+    return blueprints[selectedBlueprint] ?? { item: "blueprint" as const, label: undefined, version: undefined };
+  }
   /** The currently-loaded book's folder structure (nested sub-books kept
    *  intact), for the library sidebar's "Current book" section — null for a
    *  loose blueprint (nothing to show as a folder) or before anything's been
@@ -1256,7 +1263,7 @@ export function mountBlueprintEditor(root: HTMLElement): () => void {
   function persistEntities(): void {
     if (!entities.length) return;
     try {
-      const template = blueprints[0] ?? { item: "blueprint" as const, label: undefined, version: undefined };
+      const template = currentTemplate();
       const bpString = encodeBlueprintString({ blueprint: toBlueprint(entities, template, wires) });
       localStorage.setItem(AUTOSAVE_KEY, bpString);
     } catch {
@@ -1339,6 +1346,7 @@ export function mountBlueprintEditor(root: HTMLElement): () => void {
   function selectBlueprint(index: number, restoreCameraFromSave = false) {
     const blueprint = blueprints[index];
     if (!blueprint) return;
+    selectedBlueprint = index;
     entities = normaliseEntities(blueprint);
     wires = normaliseWires(blueprint);
     nextEntityNumber = entities.reduce((max, e) => Math.max(max, e.entityNumber), 0) + 1;
@@ -1619,7 +1627,7 @@ export function mountBlueprintEditor(root: HTMLElement): () => void {
     if (boxedEntities.length === 0) return;
     const boxedWires = wires.filter((w) => numbers.has(w.from) && numbers.has(w.to));
 
-    const template = blueprints[0] ?? { item: "blueprint" as const, label: undefined, version: undefined };
+    const template = currentTemplate();
     try {
       const bpString = encodeBlueprintString({ blueprint: toBlueprint(boxedEntities, template, boxedWires) });
       await navigator.clipboard.writeText(bpString);
@@ -2663,7 +2671,7 @@ export function mountBlueprintEditor(root: HTMLElement): () => void {
           unsavedNameInput.focus();
           return;
         }
-        const template = blueprints[0] ?? { item: "blueprint" as const, label: undefined, version: undefined };
+        const template = currentTemplate();
         const bpString = encodeBlueprintString({ blueprint: toBlueprint(entities, template, wires) });
         const label = unsavedNameInput.value.trim() || "Untitled blueprint";
         try {
@@ -2727,6 +2735,14 @@ export function mountBlueprintEditor(root: HTMLElement): () => void {
     }
   }
 
+  /** Switches to another blueprint of the book that is loaded. Whatever
+   *  entry an earlier one was saved to is not this one's, so a plain save
+   *  asks for a name again rather than overwriting it. */
+  function selectBookBlueprint(index: number): void {
+    if (index !== selectedBlueprint) setOpenEntry(undefined);
+    selectBlueprint(index);
+  }
+
   /** Cmd/Ctrl+S: writes the current blueprint back to the library entry it
    *  is open from, keeping that entry's name, description and icons. With
    *  no such entry (never saved, or deleted since) it asks for a name
@@ -2769,7 +2785,7 @@ export function mountBlueprintEditor(root: HTMLElement): () => void {
     if (!saveAsBackdrop.hidden) return Promise.resolve(); // already asking
     return new Promise((resolve) => {
       const open = openEntryId ? listSaved().find((e) => e.id === openEntryId) : undefined;
-      saveAsNameInput.value = open?.label ?? blueprints[0]?.label ?? "";
+      saveAsNameInput.value = open?.label ?? currentTemplate().label ?? "";
       saveAsBackdrop.hidden = false;
       saveAsNameInput.focus();
       saveAsNameInput.select();
@@ -2902,7 +2918,7 @@ export function mountBlueprintEditor(root: HTMLElement): () => void {
     // sub-blueprint pick within the book already loaded stays a plain
     // selectBlueprint call, no unsaved-changes guard, since that dropdown
     // never had one either and this is the same gesture from the sidebar.
-    onSelectCurrent: (flatIndex) => selectBlueprint(flatIndex),
+    onSelectCurrent: (flatIndex) => selectBookBlueprint(flatIndex),
     onReselect(apply) {
       setMode("copyBox");
       pendingReselect = apply;
@@ -2961,7 +2977,7 @@ export function mountBlueprintEditor(root: HTMLElement): () => void {
    *  what the library saves. */
   function currentBpString(): string | null {
     if (!entities.length) return null;
-    const template = blueprints[0] ?? { item: "blueprint" as const, label: undefined, version: undefined };
+    const template = currentTemplate();
     return encodeBlueprintString({ blueprint: toBlueprint(entities, template, wires) });
   }
 
@@ -3178,7 +3194,7 @@ export function mountBlueprintEditor(root: HTMLElement): () => void {
       setStatus("Nothing to export yet — import or build a blueprint first.", "error");
       return false;
     }
-    const template = blueprints[0] ?? { item: "blueprint" as const, label: undefined, version: undefined };
+    const template = currentTemplate();
     const bpString = encodeBlueprintString({ blueprint: toBlueprint(entities, template, wires) });
     try {
       await navigator.clipboard.writeText(bpString);
@@ -3222,7 +3238,7 @@ export function mountBlueprintEditor(root: HTMLElement): () => void {
   // is, and selectBlueprint's own reset (undoStack/hasUnsavedChanges) only
   // applies to the blueprint just switched TO, matching how the picker
   // already behaved before this guard existed.
-  picker.addEventListener("change", () => selectBlueprint(Number(picker.value)), { signal });
+  picker.addEventListener("change", () => selectBookBlueprint(Number(picker.value)), { signal });
 
   // Cmd/Ctrl+S saves to the library entry that is open (or asks for a name
   // when there is none); with Shift it always asks, saving a new entry.
@@ -3740,7 +3756,11 @@ export function mountBlueprintEditor(root: HTMLElement): () => void {
     // rotate) while waiting for this real dataset to arrive, resetting
     // entities/undoStack/redoStack back to whatever was last decoded from
     // input.value.
-    if (!entities.length && input.value.trim()) load(input.value);
+    // That reload is still the same library entry, if it was one.
+    if (!entities.length && input.value.trim()) {
+      const entry = openEntryId;
+      if (load(input.value) && entry) setOpenEntry(entry);
+    }
   });
 
   // Dev-only console helper for faster manual testing — pan/zoom/load a
