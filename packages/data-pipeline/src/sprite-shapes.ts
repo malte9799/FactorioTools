@@ -399,6 +399,9 @@ export function pipeConnectionsOf(proto: any): PipeConnectionPoint[] {
     // Only set where it changes anything, so every other prototype's points
     // stay exactly as they were.
     const noCover = anyCovers && !box.pipe_covers ? true : undefined;
+    // A drill's fluid input is optional (only some resources need it), so
+    // its ports hide until used. Not pumpjack's output_fluid_box.
+    const onlyWhenConnected = proto.type === "mining-drill" && box === proto.input_fluid_box ? true : undefined;
     for (const c of box.pipe_connections ?? []) {
       const connectionCategory: string[] | undefined =
         c.connection_category === undefined ? undefined : [c.connection_category].flat();
@@ -419,11 +422,11 @@ export function pipeConnectionsOf(proto: any): PipeConnectionPoint[] {
       // meaningless in that case (no single north-frame point exists) and
       // ignored downstream whenever positionsByDirection is present.
       if (Array.isArray(c.positions) && c.positions.length === 4) {
-        out.push({ x: c.positions[0][0], y: c.positions[0][1], direction: c.direction, positionsByDirection: c.positions, fluidboxIndex, flowDirection, boxesOffWhenNoFluidRecipe, connectionCategory, noCover });
+        out.push({ x: c.positions[0][0], y: c.positions[0][1], direction: c.direction, positionsByDirection: c.positions, fluidboxIndex, flowDirection, boxesOffWhenNoFluidRecipe, connectionCategory, noCover, onlyWhenConnected });
         continue;
       }
       if (!Array.isArray(c.position)) continue;
-      out.push({ x: c.position[0], y: c.position[1], direction: c.direction, fluidboxIndex, flowDirection, boxesOffWhenNoFluidRecipe, connectionCategory, noCover });
+      out.push({ x: c.position[0], y: c.position[1], direction: c.direction, fluidboxIndex, flowDirection, boxesOffWhenNoFluidRecipe, connectionCategory, noCover, onlyWhenConnected });
     }
   });
   return out;
