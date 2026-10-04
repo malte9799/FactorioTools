@@ -364,7 +364,7 @@ export function openLibraryWindow(options: LibraryWindowOptions): void {
     renderBook();
   } else if (options.blueprint) {
     renderer = mountRenderer(previewCanvas, getData(), getRenderCatalog(), currentQuality());
-    renderer.loadBlueprint(normaliseEntities(options.blueprint), normaliseWires(options.blueprint));
+    renderer.loadBlueprint(normaliseEntities(options.blueprint), normaliseWires(options.blueprint), options.blueprint.tiles);
   } else {
     previewCanvas.appendChild(text("p", "This blueprint doesn't decode.", "bp-lib-empty"));
   }

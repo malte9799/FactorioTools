@@ -1363,7 +1363,7 @@ export function mountBlueprintEditor(root: HTMLElement): () => void {
     hasUnsavedChanges = false;
     deselect();
     const savedCamera = restoreCameraFromSave ? readSavedCamera() : null;
-    renderer.loadBlueprint(entities, wires);
+    renderer.loadBlueprint(entities, wires, blueprint.tiles);
     restoreCamera(savedCamera);
     rateOverlay.load(entities, wires);
     recalculate();
@@ -3752,7 +3752,7 @@ export function mountBlueprintEditor(root: HTMLElement): () => void {
     if (pendingWireFrom !== null) renderer.setPendingWire(pendingWireFrom, pendingWireSide);
     if (entities.length) {
       const savedCamera = readSavedCamera();
-      renderer.loadBlueprint(entities, wires);
+      renderer.loadBlueprint(entities, wires, blueprints[selectedBlueprint]?.tiles);
       restoreCamera(savedCamera);
     }
 

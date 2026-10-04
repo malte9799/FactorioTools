@@ -633,6 +633,40 @@ export interface RenderCatalog {
    *  blueprint's icons can name. Absent in datasets generated before it was
    *  extracted. */
   signals?: Record<string, { type: "fluid" | "virtual"; localised: string; position: MenuPosition }>;
+  /** Floor tiles a blueprint can carry (everything the player can lay),
+   *  keyed by tile name. Absent in datasets generated before tiles were
+   *  drawn. */
+  tiles?: Record<string, TileProto>;
+}
+
+/** One sheet of floor art: `count` square pictures, each covering
+ *  `size` x `size` tiles, laid out left to right from (x, y) and wrapping
+ *  every `lineLength`. */
+export interface TileVariantSheet {
+  sheet: string;
+  size: number;
+  count: number;
+  x: number;
+  y: number;
+  lineLength: number;
+  /** Sheet pixels per tile (64 for the game's usual scale-0.5 art). */
+  tilePx: number;
+  /** Chance that a block of size x size tiles uses this sheet rather than
+   *  a smaller one. Always 1 for size 1. */
+  probability: number;
+  /** A material texture: every tile samples its own cell of the picture
+   *  covering its block, whether or not the rest of the block is the same
+   *  tile. Without it a picture is only used for a block it fills. */
+  repeats?: boolean;
+}
+
+export interface TileProto {
+  name: string;
+  /** Largest size first. */
+  variants: TileVariantSheet[];
+  /** CSS color the map draws this tile in; the stand-in while the art
+   *  loads. */
+  mapColor: string;
 }
 
 /* ---------- Blueprint string shapes (as exported by the game) ---------- */
@@ -880,6 +914,12 @@ export interface BpIcon {
   signal: { type?: "item" | "fluid" | "virtual" | "entity" | "recipe" | "space-location" | "asteroid-chunk" | "quality"; name: string; quality?: string };
 }
 
+/** `position` is the tile's top-left corner, in whole tiles. */
+export interface BpTile {
+  name: string;
+  position: BpPosition;
+}
+
 export interface Blueprint {
   item: string;
   label?: string;
@@ -894,7 +934,7 @@ export interface Blueprint {
   "absolute-snapping"?: boolean;
   "position-relative-to-grid"?: BpPosition;
   entities?: BpEntity[];
-  tiles?: { name: string; position: BpPosition }[];
+  tiles?: BpTile[];
   /** 2.0+ only. Absent on older blueprints and on ones with no wires. */
   wires?: BpWire[];
   version?: number;
