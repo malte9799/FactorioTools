@@ -39,7 +39,7 @@ import { buildLibrarySidebar } from "./library-sidebar.js";
 import { buildQuickbar, readAltLayers, writeAltLayers, type AltLayers, type QuickbarHandle, type QuickbarItem } from "./quickbar.js";
 import { buildGridMenu } from "./grid-menu.js";
 import { BlueprintLinkError, looksLikeBlueprintString, parseBlueprintLink, resolveBlueprintLink, SHARE_TARGETS } from "./blueprint-links.js";
-import { listSaved, replaceContentsInLibrary, saveToLibrary } from "./blueprint-library.js";
+import { listSaved, replaceContentsInLibrary, saveFailureMessage, saveToLibrary } from "./blueprint-library.js";
 import { RateOverlay } from "../../rate-overlay/controller.js";
 import { setCurrentBlueprint, EDITOR_AUTOSAVE_KEY, readAutosave } from "../../current-blueprint.js";
 import { currentQuality, onQualityChange } from "../../render-presets.js";
@@ -2671,8 +2671,8 @@ export function mountBlueprintEditor(root: HTMLElement): () => void {
           librarySidebar.refresh();
           cleanup();
           resolve("save");
-        } catch {
-          setStatus("Couldn't save — the current blueprint doesn't decode.", "error");
+        } catch (err) {
+          setStatus(saveFailureMessage(err, "Couldn't save — the current blueprint doesn't decode."), "error");
         }
       }
       function onDiscard(): void {
@@ -2741,7 +2741,12 @@ export function mountBlueprintEditor(root: HTMLElement): () => void {
       setStatus("Nothing to save yet.", "error");
       return;
     }
-    replaceContentsInLibrary(entry.id, bpString);
+    try {
+      replaceContentsInLibrary(entry.id, bpString);
+    } catch (err) {
+      setStatus(saveFailureMessage(err, "Couldn't save — the current blueprint doesn't decode."), "error");
+      return;
+    }
     hasUnsavedChanges = false;
     librarySidebar.refresh();
     setStatus(`Saved “${entry.label}”.`, "info", true);
@@ -2785,8 +2790,8 @@ export function mountBlueprintEditor(root: HTMLElement): () => void {
           librarySidebar.refresh();
           setStatus(`Saved “${label}”.`, "info", true);
           cleanup();
-        } catch {
-          setStatus("Couldn't save — the current blueprint doesn't decode.", "error");
+        } catch (err) {
+          setStatus(saveFailureMessage(err, "Couldn't save — the current blueprint doesn't decode."), "error");
         }
       }
       function onCancel(): void {
@@ -3006,8 +3011,8 @@ export function mountBlueprintEditor(root: HTMLElement): () => void {
             librarySidebar.refresh();
             libraryWindow.show();
             setStatus("Created a blueprint book with the current blueprint in the library.");
-          } catch {
-            setStatus("Couldn't create the book — the current blueprint doesn't decode.", "error");
+          } catch (err) {
+            setStatus(saveFailureMessage(err, "Couldn't create the book — the current blueprint doesn't decode."), "error");
           }
           return;
         }

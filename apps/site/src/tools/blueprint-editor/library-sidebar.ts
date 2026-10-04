@@ -3,6 +3,7 @@ import type { BlueprintTreeNode } from "@factoriotools/engine";
 import {
   listSaved,
   saveToLibrary,
+  saveFailureMessage,
   deleteFromLibrary,
   deleteBookFromLibrary,
   duplicateInLibrary,
@@ -429,8 +430,8 @@ function openEntryWindow(id: string, callbacks: LibraryCallbacks, refresh: () =>
       callbacks.onReselect((bpString) => {
         try {
           replaceContentsInLibrary(id, bpString);
-        } catch {
-          callbacks.notify("Couldn't use that selection as the blueprint's contents.", "error");
+        } catch (err) {
+          callbacks.notify(saveFailureMessage(err, "Couldn't use that selection as the blueprint's contents."), "error");
         }
         refresh();
         openEntryWindow(id, callbacks, refresh);
@@ -595,7 +596,11 @@ export function buildLibrarySidebar(container: HTMLElement, callbacks: LibraryCa
             // A built-in can't be deleted, but duplicating one is how it
             // becomes an editable library entry.
             onDuplicate: () => {
-              saveToLibrary(entry.bpString, `${entry.label} copy`);
+              try {
+                saveToLibrary(entry.bpString, `${entry.label} copy`);
+              } catch (err) {
+                callbacks.notify(saveFailureMessage(err, "Couldn't duplicate that blueprint."), "error");
+              }
               refresh();
             },
           },
@@ -684,8 +689,8 @@ export function buildLibrarySidebar(container: HTMLElement, callbacks: LibraryCa
       nameInput.value = "";
       setStatus(`Saved “${label}”.`, "info");
       refresh();
-    } catch {
-      setStatus("Couldn't save — the current blueprint doesn't decode.", "error");
+    } catch (err) {
+      setStatus(saveFailureMessage(err, "Couldn't save — the current blueprint doesn't decode."), "error");
     }
   }
 

@@ -65,8 +65,13 @@ function readAll(): SavedBlueprint[] {
     const entries: SavedBlueprint[] = Array.isArray(parsed) ? parsed.filter(isSavedBlueprint) : [];
     if (localStorage.getItem(ORDERED_KEY) !== "1") {
       entries.sort((a, b) => b.savedAt - a.savedAt);
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(entries));
-      localStorage.setItem(ORDERED_KEY, "1");
+      try {
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(entries));
+        localStorage.setItem(ORDERED_KEY, "1");
+      } catch {
+        /* couldn't bake the order in — the sorted list still reads fine,
+         * and the next read tries again */
+      }
     }
     return entries;
   } catch {
@@ -74,12 +79,29 @@ function readAll(): SavedBlueprint[] {
   }
 }
 
-function writeAll(entries: SavedBlueprint[]): void {
+/** Whether the write landed — false when storage is unavailable or full. */
+function writeAll(entries: SavedBlueprint[]): boolean {
   try {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(entries));
+    return true;
   } catch {
-    /* storage unavailable or quota exceeded — not worth surfacing here */
+    return false;
   }
+}
+
+/** Thrown by the save actions when the library couldn't be written, so a
+ *  caller never reports a save that didn't land. */
+export class LibraryWriteError extends Error {
+  constructor() {
+    super("Couldn't save — the browser's storage is full or unavailable.");
+    this.name = "LibraryWriteError";
+  }
+}
+
+/** The message for a failed save: the storage one when that is what went
+ *  wrong, otherwise the caller's own. */
+export function saveFailureMessage(err: unknown, fallback: string): string {
+  return err instanceof LibraryWriteError ? err.message : fallback;
 }
 
 export function listSaved(): SavedBlueprint[] {
@@ -251,7 +273,7 @@ export function saveToLibrary(bpString: string, label: string, category?: "debug
   }
   // Newest on top, as the list has always shown it.
   entries.unshift(...fresh);
-  writeAll(entries);
+  if (!writeAll(entries)) throw new LibraryWriteError();
   // A real book brings its own description and icons along.
   if (bookId && envelope.blueprint_book) storeBookMeta(bookId, envelope.blueprint_book.description, envelope.blueprint_book.icons);
   return entries;
@@ -403,7 +425,7 @@ export function replaceContentsInLibrary(id: string, newBpString: string): Saved
   // one sat in the cell.
   writeSnap(fresh, old ? readSnap(old) : null);
   entry.bpString = encodeBlueprintString({ blueprint: fresh });
-  writeAll(entries);
+  if (!writeAll(entries)) throw new LibraryWriteError();
   return entries;
 }
 
