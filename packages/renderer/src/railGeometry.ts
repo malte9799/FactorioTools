@@ -318,27 +318,30 @@ export function slotGroup(slot: RailSlot): string {
   return `${slot.ex},${slot.ey},${slot.direction}`;
 }
 
-/** Signal slots at one rail end point: for each travel direction along the
- *  joint, the half-tile centres on that direction's left 1–1.7 tiles out and
- *  within about a tile along the track — two per side. (Fitted to the example
- *  blueprints' signals; a 2.0 signal faces the trains it stops and stands on
- *  their left.) */
-export function signalSlotsAt(x: number, y: number, endDir: number): RailSlot[] {
-  const out: RailSlot[] = [];
-  for (const direction of [endDir % 16, (endDir + 8) % 16]) {
+/** The two signal slots one rail end offers, one per travel direction:
+ *  1.5 tiles to that direction's left and a little inside the end's own
+ *  piece (half a tile; 1.1 at a 22.5° end, whose piece leaves at a slant),
+ *  snapped to the half-tile centre it falls in. A 2.0 signal faces the
+ *  trains it stops and stands on their left. Where two pieces meet, each
+ *  piece's end gives its own pair, so continuous track has a slot every
+ *  tile on each side and a lone piece's end just one. Fitted to every
+ *  signal in the example blueprints. */
+export function signalSlotsForEnd(end: RailEnd): RailSlot[] {
+  const [ox, oy] = dirVector(end.dir);
+  const inward = end.dir % 2 === 1 ? 1.1 : 0.5;
+  return [end.dir % 16, (end.dir + 8) % 16].map((direction) => {
     const [ux, uy] = dirVector(direction);
     // Left of travel, in y-down screen space.
     const lx = uy;
     const ly = -ux;
-    for (let oy = -2.5; oy <= 2.5; oy++) {
-      for (let ox = -2.5; ox <= 2.5; ox++) {
-        const lateral = ox * lx + oy * ly;
-        const along = ox * ux + oy * uy;
-        if (lateral >= 1 && lateral <= 1.7 && Math.abs(along) <= 1.1) out.push({ x: x + ox, y: y + oy, direction, ex: x, ey: y });
-      }
-    }
-  }
-  return out;
+    return {
+      x: Math.floor(end.x + 1.5 * lx - inward * ox) + 0.5,
+      y: Math.floor(end.y + 1.5 * ly - inward * oy) + 0.5,
+      direction,
+      ex: end.x,
+      ey: end.y,
+    };
+  });
 }
 
 /** Every signal slot along the given rails, deduplicated. */
@@ -347,7 +350,7 @@ export function signalSlots(rails: RailPiece[]): RailSlot[] {
   for (const rail of rails) {
     if (railShape(rail.name) === "ramp") continue;
     for (const end of railEndsAt(rail)) {
-      for (const slot of signalSlotsAt(end.x, end.y, end.dir)) {
+      for (const slot of signalSlotsForEnd(end)) {
         // A slot two joints share keeps the first joint it was found at.
         const key = `${slot.x},${slot.y},${slot.direction}`;
         if (!seen.has(key)) seen.set(key, slot);

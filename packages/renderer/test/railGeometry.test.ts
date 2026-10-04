@@ -130,7 +130,7 @@ test("example signals sit in slots computed from their own rails", () => {
     }
   }
   if (total === 0) return;
-  assert.ok(matched / total > 0.99, `${matched}/${total} signals in a slot`);
+  assert.ok(matched === total, `${matched}/${total} signals in a slot`);
 });
 
 test("example train stops sit in slots beside their straight rails", () => {
@@ -186,6 +186,22 @@ test("a signal takes its whole joint side, and only that side", () => {
   assert.equal(after.filter((s) => slotGroup(s) === slotGroup(pick)).length, 0, "both slots of the taken side are gone");
   const otherSide = after.filter((s) => s.ex === 1 && s.ey === 2 && s.direction !== pick.direction);
   assert.equal(otherSide.length, 2, "the other side of the joint stays free");
+});
+
+test("a lone curve offers one signal slot per side at each end", () => {
+  const slots = signalSlots([{ name: "curved-rail-a", x: 0, y: 0, direction: 0 }]);
+  assert.equal(slots.length, 4);
+  for (const end of railEndsAt({ name: "curved-rail-a", x: 0, y: 0, direction: 0 })) {
+    const here = slots.filter((s) => s.ex === end.x && s.ey === end.y);
+    assert.deepEqual(here.map((s) => s.direction).sort((a, b) => a - b), [end.dir, (end.dir + 8) % 16].sort((a, b) => a - b));
+  }
+});
+
+test("where two straights meet, each side has a slot either side of the joint", () => {
+  const rails = [1, 3, 5].map((y) => ({ name: "straight-rail", x: 1, y, direction: 0 }));
+  const atJoint = signalSlots(rails).filter((s) => s.ex === 1 && s.ey === 2);
+  assert.equal(atJoint.filter((s) => s.direction === 0).length, 2);
+  assert.equal(atJoint.filter((s) => s.direction === 8).length, 2);
 });
 
 console.log(`${passed} passed`);
