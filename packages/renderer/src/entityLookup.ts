@@ -209,6 +209,52 @@ export function effectiveFootprint(visual: ResolvedVisual, direction: number): [
   return facing === Dir.East || facing === Dir.West ? [h, w] : [w, h];
 }
 
+/** Whether building `name` at (x, y) facing `direction` builds over
+ *  `existing` instead of colliding with it — the game's fast-replace rule:
+ *  the same spot, and either the same entity (a rebuild that re-faces or
+ *  re-qualities it) or one from the same fast-replace group with the same
+ *  footprint (any inserter over any inserter, a turbine over a steam
+ *  engine, but not a 3x3 electric furnace over a 2x2 stone one). `groups`
+ *  is RenderCatalog.replaceGroups. */
+export function canBuildOver(
+  existing: PlacedEntity,
+  name: string,
+  x: number,
+  y: number,
+  direction: number,
+  visualFor: (name: string) => ResolvedVisual | undefined,
+  groups: Record<string, string> | undefined,
+): boolean {
+  if (existing.x !== x || existing.y !== y) return false;
+  if (existing.name === name) return true;
+  const group = groups?.[name];
+  if (!group || groups![existing.name] !== group) return false;
+  const oldVisual = visualFor(existing.name);
+  const newVisual = visualFor(name);
+  if (!oldVisual || !newVisual) return false;
+  const [oldW, oldH] = effectiveFootprint(oldVisual, existing.direction);
+  const [newW, newH] = effectiveFootprint(newVisual, direction);
+  return oldW === newW && oldH === newH;
+}
+
+/** autoUnderground, except that an underground built over one of another
+ *  tier takes that one's place as it stands — same end of the pair, same
+ *  travel direction — however it is held, the way the game upgrades one. */
+export function undergroundForPlacement(
+  entities: readonly PlacedEntity[],
+  name: string,
+  x: number,
+  y: number,
+  direction: number,
+  maxDistance: number,
+  replaced: PlacedEntity | undefined,
+): { undergroundType: "input" | "output"; direction: number } {
+  if (replaced && replaced.name !== name && replaced.undergroundType !== undefined) {
+    return { undergroundType: replaced.undergroundType, direction: replaced.direction };
+  }
+  return autoUnderground(entities, name, x, y, direction, maxDistance);
+}
+
 /** True for every underground-belt/loader tier (all vanilla names end in
  *  "underground-belt" or contain "loader" — loader-1x1, loader, *-loader).
  *  These are the belt-connector entities whose PlacedEntity MUST carry a

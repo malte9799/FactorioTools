@@ -2,7 +2,7 @@ import type { BpTile, GameData, PlacedEntity, QualityName, RenderCatalog, WireCo
 import { Camera } from "./camera.js";
 import { getSharedSpriteAtlas } from "./spriteAtlas.js";
 import { getSharedIconAtlas } from "./iconAtlas.js";
-import { activeFluidConnections, autoUnderground, buildVisualLookup, effectiveFootprint, hasAnimatedLayer, isPoleLike, isTwoDirectionOnly, isUndergroundLike, makeConnectorPredicates, rotateAroundCenter, rotationStep, undergroundPartner, type ResolvedVisual } from "./entityLookup.js";
+import { activeFluidConnections, buildVisualLookup, canBuildOver, effectiveFootprint, hasAnimatedLayer, isPoleLike, isTwoDirectionOnly, isUndergroundLike, makeConnectorPredicates, rotateAroundCenter, rotationStep, undergroundForPlacement, undergroundPartner, type ResolvedVisual } from "./entityLookup.js";
 import { ALL_ALT_MODE_LAYERS, drawAltModeOverlay, drawQualityBadge, type AltModeLayers } from "./entityDraw.js";
 import { buildGrid, NeighbourGrid, step, toCardinal } from "./neighbours/grid.js";
 import { buildFluidNetwork, FluidNetwork } from "./neighbours/fluid.js";
@@ -1065,9 +1065,68 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
         const snapped = slot ? { x: slot.x, y: slot.y } : { x: snapAxis(ghostWorldPos.x, gfw), y: snapAxis(ghostWorldPos.y, gfh) };
         const previewKey = `${entitiesVersion}|${mode.entityName}|${snapped.x},${snapped.y}|${ghostDirection}`;
         const previewStale = previewKey !== ghostPreviewKey;
+        // Valid iff nothing else's footprint overlaps the ghost's own —
+        // queryRect already returns entityNumbers whose box overlaps a
+        // rect, which is exactly Factorio's own placement rule (no two
+        // colliding footprints), so no separate collision routine is
+        // needed. -1 (the ghost's own placeholder id, never in the real
+        // spatial index) never appears here, so nothing to exclude.
+        //
+        // queryRect's own edge comparisons are inclusive (>=/<=) by design —
+        // right for its original job, frustum culling, where an entity
+        // exactly on the viewport boundary must still be included so it
+        // doesn't pop in/out. That same inclusiveness is wrong here: two
+        // footprints that only TOUCH (e.g. a ghost placed directly beside an
+        // existing belt, sharing one edge with no actual overlap) would
+        // register as colliding and wrongly tint the ghost red. Insetting
+        // the query rect by a small epsilon excludes exact-edge touches
+        // while still catching any real overlap.
+        const epsilon = 0.01;
+        const left = snapped.x - gfw / 2 + epsilon;
+        const top = snapped.y - gfh / 2 + epsilon;
+        const right = snapped.x + gfw / 2 - epsilon;
+        const bottom = snapped.y + gfh / 2 - epsilon;
+        const overlapping = spatialIndex.queryRect(left, top, right, bottom);
+        // The spatial index is only the broad phase: track blocks just the
+        // tiles it runs over, not its whole square footprint.
+        const probe: PlacedEntity = {
+          entityNumber: -1,
+          name: mode.entityName,
+          x: snapped.x,
+          y: snapped.y,
+          direction: slot?.direction ?? ghostDirection,
+          quality: "normal",
+          modules: [],
+          filterItems: [],
+        };
+        const blockers = [...overlapping].filter((id) => {
+          const other = entityById.get(id);
+          return other !== undefined && entitiesCollide(probe, other, footprintOfEntity);
+        });
+        // A ghost exactly on top of one entity it can be built over is
+        // still a valid placement — a same-named one is rebuilt in place
+        // with the ghost's own facing/quality, one from the same
+        // fast-replace group is swapped for it (see canBuildOver, and
+        // index.ts's placeEntity), the same build-over move the real game
+        // allows. Only that one specific overlap is forgiven: two or more
+        // blocking entities, or one the ghost can't replace, still
+        // blocks — there's no single existing entity a click there could
+        // sensibly rebuild.
+        const only = blockers.length === 1 ? entityById.get(blockers[0]!) : undefined;
+        const replaced =
+          only && canBuildOver(only, mode.entityName, snapped.x, snapped.y, probe.direction, visualFor, catalog.replaceGroups) ? only : undefined;
+        ghostCanPlace = isRailSnapped(mode.entityName) ? railsideOk(slot, overlapping) : blockers.length === 0 || replaced !== undefined;
         if (previewStale) {
           ghostUnderground = isUndergroundLike(mode.entityName)
-            ? autoUnderground(entities, mode.entityName, snapped.x, snapped.y, ghostDirection, data.undergroundBelts?.[mode.entityName]?.maxDistance ?? 0)
+            ? undergroundForPlacement(
+                entities,
+                mode.entityName,
+                snapped.x,
+                snapped.y,
+                ghostDirection,
+                data.undergroundBelts?.[mode.entityName]?.maxDistance ?? 0,
+                replaced,
+              )
             : undefined;
         }
         ghost = {
@@ -1109,51 +1168,6 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
         // neighbouring heat pipe. Both come from the cache built above.
         previewFluidNetwork = ghostPreviewFluid ?? previewFluidNetwork;
         previewHeatNetwork = ghostPreviewHeat ?? previewHeatNetwork;
-
-        // Valid iff nothing else's footprint overlaps the ghost's own —
-        // queryRect already returns entityNumbers whose box overlaps a
-        // rect, which is exactly Factorio's own placement rule (no two
-        // colliding footprints), so no separate collision routine is
-        // needed. -1 (the ghost's own placeholder id, never in the real
-        // spatial index) never appears here, so nothing to exclude.
-        //
-        // queryRect's own edge comparisons are inclusive (>=/<=) by design —
-        // right for its original job, frustum culling, where an entity
-        // exactly on the viewport boundary must still be included so it
-        // doesn't pop in/out. That same inclusiveness is wrong here: two
-        // footprints that only TOUCH (e.g. a ghost placed directly beside an
-        // existing belt, sharing one edge with no actual overlap) would
-        // register as colliding and wrongly tint the ghost red. Insetting
-        // the query rect by a small epsilon excludes exact-edge touches
-        // while still catching any real overlap.
-        const epsilon = 0.01;
-        const left = snapped.x - gfw / 2 + epsilon;
-        const top = snapped.y - gfh / 2 + epsilon;
-        const right = snapped.x + gfw / 2 - epsilon;
-        const bottom = snapped.y + gfh / 2 - epsilon;
-        const overlapping = spatialIndex.queryRect(left, top, right, bottom);
-        // The spatial index is only the broad phase: track blocks just the
-        // tiles it runs over, not its whole square footprint.
-        const blockers = [...overlapping].filter((id) => {
-          const other = entityById.get(id);
-          return other !== undefined && entitiesCollide(ghost!, other, footprintOfEntity);
-        });
-        // A ghost exactly on top of a same-named entity at its own tile is
-        // still a valid placement — it rebuilds that entity in place with
-        // the ghost's own facing/quality (see index.ts's placeEntity), the
-        // same "build over it to reconfigure" move the real game allows.
-        // Only that one specific overlap is forgiven: two or more
-        // overlapping entities, or one of a different name, still blocks —
-        // there's no single existing entity a click there could sensibly
-        // rebuild.
-        ghostCanPlace = isRailSnapped(mode.entityName)
-          ? railsideOk(slot, overlapping)
-          : blockers.length === 0 ||
-          (blockers.length === 1 &&
-            (() => {
-              const only = entityById.get(blockers[0]!);
-              return only?.name === mode.entityName && only.x === snapped.x && only.y === snapped.y;
-            })());
       }
     }
 

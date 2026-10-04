@@ -1171,6 +1171,27 @@ function buildTiles(raw: Raw): Record<string, TileProto> {
   return tiles;
 }
 
+/** Groups the game keeps apart but the editor treats as one: a long-handed
+ *  inserter has its own group because its reach differs, which is no reason
+ *  to make swapping it for another inserter a delete-and-rebuild here. */
+const REPLACE_GROUP_OVERRIDES: Record<string, string> = {
+  "long-handed-inserter": "inserter",
+};
+
+/** `fast_replaceable_group` of every entity an item places, keyed by entity
+ *  name. Entities without a group (or without an item) are left out. */
+function buildReplaceGroups(raw: Raw, menuPositions: Record<string, MenuPosition>): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const table of Object.values(raw)) {
+    for (const proto of Object.values(table ?? {})) {
+      const group = proto?.fast_replaceable_group;
+      if (typeof group !== "string" || !group || !menuPositions[proto.name]) continue;
+      out[proto.name] = REPLACE_GROUP_OVERRIDES[group] ?? group;
+    }
+  }
+  return out;
+}
+
 export function buildRenderCatalog(raw: Raw, locale: LocaleTables, version: string): RenderCatalog {
   const entities: Record<string, RenderEntityProto> = {};
 
@@ -1322,5 +1343,6 @@ export function buildRenderCatalog(raw: Raw, locale: LocaleTables, version: stri
   }
 
   const { menuGroups, menuPositions, itemMenuPositions, recipeMenuPositions, itemNames, signals } = buildMenuIndex(raw, locale);
-  return { version, entities, menuGroups, menuPositions, itemMenuPositions, recipeMenuPositions, itemNames, signals, tiles: buildTiles(raw) };
+  const replaceGroups = buildReplaceGroups(raw, menuPositions);
+  return { version, entities, replaceGroups, menuGroups, menuPositions, itemMenuPositions, recipeMenuPositions, itemNames, signals, tiles: buildTiles(raw) };
 }
