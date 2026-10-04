@@ -68,6 +68,13 @@ export function isRail(name: string): boolean {
   return name in SHAPE_OF;
 }
 
+/** The icon a prototype shows in menus. Every track piece, ground or
+ *  elevated, is built with the one "rail" item and has no icon of its own;
+ *  ramps and supports keep theirs. */
+export function iconName(name: string): string {
+  return isRail(name) && railShape(name) !== "ramp" ? "rail" : name;
+}
+
 export function isElevatedRail(name: string): boolean {
   return name.startsWith("elevated-") && name in SHAPE_OF;
 }
