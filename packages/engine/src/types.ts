@@ -224,6 +224,23 @@ export type GraphicsLayer = {
    *  graph finds unconnected are drawn; keyed by Dir4Name to match
    *  `PipeConnectionPoint.direction`. */
   | { sprites: Partial<Record<Dir4Name, Sprite>>; per: "pipe-covers" }
+  /** Connection art that belongs to ONE specific fluid-box connection
+   *  point and changes with what that point is plugged into — fusion-reactor
+   *  and fusion-generator's own ports, which don't use the generic round
+   *  pipe-covers. `point` indexes the entity's own `pipeConnections`
+   *  (declaration order); `sprites` is keyed by the entity's facing and
+   *  already carries its own baked shift. `columns` names the sheet column
+   *  for each state of that point: `open` (nothing attached), `connected`
+   *  (a matching fluid connection), `sibling` (attached to another entity of
+   *  the same prototype — falls back to `connected` when absent). A state
+   *  with no column draws nothing: a fusion-generator's plasma intake only
+   *  exists while something feeds it. */
+  | {
+      sprites: Partial<Record<Dir4Name, Sprite>>;
+      per: "fluid-point";
+      point: number;
+      columns: { open?: number; connected?: number; sibling?: number };
+    }
   /** One small pipe-stub cap per `heat_buffer.connections` entry, drawn at
    *  every point — unlike pipe-covers (drawn only when unconnected), a
    *  reactor's 12 heat-connection points always show one of two full sprite
@@ -482,6 +499,16 @@ export interface PipeConnectionPoint {
    *  a given box). renderer/entityLookup.ts's activeFluidConnections only
    *  filters points where this is true. */
   boxesOffWhenNoFluidRecipe?: boolean;
+  /** Factorio's own `connection_category` — two points only join when they
+   *  share one. Absent means the default category every ordinary pipe uses;
+   *  fusion plasma ports carry `["fusion-plasma"]`, so a plain pipe laid
+   *  against one neither connects nor hides its cap. */
+  connectionCategory?: string[];
+  /** True when this point's own fluid box ships no `pipe_covers` while
+   *  another box of the same prototype does (fusion-generator's plasma box
+   *  next to its fluoroketone box) — the generic round cover must not be
+   *  drawn here. */
+  noCover?: boolean;
 }
 
 /** One `heat_buffer.connections` entry, in the entity's own unrotated

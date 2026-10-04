@@ -76,6 +76,10 @@ interface EntityFrame {
    *  rotated local position (world tile minus entity's own rounded centre,
    *  matching push()'s existing offsetX/offsetY convention). */
   unconnectedPipeCovers: { offsetX: number; offsetY: number; direction: Cardinal }[];
+  /** What each of this entity's own fluid-box connection points is plugged
+   *  into, in declaration order (matching a `fluid-point` layer's own
+   *  `point` index) — see FluidNetwork.stateOf. */
+  fluidPoints: ("open" | "connected" | "sibling")[];
   /** Every heat-network connection point this entity has that the real
    *  heat network graph found NO neighbour for — same "unconnected only"
    *  rule as unconnectedPipeCovers (confirmed against the reference
@@ -140,7 +144,7 @@ function resolveFrame(entity: PlacedEntity, visual: ResolvedVisual, ctx: Collect
     // in before the player has placed it.
     unconnectedPipeCovers: ctx.fluidNetwork
       .pointsFor(entity.entityNumber)
-      .filter((p) => entity.entityNumber === -1 || !ctx.fluidNetwork.isConnected(p))
+      .filter((p) => !p.noCover && (entity.entityNumber === -1 || !ctx.fluidNetwork.isConnected(p)))
       .map((p) => {
         const { dx, dy } = step(p.direction);
         // p.offsetX/Y is the point's own unrounded local offset from this
@@ -150,6 +154,11 @@ function resolveFrame(entity: PlacedEntity, visual: ResolvedVisual, ctx: Collect
         // pump's socket at entity.y + 0.5).
         return { offsetX: p.offsetX + dx, offsetY: p.offsetY + dy, direction: p.direction };
       }),
+    // A ghost shows every port open, for the same reason it shows every
+    // cover above.
+    fluidPoints: ctx.fluidNetwork
+      .pointsFor(entity.entityNumber)
+      .map((p) => (entity.entityNumber === -1 ? "open" : ctx.fluidNetwork.stateOf(p))),
     // Fixed [0, 1.5] offset rotated by the ENTITY's own placement direction
     // (not the connection point's facing), and sprite picked by
     // entityDirection+8 — both taken verbatim from the reference renderer's
@@ -502,6 +511,17 @@ export function collectEntity(
         const sprite = layer.sprites[dir4Name(point.direction)];
         if (sprite) push(out, sprite, 0, 0, entity, layer.layer, order, alpha, point.offsetX, point.offsetY);
       }
+      return;
+    }
+
+    // A fusion port's own art: one sprite per connection point, its column
+    // picked by what that point is plugged into — and nothing at all for a
+    // state the layer names no column for.
+    if ("per" in layer && layer.per === "fluid-point") {
+      const state = frame.fluidPoints[layer.point] ?? "open";
+      const column = state === "sibling" ? layer.columns.sibling ?? layer.columns.connected : layer.columns[state];
+      const sprite = layer.sprites[dir4Name(entity.direction)];
+      if (sprite && column !== undefined) push(out, sprite, column, 0, entity, layer.layer, order, alpha);
       return;
     }
 
