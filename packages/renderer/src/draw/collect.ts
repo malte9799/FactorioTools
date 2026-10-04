@@ -312,6 +312,10 @@ function axisIndex(axis: GraphicsLayer["column"], frame: EntityFrame): number {
     // IS the row directly, no 256-scaling needed (their sheet is a genuine
     // 16-row grid, one row per placement facing).
     case "direction16": return frame.rawDirection;
+    case "direction16Grid": {
+      const index = ((frame.rawDirection % 16) + 16) % 16;
+      return axis.axis === "column" ? index % axis.lineLength : Math.floor(index / axis.lineLength);
+    }
   }
 }
 
@@ -474,9 +478,13 @@ export function collectInserterPlatform(
   graphics: InserterGraphics,
   alpha: number,
 ): void {
-  const cardinal = toCardinal(entity.direction);
-  const column = Math.round(cardinal / 4) % graphics.platformDirections;
-  push(out, graphics.platform, column, 0, entity, Layer.Object, 0, alpha);
+  // The sheet holds one frame per facing, and the frame for a facing is the
+  // one at the OPPOSITE direction's index (as the reference editor's
+  // spriteDataBuilder picks it: ((dir + 8) % 16) / 4). The pipeline's sprite
+  // carries no `columns`, which push() reads as a single-frame sheet and
+  // wraps every facing back to frame 0 — so it is given here.
+  const column = (opposite(toCardinal(entity.direction)) / 4) % graphics.platformDirections;
+  push(out, { ...graphics.platform, columns: graphics.platformDirections }, column, 0, entity, Layer.Object, 0, alpha);
 }
 
 /** Turns one entity into its draw commands. Nothing here touches the canvas —

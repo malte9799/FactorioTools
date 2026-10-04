@@ -6,6 +6,7 @@
  *  crafting machine, module icons in a row beneath it. */
 
 import { fetchSprite } from "./spriteCache.js";
+import { iconName } from "./railGeometry.js";
 
 const SHEET_URL = "./data/sprites/icons.png";
 const MANIFEST_URL = "./data/sprite-icon-manifest.json";
@@ -62,7 +63,7 @@ export class IconAtlas {
    *  manifest and sheet have resolved, or if `name` has no icon. */
   get(name: string): { sheet: HTMLImageElement; cell: IconCell } | undefined {
     if (!this.sheet || !this.cells) return undefined;
-    const cell = this.cells.get(name);
+    const cell = this.cells.get(name) ?? this.cells.get(iconName(name));
     if (!cell) return undefined;
     return { sheet: this.sheet, cell };
   }

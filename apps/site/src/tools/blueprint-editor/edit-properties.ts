@@ -220,7 +220,33 @@ export function buildPropertiesPanel(
   // like the game's: connection bar, status, preview, settings.
   const circuitFirst = circuit !== undefined && isCircuitFirst(entity.name);
   const refreshers: (() => void)[] = [];
-  if (circuit && (circuitFirst || circuit.wired)) refreshers.push(buildConnectionBar(container, entity, catalog, circuit));
+
+  // An inserter's window follows the game's: its own settings in the main
+  // column and, once a wire reaches it, a "Circuit connection" panel beside
+  // them instead of everything stacked in one column.
+  const inserter = data.inserters[entity.name];
+  let main = container;
+  let side: HTMLElement | undefined;
+  if (inserter) {
+    const layout = document.createElement("div");
+    layout.className = "inserter-gui";
+    main = document.createElement("div");
+    main.className = "inserter-gui-main";
+    layout.appendChild(main);
+    if (circuit?.wired) {
+      layout.classList.add("has-side");
+      side = document.createElement("div");
+      side.className = "inserter-gui-side f-panel";
+      const title = document.createElement("div");
+      title.className = "circuit-heading";
+      title.textContent = "Circuit connection";
+      side.appendChild(title);
+      layout.appendChild(side);
+    }
+    container.appendChild(layout);
+  }
+
+  if (circuit && (circuitFirst || circuit.wired)) refreshers.push(buildConnectionBar(side ?? container, entity, catalog, circuit));
   // The game shows a display panel without a status line.
   if (circuit && circuitFirst && !/display-panel/.test(entity.name)) refreshers.push(buildCircuitStatus(container, entity, circuit));
 
@@ -233,7 +259,7 @@ export function buildPropertiesPanel(
   // transparent background, matching the game's own machine-GUI thumbnail.
   const previewWrap = document.createElement("div");
   previewWrap.className = "entity-preview";
-  container.appendChild(previewWrap);
+  main.appendChild(previewWrap);
   const visualLookup = buildVisualLookup(data, catalog);
   const visual = visualLookup.get(entity.name);
   let destroyPreview: (() => void) | undefined;
@@ -247,8 +273,8 @@ export function buildPropertiesPanel(
   nameEl.className = "entity-gui-name";
   nameEl.textContent = localised;
   header.appendChild(nameEl);
-  // The window's title already names it in a circuit GUI.
-  if (!circuitFirst) container.appendChild(header);
+  // The window's title already names it in a circuit GUI, and an inserter's.
+  if (!circuitFirst && !inserter) container.appendChild(header);
 
   if (machine) {
     const bottleneck = findBottleneck(entity.entityNumber, bottlenecks);
@@ -324,30 +350,38 @@ export function buildPropertiesPanel(
 
   // Inserter-only settings: filters (whitelist/blacklist + up to 5 item
   // slots), override stack size, and spoil priority — matching the real
-  // game's own inserter GUI (see the user's own reference screenshot).
+  // game's own inserter GUI (see the user's own reference screenshot): one
+  // ruled row per setting, its checkbox on the left and its controls beside
+  // it, always visible and greyed out while the checkbox is off.
   // Every field here round-trips through the blueprint's own flat
   // `filters`/`filter_mode`/`use_filters`/`override_stack_size`/
   // `spoil_priority` fields (see blueprint.ts's normaliseEntities/
   // denormaliseEntities) — this panel is the only place that writes them.
-  const inserter = data.inserters[entity.name];
+  // Each checkbox only fires its callback: the edit rebuilds this panel,
+  // which is what enables or greys out the controls beside it.
   if (inserter) {
+    const settingRow = (text: string, checked: boolean, onChange: (on: boolean) => void): { row: HTMLDivElement; lead: HTMLDivElement } => {
+      const row = document.createElement("div");
+      row.className = "inserter-gui-row";
+      row.classList.toggle("is-off", !checked);
+      const lead = document.createElement("div");
+      lead.className = "inserter-gui-lead";
+      const label = document.createElement("label");
+      label.className = "entity-gui-checkbox-row";
+      const box = document.createElement("input");
+      box.type = "checkbox";
+      box.checked = checked;
+      box.addEventListener("change", () => onChange(box.checked));
+      label.append(box, document.createTextNode(` ${text}`));
+      lead.appendChild(label);
+      row.appendChild(lead);
+      main.appendChild(row);
+      return { row, lead };
+    };
+
     const FILTER_SLOT_COUNT = 5;
-    const filterSection = document.createElement("div");
-    filterSection.className = "entity-gui-section";
-
-    const filterHeader = document.createElement("label");
-    filterHeader.className = "entity-gui-checkbox-row";
-    const filterCheckbox = document.createElement("input");
-    filterCheckbox.type = "checkbox";
-    filterCheckbox.checked = entity.useFilters ?? false;
-    filterCheckbox.addEventListener("change", () => callbacks.onToggleUseFilters(filterCheckbox.checked));
-    filterHeader.append(filterCheckbox, document.createTextNode(" Use filters"));
-    filterSection.appendChild(filterHeader);
-
-    const filterBody = document.createElement("div");
-    filterBody.className = "entity-gui-filter-body";
-    filterBody.hidden = !filterCheckbox.checked;
-    filterCheckbox.addEventListener("change", () => { filterBody.hidden = !filterCheckbox.checked; });
+    const useFilters = entity.useFilters ?? false;
+    const filters = settingRow("Use filters", useFilters, (on) => callbacks.onToggleUseFilters(on));
 
     const modeRow = document.createElement("div");
     modeRow.className = "entity-gui-filter-mode-row";
@@ -362,12 +396,13 @@ export function buildPropertiesPanel(
     modeToggle.setAttribute("role", "switch");
     modeToggle.setAttribute("aria-checked", String(isBlacklist));
     modeToggle.title = "Toggle whitelist/blacklist";
+    modeToggle.disabled = !useFilters;
     modeToggle.addEventListener("click", () => callbacks.onSetFilterMode(isBlacklist ? "whitelist" : "blacklist"));
     const blacklistLabel = document.createElement("span");
     blacklistLabel.className = "filter-mode-label";
     blacklistLabel.textContent = "Blacklist";
     modeRow.append(whitelistLabel, modeToggle, blacklistLabel);
-    filterBody.appendChild(modeRow);
+    filters.lead.appendChild(modeRow);
 
     const filterSlotsRow = document.createElement("div");
     filterSlotsRow.className = "entity-gui-filter-slots";
@@ -376,6 +411,7 @@ export function buildPropertiesPanel(
       const slotButton = document.createElement("button");
       slotButton.type = "button";
       slotButton.className = "filter-slot-button";
+      slotButton.disabled = !useFilters;
       const localisedItem = itemName ? (catalog.itemNames[itemName] ?? itemName) : undefined;
       slotButton.title = localisedItem ? `${localisedItem} — right-click to remove` : "Empty filter slot";
       if (itemName) slotButton.appendChild(icon(itemName, localisedItem ?? itemName, 28));
@@ -386,29 +422,18 @@ export function buildPropertiesPanel(
       });
       filterSlotsRow.appendChild(slotButton);
     }
-    filterBody.appendChild(filterSlotsRow);
-    filterSection.appendChild(filterBody);
-    container.appendChild(filterSection);
+    filters.row.appendChild(filterSlotsRow);
 
     // Override stack size: checkbox + slider + numeric readout. The real
     // game's own max depends on the force's stack-size research, which this
     // tool has no notion of (no research/force model) — MAX_OVERRIDE_STACK
     // is a generous fixed ceiling covering every vanilla tech tier instead.
     const MAX_OVERRIDE_STACK = 20;
-    const stackSection = document.createElement("div");
-    stackSection.className = "entity-gui-section";
-    const stackHeader = document.createElement("label");
-    stackHeader.className = "entity-gui-checkbox-row";
-    const stackCheckbox = document.createElement("input");
-    stackCheckbox.type = "checkbox";
     const stackEnabled = entity.overrideStackSize !== undefined;
-    stackCheckbox.checked = stackEnabled;
-    stackHeader.append(stackCheckbox, document.createTextNode(" Override stack size"));
-    stackSection.appendChild(stackHeader);
+    const stack = settingRow("Override stack size", stackEnabled, (on) => callbacks.onToggleOverrideStackSize(on));
 
     const stackBody = document.createElement("div");
     stackBody.className = "entity-gui-stack-body";
-    stackBody.hidden = !stackEnabled;
     const stackSlider = document.createElement("input");
     stackSlider.type = "range";
     stackSlider.min = "1";
@@ -416,6 +441,7 @@ export function buildPropertiesPanel(
     stackSlider.step = "1";
     stackSlider.value = String(entity.overrideStackSize ?? 1);
     stackSlider.className = "stack-size-slider";
+    stackSlider.disabled = !stackEnabled;
     const stackValue = document.createElement("input");
     stackValue.type = "number";
     stackValue.min = "1";
@@ -423,6 +449,7 @@ export function buildPropertiesPanel(
     stackValue.step = "1";
     stackValue.value = String(entity.overrideStackSize ?? 1);
     stackValue.className = "stack-size-value";
+    stackValue.disabled = !stackEnabled;
     // `input` only updates the live numeric readout — no callback there, and
     // therefore no applyEdit/full-panel-rebuild — because onSetOverrideStackSize
     // triggers renderPropertiesPanel(), which replaceChildren()s this very
@@ -446,35 +473,20 @@ export function buildPropertiesPanel(
       callbacks.onSetOverrideStackSize(clamped);
     });
     stackBody.append(stackSlider, stackValue);
-    stackSection.appendChild(stackBody);
-    container.appendChild(stackSection);
-
-    stackCheckbox.addEventListener("change", () => {
-      stackBody.hidden = !stackCheckbox.checked;
-      callbacks.onToggleOverrideStackSize(stackCheckbox.checked);
-    });
+    stack.row.appendChild(stackBody);
 
     // Spoiled priority: a main "Spoiled priority" checkbox (matching the
-    // Use filters/Override stack size sections above it) gates two
+    // Use filters/Override stack size rows above it) gates two
     // mutually-exclusive radios. Unchecking the main box clears the
     // preference entirely (undefined); checking it defaults to
     // "spoiled-first" — the game's own first/emphasised option — rather
     // than leaving the radios both unset with no way to tell which one a
     // bare click would land on.
-    const spoilSection = document.createElement("div");
-    spoilSection.className = "entity-gui-section";
-    const spoilHeader = document.createElement("label");
-    spoilHeader.className = "entity-gui-checkbox-row";
-    const spoilCheckbox = document.createElement("input");
-    spoilCheckbox.type = "checkbox";
     const spoilEnabled = entity.spoilPriority !== undefined;
-    spoilCheckbox.checked = spoilEnabled;
-    spoilHeader.append(spoilCheckbox, document.createTextNode(" Spoiled priority"));
-    spoilSection.appendChild(spoilHeader);
+    const spoil = settingRow("Spoiled priority", spoilEnabled, (on) => callbacks.onSetSpoilPriority(on ? "spoiled-first" : undefined));
 
     const spoilBody = document.createElement("div");
     spoilBody.className = "entity-gui-spoil-body";
-    spoilBody.hidden = !spoilEnabled;
 
     function makeSpoilRadio(value: "spoiled-first" | "fresh-first", text: string): HTMLLabelElement {
       const label = document.createElement("label");
@@ -483,22 +495,17 @@ export function buildPropertiesPanel(
       radio.type = "radio";
       radio.name = `spoil-priority-${entity.entityNumber}`;
       radio.checked = entity.spoilPriority === value;
+      radio.disabled = !spoilEnabled;
       radio.addEventListener("change", () => callbacks.onSetSpoilPriority(value));
       label.append(radio, document.createTextNode(` ${text}`));
       return label;
     }
     spoilBody.appendChild(makeSpoilRadio("spoiled-first", "Spoiled first"));
     spoilBody.appendChild(makeSpoilRadio("fresh-first", "Fresh first"));
-    spoilSection.appendChild(spoilBody);
-    container.appendChild(spoilSection);
-
-    spoilCheckbox.addEventListener("change", () => {
-      spoilBody.hidden = !spoilCheckbox.checked;
-      callbacks.onSetSpoilPriority(spoilCheckbox.checked ? "spoiled-first" : undefined);
-    });
+    spoil.row.appendChild(spoilBody);
   }
 
-  if (circuit && hasCircuitGui(entity, circuit.wired)) refreshers.push(buildCircuitSection(container, entity, data, catalog, circuit));
+  if (circuit && hasCircuitGui(entity, circuit.wired)) refreshers.push(buildCircuitSection(side ?? container, entity, data, catalog, circuit, { bare: side !== undefined }));
 
   // mountEntityPreview's teardown fires when this panel is next rebuilt or
   // the container is cleared — matches every other rebuild-on-change spot

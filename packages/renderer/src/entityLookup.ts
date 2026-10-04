@@ -1,5 +1,6 @@
 import type { EntityGraphics, GameData, HeatConnectionPoint, InserterGraphics, PipeConnectionPoint, PlacedEntity, RenderCatalog, WireAttachPoints } from "@factoriotools/engine";
 import { toCardinal, opposite, step, Dir } from "./neighbours/grid.js";
+import { isRail, railFootprint } from "./railGeometry.js";
 
 /** One lookup over both GameData (entities with rates) and the RenderCatalog
  *  (visual-only ones) — the renderer doesn't care which side a name came
@@ -36,6 +37,9 @@ export interface ResolvedVisual {
   supplyAreaDistance?: number;
   /** Poles only: copper wire reach, in tiles. */
   maxWireDistance?: number;
+  /** Rails only: the rail's entity name, whose footprint railGeometry
+   *  works out per facing. */
+  rail?: string;
 }
 
 /** A module's look inside a beacon slot — its tier picks the art variation,
@@ -150,6 +154,7 @@ export function buildVisualLookup(data: GameData, catalog: RenderCatalog): Map<s
       outputWireConnections: e.outputWireConnections,
       supplyAreaDistance: e.supplyAreaDistance,
       maxWireDistance: e.maxWireDistance,
+      rail: isRail(e.name) ? e.name : undefined,
     });
   }
   // Most buildings take circuit wires, but the dataset only records where
@@ -195,6 +200,9 @@ export function hasAnimatedLayer(visual: ResolvedVisual): boolean {
 }
 
 export function effectiveFootprint(visual: ResolvedVisual, direction: number): [number, number] {
+  // A rail's footprint changes shape with its facing in ways no width/height
+  // swap describes (a curve's box is neither square nor symmetric).
+  if (visual.rail) return railFootprint(visual.rail, direction);
   const [w, h] = visual.tileFootprint;
   if (!visual.rotatesFootprint) return [w, h];
   const facing = toCardinal(direction);
@@ -361,7 +369,7 @@ const FINE_ROTATION = new Set(["rail-signal", "rail-chain-signal"]);
 
 /** Entities that rotate in 45° increments (step 2 of 16) — 8-way, matching
  *  their own 8 real facing sprites (dir8) — railgun-turret only, so far. */
-const EIGHT_WAY_ROTATION = new Set(["railgun-turret"]);
+const EIGHT_WAY_ROTATION = new Set(["railgun-turret", "straight-rail", "elevated-straight-rail", "rail-support"]);
 
 /** The R/Shift+R rotation step, in the 16-way scheme this renderer
  *  produces for every direction value (see rotateGhost's own doc comment).

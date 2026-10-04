@@ -7,6 +7,8 @@
  *  the main blueprint canvas draws full entity sprites via
  *  packages/renderer instead, not just icons. */
 
+import { iconName } from "@factoriotools/renderer";
+
 const SHEET_URL = "./data/sprites/icons.png";
 const MANIFEST_URL = "./data/sprite-icon-manifest.json";
 
@@ -60,7 +62,7 @@ function load(): Promise<Map<string, IconEntry>> {
 /** Sprite-sheet cell for a prototype name, once the manifest has loaded.
  *  Returns undefined before load, or if the name has no icon. */
 export function getIconPosition(name: string): { x: number; y: number } | undefined {
-  return positions?.get(name);
+  return positions?.get(name) ?? positions?.get(iconName(name));
 }
 
 /** Run `fn` once the manifest has resolved — immediately if it already has. */
@@ -92,7 +94,7 @@ export function icon(name: string, alt: string, displaySize = 26): HTMLSpanEleme
   el.style.setProperty("--icon-size", `${displaySize}px`);
   el.setAttribute("role", "img");
   el.setAttribute("aria-label", alt);
-  void load().then((map) => applyBackground(el, map.get(name), displaySize));
+  void load().then((map) => applyBackground(el, map.get(name) ?? map.get(iconName(name)), displaySize));
   return el;
 }
 
@@ -109,7 +111,7 @@ export { SHEET_URL, CELL };
  *  Blank until the manifest has loaded; the next rebuild fills it in. */
 export function iconHtml(name: string, displaySize = 16): string {
   void load();
-  const entry = positions?.get(name);
+  const entry = positions?.get(name) ?? positions?.get(iconName(name));
   const base = `display:inline-block;width:${displaySize}px;height:${displaySize}px;vertical-align:-3px;flex:none`;
   if (!entry) return `<span style="${base}"></span>`;
   const scale = displaySize / CELL;

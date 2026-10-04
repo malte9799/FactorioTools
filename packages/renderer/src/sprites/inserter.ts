@@ -1,6 +1,6 @@
 import type { InserterGraphics, PlacedEntity } from "@factoriotools/engine";
 import type { SpriteAtlas, SpriteSurface } from "../spriteAtlas.js";
-import { step, toCardinal, type Cardinal } from "../neighbours/grid.js";
+import { opposite, step, toCardinal, type Cardinal } from "../neighbours/grid.js";
 import { PIXELS_PER_TILE } from "../draw/commands.js";
 import { drawOutline, TINT_ALPHA } from "../draw/paint.js";
 
@@ -14,7 +14,7 @@ const tiles = (pixels: number, scale = 1) => (pixels * scale) / PIXELS_PER_TILE;
  *  its hand in closer — the reference editor's pose, and what this drew
  *  before.) Numbers measured off an in-game screenshot of all four facings,
  *  in tiles, for the default hand_size. */
-const REACH = 1;
+export const REACH = 1;
 /** How far up the screen the raised elbow sits from the midpoint. */
 const ELBOW_LIFT = 0.26;
 /** The hand hovers slightly above the ground it reaches over. */
@@ -29,7 +29,7 @@ const DEFAULT_HAND_SIZE = 0.75;
 /** Long-handed-inserter is the one vanilla inserter with a non-default
  *  hand_size (1.5, i.e. exactly 2× DEFAULT_HAND_SIZE) — its pickup/insert
  *  positions are ~2× a regular inserter's too, so the whole pose scales. */
-const LONG_HANDED_RATIO = 1.5 / DEFAULT_HAND_SIZE;
+export const LONG_HANDED_RATIO = 1.5 / DEFAULT_HAND_SIZE;
 
 interface Point {
   x: number;
@@ -169,8 +169,8 @@ function drawPlatform(
   g: InserterGraphics,
   platform: SpriteSurface,
 ): void {
-  const cardinal = toCardinal(entity.direction);
-  const column = Math.round(cardinal / 4) % g.platformDirections;
+  // Same frame collectInserterPlatform picks: the opposite facing's.
+  const column = (opposite(toCardinal(entity.direction)) / 4) % g.platformDirections;
   const pw = tiles(g.platform.frameWidth, g.platform.scale);
   const ph = tiles(g.platform.frameHeight, g.platform.scale);
   // The platform art's own shift (the prototype's shift field) nudges the
