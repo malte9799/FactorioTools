@@ -234,7 +234,10 @@ export function buildCircuitStatus(container: HTMLElement, entity: PlacedEntity,
 
 /* ---------- the body ---------- */
 
-export function buildCircuitSection(container: HTMLElement, entity: PlacedEntity, data: GameData, catalog: RenderCatalog, cb: CircuitCallbacks): Refresh {
+/** `bare` leaves out a wired building's own panel and heading, for a caller
+ *  that already put the settings in a titled panel (the inserter's side
+ *  column). */
+export function buildCircuitSection(container: HTMLElement, entity: PlacedEntity, data: GameData, catalog: RenderCatalog, cb: CircuitCallbacks, opts: { bare?: boolean } = {}): Refresh {
   const refreshers: Refresh[] = [];
   const label = (s: BpSignalId | undefined) => (s?.name ? (catalog.itemNames[s.name] ?? catalog.signals?.[s.name]?.localised ?? s.name) : "");
   const behavior = entity.controlBehavior ?? {};
@@ -841,7 +844,7 @@ export function buildCircuitSection(container: HTMLElement, entity: PlacedEntity
 
   /* ---------- lamps and every other wired building ---------- */
 
-  const box = /lamp/.test(entity.name) ? container : panel(container, "circuit-building");
+  const box = /lamp/.test(entity.name) || opts.bare ? container : panel(container, "circuit-building");
   if (box !== container) heading(box, "Circuit connection");
   if (!cb.wired) {
     box.appendChild(el("div", "circuit-note", "Connect a red or green wire to control it from the circuit network."));

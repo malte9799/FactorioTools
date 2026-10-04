@@ -1,9 +1,9 @@
 import { Layer, type PlacedEntity } from "@factoriotools/engine";
 import { getSharedSpriteAtlas } from "./spriteAtlas.js";
 import type { ResolvedVisual } from "./entityLookup.js";
-import { collectEntity } from "./draw/collect.js";
+import { collectEntity, collectInserterPlatform } from "./draw/collect.js";
 import { paint } from "./draw/paint.js";
-import { drawInserter } from "./sprites/inserter.js";
+import { drawInserter, LONG_HANDED_RATIO, REACH } from "./sprites/inserter.js";
 import { NeighbourGrid } from "./neighbours/grid.js";
 import { FluidNetwork } from "./neighbours/fluid.js";
 import { HeatNetwork } from "./neighbours/heat.js";
@@ -45,10 +45,10 @@ export interface FitBox {
  *  centered on either.
  *
  *  Falls back to footprint*margin when there are no commands to measure —
- *  the inserter path (drawInserter doesn't go through collectEntity /
- *  DrawCommand, so there is nothing to measure) and a defensive floor for
- *  an empty/malformed command list, so a tiny edge case still gets a sane,
- *  centered fit instead of dividing by ~0. */
+ *  a defensive floor for an empty/malformed command list, so a tiny edge
+ *  case still gets a sane, centered fit instead of dividing by ~0. (An
+ *  inserter doesn't use this at all: mountEntityPreview sizes its box from
+ *  the arm's reach, which no draw command carries.) */
 export function computeFitBox(tileFootprint: [number, number], commands: DrawCommand[]): FitBox {
   const [fw, fh] = tileFootprint;
   const margin = 1.6;
@@ -148,11 +148,13 @@ export function mountEntityPreview(
     // Fit the entity into the available space, centered. Collected FIRST
     // (before any transform is applied) so computeFitBox can measure the
     // actual draw commands' own extents — see its own doc comment for why
-    // that beats a footprint*margin guess. The inserter path never
-    // collects (drawInserter doesn't go through collectEntity/DrawCommand),
-    // so it always gets computeFitBox's footprint-based fallback.
+    // that beats a footprint*margin guess. An inserter collects only its
+    // platform (drawInserter paints the arm straight onto the canvas, not
+    // through DrawCommand), so its box is sized by hand below instead.
     let commands: DrawCommand[] = [];
-    if (visual.graphics && !visual.inserterGraphics) {
+    if (visual.inserterGraphics) {
+      collectInserterPlatform(commands, entity, visual.inserterGraphics, 1);
+    } else if (visual.graphics) {
       const never = () => false;
       collectEntity(
         commands,
@@ -163,7 +165,11 @@ export function mountEntityPreview(
       );
     }
 
-    const box = computeFitBox(visual.tileFootprint, commands);
+    // An inserter's box is centered on its pivot and wide enough for the
+    // arm at full reach in any facing, so rotating it never rescales or
+    // shifts the preview, and the hand is never clipped.
+    const armSpan = 2 * (REACH * (entityName === "long-handed-inserter" ? LONG_HANDED_RATIO : 1) + 1);
+    const box = visual.inserterGraphics ? { cx: 0, cy: 0, w: armSpan, h: armSpan } : computeFitBox(visual.tileFootprint, commands);
     const pixelsPerTile = Math.min(rect.width / box.w, rect.height / box.h);
 
     ctx.save();
@@ -171,6 +177,8 @@ export function mountEntityPreview(
     ctx.scale(pixelsPerTile, pixelsPerTile);
     ctx.translate(-box.cx, -box.cy);
     if (visual.inserterGraphics) {
+      // Platform first, then the arm over it — the main canvas's own order.
+      paint(ctx, atlas, commands, dpr * pixelsPerTile);
       drawInserter(ctx, atlas, entity, visual.inserterGraphics);
     } else if (visual.graphics) {
       // Never actually used — this preview's commands carry no .tint, so
