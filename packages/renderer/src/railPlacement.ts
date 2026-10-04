@@ -194,7 +194,9 @@ export function railStartAt(index: RailIndex, x: number, y: number): { end: Rail
 
 /** The signal or train stop slot a held signal/stop snaps to near a point. */
 export function railsideSlot(index: RailIndex, name: string, x: number, y: number, heldDirection: number): RailSlot | undefined {
-  const slots = SIGNALS.has(name) ? index.signalSlots.filter((s) => !index.takenSignalGroups.has(slotGroup(s))) : index.stopSlots;
+  const slots = SIGNALS.has(name)
+    ? index.signalSlots.filter((s) => !index.takenSignalGroups.has(slotGroup(s)))
+    : index.stopSlots.filter((s) => !index.railsideTaken.has(`${s.x},${s.y}`));
   return nearestSlot(slots, x, y, name === "train-stop" ? 3 : 2, heldDirection);
 }
 

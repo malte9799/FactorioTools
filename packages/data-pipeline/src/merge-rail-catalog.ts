@@ -93,6 +93,17 @@ const catalog = JSON.parse(readFileSync(CATALOG_PATH, "utf-8")) as RenderCatalog
 const rails = buildRenderCatalog(raw as never, locale, catalog.version);
 const manifest = JSON.parse(readFileSync(MANIFEST_PATH, "utf-8")) as { dataRoot: string; files: string[] };
 const files = new Set(manifest.files);
+// Sheets are copied, and later looked up, by file name alone; two different
+// sheets sharing a name would silently load the same image.
+const sheetByBasename = new Map<string, string>();
+const claimBasename = (sheet: string) => {
+  const basename = path.basename(sheet);
+  const previous = sheetByBasename.get(basename);
+  if (previous && previous !== sheet) throw new Error(`sprite file name collision: ${previous} and ${sheet}`);
+  sheetByBasename.set(basename, sheet);
+  return basename;
+};
+for (const sheet of files) claimBasename(sheet);
 
 let copied = 0;
 for (const [name, entry] of Object.entries(rails.entities)) {
@@ -102,9 +113,10 @@ for (const [name, entry] of Object.entries(rails.entities)) {
   }
   catalog.entities[name] = entry;
   for (const sheet of sheetsOf(entry.graphics)) {
+    const basename = claimBasename(sheet);
     files.add(sheet);
     const src = path.join(spriteRoot, sheet);
-    const dest = path.join(SPRITE_OUT_DIR, path.basename(sheet));
+    const dest = path.join(SPRITE_OUT_DIR, basename);
     if (existsSync(dest)) continue;
     if (!existsSync(src)) throw new Error(`missing sprite sheet: ${src}`);
     copyFileSync(src, dest);
