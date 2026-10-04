@@ -534,7 +534,9 @@ function railSignalGraphics(proto: any): EntityGraphics | undefined {
   // the signal itself.
   const piece = toSprite(proto.ground_picture_set?.rail_piece?.sprites);
   if (piece) {
-    const lineLength = proto.ground_picture_set.rail_piece.sprites.line_length ?? 1;
+    const { line_length, frame_count } = proto.ground_picture_set.rail_piece.sprites;
+    // Without a line_length every frame sits in one row.
+    const lineLength = line_length || frame_count || 1;
     layers.unshift({
       layer: Layer.LowerObject,
       sprites: { ...piece, columns: lineLength },
