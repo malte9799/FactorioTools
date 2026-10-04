@@ -1051,7 +1051,9 @@ function buildTiles(raw: Raw): Record<string, TileProto> {
       variants.sort((a, b) => b.size - a.size);
     }
     const c = proto.map_color ?? {};
-    const rgb = [c.r ?? c[0] ?? 0, c.g ?? c[1] ?? 0, c.b ?? c[2] ?? 0];
+    // A Color is 0-1 floats unless any channel is above 1, then 0-255.
+    const channels = [c.r ?? c[0] ?? 0, c.g ?? c[1] ?? 0, c.b ?? c[2] ?? 0];
+    const rgb = channels.every((channel) => channel <= 1) ? channels.map((channel) => Math.round(channel * 255)) : channels;
     tiles[proto.name] = { name: proto.name, variants, mapColor: `rgb(${rgb.join(",")})` };
   }
   return tiles;

@@ -37,6 +37,7 @@ export class SpriteAtlas {
   // hands back an already-decoded surface that drawImage samples directly.
   private images = new Map<string, SpriteSurface>();
   private loading = new Map<string, Promise<SpriteSurface>>();
+  private failed = new Set<string>();
   // How many of `loading`'s promises haven't settled yet — used instead of
   // `loading.size` directly so a caller (render.ts's small loading-spinner
   // badge) can tell "actively fetching/decoding right now" apart from
@@ -139,12 +140,19 @@ export class SpriteAtlas {
           img.src = url;
         });
       }).catch((err) => {
+        this.failed.add(modPath);
         console.warn(err.message);
         throw err;
       }).finally(settle);
       this.loading.set(modPath, promise);
     }
     return undefined;
+  }
+
+  /** True once a sheet's load has settled as a failure: it will never
+   *  arrive, so nothing should keep waiting on it. */
+  hasFailed(modPath: string): boolean {
+    return this.failed.has(modPath);
   }
 
   private tinted = new Map<string, HTMLCanvasElement>();

@@ -100,7 +100,8 @@ export function collectTiles(tiles: BpTile[], protos: Record<string, TileProto> 
  *  be set on `ctx`; draws in device pixels with every edge rounded, so
  *  neighbouring tiles meet exactly instead of leaving a hairline of
  *  background between them at fractional zooms. Returns false while any
- *  visible tile is still waiting on its sheet (painted flat meanwhile). */
+ *  visible tile is still waiting on its sheet (painted flat meanwhile; a
+ *  sheet that failed to load stays flat and is not waited on). */
 export function paintTiles(ctx: CanvasRenderingContext2D, atlas: SpriteAtlas, commands: TileCommand[]): boolean {
   if (commands.length === 0) return true;
   const m = ctx.getTransform();
@@ -119,7 +120,7 @@ export function paintTiles(ctx: CanvasRenderingContext2D, atlas: SpriteAtlas, co
     if (image) {
       ctx.drawImage(image, c.sx, c.sy, c.sw, c.sw, x0, y0, x1 - x0, y1 - y0);
     } else {
-      if (c.sheet) complete = false;
+      if (c.sheet && !atlas.hasFailed(c.sheet)) complete = false;
       ctx.fillStyle = c.color;
       ctx.fillRect(x0, y0, x1 - x0, y1 - y0);
     }
