@@ -57,4 +57,22 @@ test("crossing track joins the block it crosses", () => {
   assert.equal(new Set(blocks.pieces.map((p) => p.block)).size, 1);
 });
 
+test("a curve leaving a switch past a signal is its own block, though it shares tiles", () => {
+  // The user's report: a switch whose curves part from the straight track,
+  // with chain signals at the curve joint (-7,10) and on the straight (-4,11).
+  const rails: RailPiece[] = [
+    { name: "curved-rail-b", x: -5, y: 9, direction: 4 },
+    ...[-13, -11, -9, -7, -5, -3].map((x) => ({ name: "straight-rail", x, y: 11, direction: 4 })),
+    { name: "curved-rail-a", x: -10, y: 11, direction: 4 },
+  ];
+  const signals = new Set(["-7,10,3", "-4,11,4"]);
+  const blocks = computeRailBlocks(rails, (x, y, dir) => signals.has(`${x},${y},${dir}`));
+  const blockOf = (name: string, x: number) => blocks.pieces.find((p) => p.piece.name === name && p.piece.x === x)!.block;
+  const curve = blockOf("curved-rail-b", -5);
+  const main = blockOf("straight-rail", -7);
+  assert.notEqual(curve, main);
+  assert.equal(blockOf("curved-rail-a", -10), main);
+  assert.notEqual(blocks.colors[curve], blocks.colors[main]);
+});
+
 console.log(`${passed} passed`);

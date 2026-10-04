@@ -4,9 +4,43 @@
  *
  *  Pieces that share a joint are in the same block unless a signal stands at
  *  that joint. Track that crosses other track joins its block too, as in the
- *  game: a train on the crossing occupies both. */
+ *  game: a train on the crossing occupies both. Track that only runs close
+ *  by — a curve leaving a switch shares tiles with the straight beside it —
+ *  doesn't. */
 
-import { isElevatedRail, railEndsAt, railTiles, type RailEnd, type RailPiece } from "./railGeometry.js";
+type Point = [number, number];
+
+/** Where segments ab and cd meet, if they do (endpoints included). */
+function segmentsMeet(a: Point, b: Point, c: Point, d: Point): Point | undefined {
+  const rx = b[0] - a[0];
+  const ry = b[1] - a[1];
+  const sx = d[0] - c[0];
+  const sy = d[1] - c[1];
+  const denom = rx * sy - ry * sx;
+  if (Math.abs(denom) < 1e-9) return undefined;
+  const t = ((c[0] - a[0]) * sy - (c[1] - a[1]) * sx) / denom;
+  const u = ((c[0] - a[0]) * ry - (c[1] - a[1]) * rx) / denom;
+  const eps = 1e-9;
+  if (t < -eps || t > 1 + eps || u < -eps || u > 1 + eps) return undefined;
+  return [a[0] + t * rx, a[1] + t * ry];
+}
+
+/** True when two pieces' centrelines cross somewhere other than at a rail
+ *  end: a crossing, not two pieces meeting or splitting at a joint. */
+function centrelinesCross(a: Point[], b: Point[], ends: Point[]): boolean {
+  for (let i = 1; i < a.length; i++) {
+    for (let j = 1; j < b.length; j++) {
+      const p = segmentsMeet(a[i - 1]!, a[i]!, b[j - 1]!, b[j]!);
+      if (!p) continue;
+      // Meeting at (or right by) a rail end is a joint, not a crossing.
+      if (ends.some(([ex, ey]) => Math.hypot(p[0] - ex, p[1] - ey) < 0.75)) continue;
+      return true;
+    }
+  }
+  return false;
+}
+
+import { isElevatedRail, railCentreline, railEndsAt, railTiles, type RailEnd, type RailPiece } from "./railGeometry.js";
 
 export interface RailBlockPiece {
   piece: RailPiece;
@@ -73,14 +107,22 @@ export function computeRailBlocks(rails: RailPiece[], signalled: (x: number, y: 
     if (jointCut(group[0]!.end)) continue;
     for (let i = 1; i < group.length; i++) union(group[0]!.index, group[i]!.index);
   }
-  // Crossing track shares tiles without sharing a joint.
-  const byTile = new Map<string, number>();
+  // Crossing track: pieces sharing a tile whose centrelines actually cross.
+  const lines = ground.map((r) => railCentreline(r.name, r.direction, 8).map(([x, y]): Point => [r.x + x, r.y + y]));
+  const byTile = new Map<string, number[]>();
+  const tested = new Set<string>();
   ground.forEach((r, index) => {
     for (const [tx, ty] of railTiles(r)) {
       const key = `${tx},${ty}`;
-      const other = byTile.get(key);
-      if (other === undefined) byTile.set(key, index);
-      else union(index, other);
+      const here = byTile.get(key) ?? byTile.set(key, []).get(key)!;
+      for (const other of here) {
+        const pair = `${other},${index}`;
+        if (tested.has(pair)) continue;
+        tested.add(pair);
+        const pairEnds = [...ends[index]!, ...ends[other]!].map((e): Point => [e.x, e.y]);
+        if (centrelinesCross(lines[index]!, lines[other]!, pairEnds)) union(index, other);
+      }
+      here.push(index);
     }
   });
 
