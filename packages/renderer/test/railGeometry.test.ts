@@ -204,15 +204,16 @@ test("where two straights meet, each side has a slot either side of the joint", 
   assert.equal(atJoint.filter((s) => s.direction === 8).length, 2);
 });
 
-test("a held train stop skips a slot that already has one", () => {
-  const rail = { entityNumber: 1, name: "straight-rail", x: 1, y: 1, direction: 0, quality: "normal" as const, modules: [], filterItems: [] };
-  const [east, west] = trainStopSlots([rail]);
-  assert.ok(east && west);
-  const stop = { entityNumber: 2, name: "train-stop", x: east.x, y: east.y, direction: east.direction, quality: "normal" as const, modules: [], filterItems: [] };
-  const index = buildRailIndex([rail, stop], () => [2, 2]);
-  // Over the rail, nearer the taken slot's side; the free one across is in reach.
-  const picked = railsideSlot(index, "train-stop", rail.x + 0.5, rail.y, east.direction);
-  assert.deepEqual(picked && [picked.x, picked.y], [west.x, west.y]);
+test("a held train stop over a taken slot stays on it, not the free one beside it", () => {
+  const rails = [1, 3, 5].map((y, i) => ({ entityNumber: i + 1, name: "straight-rail", x: 1, y, direction: 0, quality: "normal" as const, modules: [], filterItems: [] }));
+  const slots = trainStopSlots(rails);
+  const taken = slots.find((s) => s.y === 3 && s.direction === 0)!;
+  const stop = { entityNumber: 9, name: "train-stop", x: taken.x, y: taken.y, direction: taken.direction, quality: "normal" as const, modules: [], filterItems: [] };
+  const index = buildRailIndex([...rails, stop], () => [2, 2]);
+  // Just off the placed stop, toward its free neighbour two tiles along.
+  const picked = railsideSlot(index, "train-stop", taken.x, taken.y - 0.6, taken.direction);
+  assert.deepEqual(picked && [picked.x, picked.y], [taken.x, taken.y]);
+  assert.ok(index.railsideTaken.has(`${taken.x},${taken.y}`), "so the ghost shows red and nothing is placed");
 });
 
 console.log(`${passed} passed`);
