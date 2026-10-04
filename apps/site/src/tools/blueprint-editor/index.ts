@@ -2712,8 +2712,9 @@ export function mountBlueprintEditor(root: HTMLElement): () => void {
   /** The library entry the editor's blueprint was opened from or last saved
    *  to — what Cmd/Ctrl+S writes back to. Undefined for anything that did
    *  not come out of the library (an import, an example, a new blueprint).
-   *  Remembered across a reload alongside the autosave. */
-  const OPEN_ENTRY_KEY = "factoriotools.blueprint-viewer.open-entry";
+   *  Remembered across a reload alongside the autosave, and keyed with it so
+   *  a preview build's autosave is never paired with another build's entry. */
+  const OPEN_ENTRY_KEY = `${AUTOSAVE_KEY}.open-entry`;
   let openEntryId: string | undefined;
 
   function setOpenEntry(id: string | undefined): void {
@@ -2761,8 +2762,7 @@ export function mountBlueprintEditor(root: HTMLElement): () => void {
   /** Cmd/Ctrl+Shift+S: asks for a name and saves the current blueprint as a
    *  new library entry, which becomes the one later plain saves write to. */
   function saveCurrentAs(): Promise<void> {
-    const bpString = currentBpString();
-    if (!bpString) {
+    if (!currentBpString()) {
       setStatus("Nothing to save yet.", "error");
       return Promise.resolve();
     }
@@ -2783,9 +2783,16 @@ export function mountBlueprintEditor(root: HTMLElement): () => void {
       }
       function onSave(): void {
         const label = saveAsNameInput.value.trim() || "Untitled blueprint";
+        // Read now rather than when the prompt opened: undo and redo still
+        // reach the canvas while the name is being typed.
+        const bpString = currentBpString();
+        if (!bpString) {
+          setStatus("Nothing to save yet.", "error");
+          return;
+        }
         try {
           const before = new Set(listSaved().map((e) => e.id));
-          const saved = saveToLibrary(bpString!, label).find((e) => !before.has(e.id));
+          const saved = saveToLibrary(bpString, label).find((e) => !before.has(e.id));
           setOpenEntry(saved?.id);
           hasUnsavedChanges = false;
           librarySidebar.refresh();
@@ -2829,11 +2836,13 @@ export function mountBlueprintEditor(root: HTMLElement): () => void {
   function load(text: string, restoreCameraFromSave = false): boolean {
     try {
       const envelope = decodeBlueprintString(text);
-      blueprints = collectBlueprints(envelope);
-      if (blueprints.length === 0) {
+      // Only replaces what is open once there is something to open.
+      const leaves = collectBlueprints(envelope);
+      if (leaves.length === 0) {
         setStatus("That decoded fine but contains no blueprints.", "error");
         return false;
       }
+      blueprints = leaves;
       // Whatever was open before is replaced; guardedLoad sets the entry
       // again when this load came out of the library.
       setOpenEntry(undefined);
@@ -2860,6 +2869,16 @@ export function mountBlueprintEditor(root: HTMLElement): () => void {
           : `Read ${total} entities.`,
       );
       selectBlueprint(0, restoreCameraFromSave);
+      // persistEntities leaves the autosave alone for an empty canvas, so an
+      // empty blueprint would otherwise come back after a reload as the one
+      // that was open before it.
+      if (!entities.length) {
+        try {
+          localStorage.removeItem(AUTOSAVE_KEY);
+        } catch {
+          /* storage unavailable — not worth surfacing here */
+        }
+      }
       return true;
     } catch (error) {
       resultsWindow.hide();
