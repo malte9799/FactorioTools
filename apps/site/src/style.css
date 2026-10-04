@@ -2271,17 +2271,44 @@ canvas.select-mode {
   justify-content: center;
 }
 
-/* Inserter-only settings: filters, override stack size, spoil priority
-   (see edit-properties.ts's buildPropertiesPanel). Each gets its own bordered
-   section, matching the entity-gui-status row's own boxed look. */
-.entity-gui-section {
-  padding: 8px;
-  margin-bottom: 8px;
-  background: var(--panel-2);
-  border: 1px solid var(--border);
-  border-radius: 3px;
-  font-size: 12px;
+/* Inserter window (see edit-properties.ts's buildPropertiesPanel), laid out
+   after the game's: the preview and one ruled row per setting in the main
+   column — checkbox on the left, its controls beside it — and, when a wire
+   reaches the inserter, a "Circuit connection" panel in a second column. */
+#properties-window:has(.inserter-gui) { width: 470px; }
+#properties-window:has(.inserter-gui.has-side) { width: 730px; }
+
+.inserter-gui { display: grid; grid-template-columns: minmax(0, 1fr); gap: 12px; align-items: start; }
+.inserter-gui.has-side { grid-template-columns: minmax(0, 1fr) 236px; }
+.inserter-gui-main { min-width: 0; }
+.inserter-gui-main .entity-preview { height: 200px; margin-bottom: 0; }
+
+.inserter-gui-side { display: flex; flex-direction: column; gap: 8px; padding: 10px; }
+.inserter-gui-side .circuit-heading { margin: 0; font-size: 16px; color: var(--gold-strong); }
+.inserter-gui-side .circuit-bar { margin: 0; padding: 7px 10px; border: 1px solid var(--border); justify-content: flex-start; }
+.inserter-gui-side .circuit-check { margin: 0; padding-top: 8px; border-top: 1px solid var(--border); font-weight: 600; }
+.inserter-gui-side .circuit-bar + .circuit-check { padding-top: 0; border-top: none; }
+.inserter-gui-side .circuit-indent { margin-left: 0; }
+.inserter-gui-side .circuit-output-choice { flex-direction: row; gap: 14px; }
+
+@media (max-width: 760px) {
+  .inserter-gui.has-side { grid-template-columns: minmax(0, 1fr); }
 }
+
+.inserter-gui-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  min-height: 44px;
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
+  box-shadow: inset 0 1px 0 var(--bevel-light);
+  font-size: 13px;
+}
+
+.inserter-gui-lead { display: flex; flex-direction: column; gap: 6px; flex: none; }
 
 .entity-gui-checkbox-row {
   display: flex;
@@ -2291,19 +2318,12 @@ canvas.select-mode {
   font-weight: 600;
   color: var(--text);
 }
-
-.entity-gui-filter-body {
-  margin-top: 8px;
-  padding-top: 8px;
-  border-top: 1px solid var(--border);
-}
+.entity-gui-checkbox-row input { margin: 0; accent-color: var(--gold); }
 
 .entity-gui-filter-mode-row {
   display: flex;
   align-items: center;
-  justify-content: center;
   gap: 8px;
-  margin-bottom: 8px;
 }
 
 /* DOM order is whitelistLabel, then the switch, then blacklistLabel (see
@@ -2342,15 +2362,19 @@ canvas.select-mode {
 
 .filter-mode-switch.is-blacklist::after { left: 19px; background: var(--gold); }
 
+/* The five filter slots sit in one dark inset well, edge to edge. */
 .entity-gui-filter-slots {
   display: flex;
-  gap: 6px;
-  justify-content: center;
+  gap: 2px;
+  padding: 3px;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  box-shadow: inset 0 2px 4px var(--bevel-dark);
 }
 
 .filter-slot-button {
-  width: 36px;
-  height: 36px;
+  width: 40px;
+  height: 40px;
   padding: 4px;
   display: flex;
   align-items: center;
@@ -2360,18 +2384,17 @@ canvas.select-mode {
 .entity-gui-stack-body {
   display: flex;
   align-items: center;
-  gap: 8px;
-  margin-top: 8px;
-  padding-top: 8px;
-  border-top: 1px solid var(--border);
+  gap: 10px;
+  flex: 1;
+  min-width: 0;
 }
 
-.stack-size-slider { flex: 1; min-width: 0; }
+.stack-size-slider { flex: 1; min-width: 0; accent-color: var(--gold); }
 
 .stack-size-value {
-  width: 44px;
-  padding: 3px 4px;
-  font-size: 12px;
+  width: 84px;
+  padding: 5px 6px;
+  font-size: 13px;
   text-align: center;
   /* Hides the native up/down spinner arrows, which at this width overlap
      the digit(s) rather than sitting beside them. */
@@ -2388,11 +2411,7 @@ canvas.select-mode {
 .entity-gui-spoil-body {
   display: flex;
   align-items: center;
-  flex-wrap: wrap;
-  gap: 12px;
-  margin-top: 8px;
-  padding-top: 8px;
-  border-top: 1px solid var(--border);
+  gap: 16px;
 }
 
 .spoil-priority-option {
@@ -2400,8 +2419,17 @@ canvas.select-mode {
   align-items: center;
   gap: 4px;
   cursor: pointer;
-  color: var(--text-dim);
+  color: var(--text);
 }
+.spoil-priority-option input { margin: 0; accent-color: var(--gold); }
+
+/* A setting whose checkbox is off keeps its controls in place, greyed out. */
+.inserter-gui-row.is-off .entity-gui-filter-mode-row,
+.inserter-gui-row.is-off .entity-gui-filter-slots,
+.inserter-gui-row.is-off .entity-gui-stack-body,
+.inserter-gui-row.is-off .entity-gui-spoil-body { opacity: 0.45; }
+.inserter-gui-row.is-off .spoil-priority-option,
+.inserter-gui-row.is-off button { cursor: default; }
 
 @media (prefers-reduced-motion: reduce) {
   * { transition-duration: 0ms !important; }
