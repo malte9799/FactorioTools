@@ -39,7 +39,7 @@ import { buildLibrarySidebar } from "./library-sidebar.js";
 import { buildQuickbar, readAltLayers, writeAltLayers, type AltLayers, type QuickbarHandle, type QuickbarItem } from "./quickbar.js";
 import { buildGridMenu } from "./grid-menu.js";
 import { BlueprintLinkError, looksLikeBlueprintString, parseBlueprintLink, resolveBlueprintLink, SHARE_TARGETS } from "./blueprint-links.js";
-import { saveToLibrary } from "./blueprint-library.js";
+import { listSaved, replaceContentsInLibrary, saveToLibrary } from "./blueprint-library.js";
 import { RateOverlay } from "../../rate-overlay/controller.js";
 import { setCurrentBlueprint, EDITOR_AUTOSAVE_KEY, readAutosave } from "../../current-blueprint.js";
 import { currentQuality, onQualityChange } from "../../render-presets.js";
@@ -68,6 +68,23 @@ const TEMPLATE = `
           <button id="unsaved-modal-save" class="primary" type="button">Save</button>
           <button id="unsaved-modal-discard" class="ghost" type="button">Discard</button>
           <button id="unsaved-modal-cancel" class="ghost" type="button">Cancel</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div id="save-as-modal-backdrop" class="modal-backdrop" hidden>
+    <div id="save-as-modal" class="gui-window modal-window" role="dialog" aria-modal="true" aria-labelledby="save-as-modal-title">
+      <div class="gui-titlebar">
+        <span id="save-as-modal-title">Save blueprint as</span>
+      </div>
+      <div class="gui-body">
+        <div class="library-save-row">
+          <input id="save-as-modal-name" type="text" placeholder="Name…" class="library-save-input" aria-label="Name for the blueprint to save" />
+        </div>
+        <div class="intake-actions">
+          <button id="save-as-modal-save" class="primary" type="button">Save</button>
+          <button id="save-as-modal-cancel" class="ghost" type="button">Cancel</button>
         </div>
       </div>
     </div>
@@ -1361,6 +1378,7 @@ export function mountBlueprintEditor(root: HTMLElement): () => void {
     undoWires = [];
     redoWires = [];
     hasUnsavedChanges = false;
+    setOpenEntry(undefined);
     deselect();
     renderer.loadBlueprint(entities, wires);
     recalculate();
@@ -2680,12 +2698,113 @@ export function mountBlueprintEditor(root: HTMLElement): () => void {
    *  directly: guards against silently discarding an in-progress edit,
    *  then shows the spinner while the actual (synchronous, can be slow
    *  for a big blueprint) decode/build work runs. */
-  async function guardedLoad(text: string): Promise<void> {
+  async function guardedLoad(text: string, entryId?: string): Promise<void> {
     if (hasUnsavedChanges) {
       const choice = await confirmUnsavedChanges();
       if (choice === "cancel") return;
     }
     await withSpinner(() => load(text));
+    // load() forgot the previous entry; this one came out of the library.
+    if (entryId) setOpenEntry(entryId);
+  }
+
+  /** The library entry the editor's blueprint was opened from or last saved
+   *  to — what Cmd/Ctrl+S writes back to. Undefined for anything that did
+   *  not come out of the library (an import, an example, a new blueprint).
+   *  Remembered across a reload alongside the autosave. */
+  const OPEN_ENTRY_KEY = "factoriotools.blueprint-viewer.open-entry";
+  let openEntryId: string | undefined;
+
+  function setOpenEntry(id: string | undefined): void {
+    openEntryId = id;
+    try {
+      if (id) localStorage.setItem(OPEN_ENTRY_KEY, id);
+      else localStorage.removeItem(OPEN_ENTRY_KEY);
+    } catch {
+      /* storage unavailable — the entry is still remembered for this visit */
+    }
+  }
+
+  /** Cmd/Ctrl+S: writes the current blueprint back to the library entry it
+   *  is open from, keeping that entry's name, description and icons. With
+   *  no such entry (never saved, or deleted since) it asks for a name
+   *  instead, like Save As. */
+  function saveCurrent(): void {
+    if (!saveAsBackdrop.hidden) return; // the Save As prompt is already up
+    const entry = openEntryId ? listSaved().find((e) => e.id === openEntryId) : undefined;
+    if (!entry) {
+      void saveCurrentAs();
+      return;
+    }
+    const bpString = currentBpString();
+    if (!bpString) {
+      setStatus("Nothing to save yet.", "error");
+      return;
+    }
+    replaceContentsInLibrary(entry.id, bpString);
+    hasUnsavedChanges = false;
+    librarySidebar.refresh();
+    setStatus(`Saved “${entry.label}”.`, "info", true);
+  }
+
+  const saveAsBackdrop = $<HTMLDivElement>("#save-as-modal-backdrop");
+  const saveAsNameInput = $<HTMLInputElement>("#save-as-modal-name");
+  const saveAsSaveButton = $<HTMLButtonElement>("#save-as-modal-save");
+  const saveAsCancelButton = $<HTMLButtonElement>("#save-as-modal-cancel");
+
+  /** Cmd/Ctrl+Shift+S: asks for a name and saves the current blueprint as a
+   *  new library entry, which becomes the one later plain saves write to. */
+  function saveCurrentAs(): Promise<void> {
+    const bpString = currentBpString();
+    if (!bpString) {
+      setStatus("Nothing to save yet.", "error");
+      return Promise.resolve();
+    }
+    if (!saveAsBackdrop.hidden) return Promise.resolve(); // already asking
+    return new Promise((resolve) => {
+      const open = openEntryId ? listSaved().find((e) => e.id === openEntryId) : undefined;
+      saveAsNameInput.value = open?.label ?? blueprints[0]?.label ?? "";
+      saveAsBackdrop.hidden = false;
+      saveAsNameInput.focus();
+      saveAsNameInput.select();
+
+      function cleanup(): void {
+        saveAsBackdrop.hidden = true;
+        saveAsSaveButton.removeEventListener("click", onSave);
+        saveAsCancelButton.removeEventListener("click", onCancel);
+        saveAsNameInput.removeEventListener("keydown", onKeydown);
+        resolve();
+      }
+      function onSave(): void {
+        const label = saveAsNameInput.value.trim() || "Untitled blueprint";
+        try {
+          const before = new Set(listSaved().map((e) => e.id));
+          const saved = saveToLibrary(bpString!, label).find((e) => !before.has(e.id));
+          setOpenEntry(saved?.id);
+          hasUnsavedChanges = false;
+          librarySidebar.refresh();
+          setStatus(`Saved “${label}”.`, "info", true);
+          cleanup();
+        } catch {
+          setStatus("Couldn't save — the current blueprint doesn't decode.", "error");
+        }
+      }
+      function onCancel(): void {
+        cleanup();
+      }
+      function onKeydown(e: KeyboardEvent): void {
+        // Kept from the editor's own shortcuts (Escape backing out of a
+        // menu, letters picking tools) while the name is being typed —
+        // except Cmd/Ctrl combos, so Cmd+S is still claimed from the
+        // browser.
+        if (!e.metaKey && !e.ctrlKey) e.stopPropagation();
+        if (e.key === "Enter") onSave();
+        else if (e.key === "Escape") onCancel();
+      }
+      saveAsSaveButton.addEventListener("click", onSave);
+      saveAsCancelButton.addEventListener("click", onCancel);
+      saveAsNameInput.addEventListener("keydown", onKeydown);
+    });
   }
 
   /** Same guard as guardedLoad, for the "+ New blueprint" action — it has
@@ -2708,6 +2827,9 @@ export function mountBlueprintEditor(root: HTMLElement): () => void {
         setStatus("That decoded fine but contains no blueprints.", "error");
         return;
       }
+      // Whatever was open before is replaced; guardedLoad sets the entry
+      // again when this load came out of the library.
+      setOpenEntry(undefined);
       // null for a loose blueprint (no book) — the sidebar's "Current book"
       // folder then simply has nothing to show, same as before this string
       // was ever imported.
@@ -2741,9 +2863,9 @@ export function mountBlueprintEditor(root: HTMLElement): () => void {
   }
 
   const librarySidebar = buildLibrarySidebar($<HTMLDivElement>("#library-body"), {
-    onLoad(bpString) {
+    onLoad(bpString, entryId) {
       input.value = bpString;
-      void guardedLoad(bpString);
+      void guardedLoad(bpString, entryId);
     },
     getCurrentBpString: () => currentBpString(),
     onNew: guardedStartNew,
@@ -3073,6 +3195,17 @@ export function mountBlueprintEditor(root: HTMLElement): () => void {
   // applies to the blueprint just switched TO, matching how the picker
   // already behaved before this guard existed.
   picker.addEventListener("change", () => selectBlueprint(Number(picker.value)), { signal });
+
+  // Cmd/Ctrl+S saves to the library entry that is open (or asks for a name
+  // when there is none); with Shift it always asks, saving a new entry.
+  // Claimed even while typing in a field, so the browser's own "save page"
+  // dialog never opens over the editor.
+  window.addEventListener("keydown", (e) => {
+    if (!(e.metaKey || e.ctrlKey) || e.altKey || e.key.toLowerCase() !== "s") return;
+    e.preventDefault();
+    if (e.shiftKey) void saveCurrentAs();
+    else saveCurrent();
+  }, { signal });
 
   // Cmd/Ctrl+Z undo, +Shift redo — guarded against firing while focus is in
   // the blueprint-string textarea so the browser's native textarea undo
@@ -3514,7 +3647,16 @@ export function mountBlueprintEditor(root: HTMLElement): () => void {
   }
   if (autosaved) {
     input.value = autosaved;
+    // The autosave is the blueprint that was open, edits included — so it
+    // is still the same library entry it was before the reload.
+    let reopened: string | null = null;
+    try {
+      reopened = localStorage.getItem(OPEN_ENTRY_KEY);
+    } catch {
+      /* storage unavailable */
+    }
     load(autosaved, true);
+    if (reopened) setOpenEntry(reopened);
   } else {
     loadExamplePool()
       .then((pool) => {
