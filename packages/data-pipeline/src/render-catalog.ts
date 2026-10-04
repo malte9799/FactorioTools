@@ -871,6 +871,14 @@ const ROTATES_FOOTPRINT = new Set([
   // offshore-pump is ~1.2x1.98 (selection_box [-0.6,-1.49] to [0.6,0.49]),
   // same non-square footprint issue as pump above.
   "offshore-pump",
+  // 3x5 generators (collision_box 2.8x4.8 / 2.7x4.7), the same shape as
+  // steam-engine, which entityLookup.ts covers on the machine side.
+  "fusion-generator",
+  "burner-generator",
+  // Rotatable turrets with a non-square collision_box: flamethrower-turret
+  // is 2x3 (1.4x2.4), railgun-turret 3x5 (2.82x4, tile_height 5).
+  "flamethrower-turret",
+  "railgun-turret",
 ]);
 
 /** table -> how to pull graphics out of that table's prototypes. Kept as an

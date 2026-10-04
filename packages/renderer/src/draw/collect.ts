@@ -79,6 +79,9 @@ interface EntityFrame {
   /** What each of this entity's own fluid-box connection points is plugged
    *  into (see FluidNetwork.stateOf), with the unrotated local point a
    *  `fluid-point` layer's own `point` is matched against. */
+  /** True when this entity has live fluid ports — what a `plumbed` layer
+   *  is matched against. */
+  plumbed: boolean;
   fluidPoints: { local: { x: number; y: number; direction: number }; state: FluidPointState }[];
   /** Every heat-network connection point this entity has that the real
    *  heat network graph found NO neighbour for — same "unconnected only"
@@ -154,6 +157,9 @@ function resolveFrame(entity: PlacedEntity, visual: ResolvedVisual, ctx: Collect
         // pump's socket at entity.y + 0.5).
         return { offsetX: p.offsetX + dx, offsetY: p.offsetY + dy, direction: p.direction };
       }),
+    // An unused drill has had its points pruned from the network (see
+    // FluidNetwork.pruneUnused), so having any means it is plumbed in.
+    plumbed: ctx.fluidNetwork.pointsFor(entity.entityNumber).length > 0,
     // A ghost shows every port open, for the same reason it shows every
     // cover above.
     fluidPoints: ctx.fluidNetwork
@@ -494,6 +500,8 @@ export function collectEntity(
   let laneIndex = 0;
 
   graphics.layers.forEach((layer, order) => {
+    // A drill's dry-only and wet-only art: draw whichever matches.
+    if (layer.plumbed !== undefined && layer.plumbed !== frame.plumbed) return;
     // A cargo hub/bay draws several connection pieces at once — one per
     // edge/corner, each with its own baked-in shift — instead of the single
     // connection-name pick every other connector uses.

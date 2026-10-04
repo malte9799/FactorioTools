@@ -50,6 +50,7 @@ export interface WorldPipeConnection {
    *  unchanged from its PipeConnectionPoint. */
   categories?: string[];
   noCover?: boolean;
+  onlyWhenConnected?: boolean;
   /** The unrotated local point this was built from — what a `fluid-point`
    *  layer's own `point` is matched against. */
   local: { x: number; y: number; direction: number };
@@ -90,6 +91,7 @@ export class FluidNetwork {
         entityName: entity.name,
         categories: c.connectionCategory,
         noCover: c.noCover,
+        onlyWhenConnected: c.onlyWhenConnected,
         local: { x: c.x, y: c.y, direction: c.direction },
         x: Math.round(entity.x + rotated.x),
         y: Math.round(entity.y + rotated.y),
@@ -103,6 +105,43 @@ export class FluidNetwork {
       if (list) list.push(point);
       else this.byTile.set(key, [point]);
     }
+  }
+
+  /** Drops every `onlyWhenConnected` point whose entity isn't actually
+   *  plumbed in. Such an entity (a mining drill) is in use when one of its
+   *  ports meets an ordinary fluid connection — a pipe, a tank — or a port
+   *  of another such entity that is itself in use: drills pass fluid
+   *  through, so a whole row lights up from one pipe at its end. An unused
+   *  drill then has no ports at all, so it draws no covers. Call once,
+   *  after every entity is added. */
+  pruneUnused(): void {
+    const optional = this.points.filter((p) => p.onlyWhenConnected);
+    if (optional.length === 0) return;
+    const used = new Set<number>();
+    const links = new Map<number, Set<number>>();
+    for (const point of optional) {
+      for (const peer of this.facing(point)) {
+        if (!sharesCategory(point, peer)) continue;
+        if (!peer.onlyWhenConnected) {
+          used.add(point.entityNumber);
+          continue;
+        }
+        const list = links.get(point.entityNumber);
+        if (list) list.add(peer.entityNumber);
+        else links.set(point.entityNumber, new Set([peer.entityNumber]));
+      }
+    }
+    const queue = [...used];
+    for (let id = queue.pop(); id !== undefined; id = queue.pop()) {
+      for (const next of links.get(id) ?? []) {
+        if (used.has(next)) continue;
+        used.add(next);
+        queue.push(next);
+      }
+    }
+    const keep = (p: WorldPipeConnection) => !p.onlyWhenConnected || used.has(p.entityNumber);
+    this.points = this.points.filter(keep);
+    for (const [key, list] of this.byTile) this.byTile.set(key, list.filter(keep));
   }
 
   /** Every other entity's connection point sitting one tile outward from
@@ -170,5 +209,6 @@ export function buildFluidNetwork(
     const connections = pipeConnectionsOf(entity);
     if (connections && connections.length > 0) network.add(entity, connections);
   }
+  network.pruneUnused();
   return network;
 }
