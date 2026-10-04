@@ -17,6 +17,14 @@ import { opposite, toCardinal, type Cardinal } from "./grid.js";
  *  direction, and every fluid-box-bearing entity rotates in 90-degree
  *  steps — so `entity.direction` is first collapsed to its nearest
  *  cardinal the same way collect.ts's own `frame.direction` is. */
+/** Two points only join when their `connection_category` lists overlap —
+ *  absent means Factorio's own default category. */
+const DEFAULT_CATEGORY = ["default"];
+function sharesCategory(a: WorldPipeConnection, b: WorldPipeConnection): boolean {
+  const other = b.categories ?? DEFAULT_CATEGORY;
+  return (a.categories ?? DEFAULT_CATEGORY).some((c) => other.includes(c));
+}
+
 function rotatePoint(point: PipeConnectionPoint, entityDirection: number): { x: number; y: number; direction: Cardinal } {
   const cardinal = toCardinal(entityDirection);
   const steps = Math.round(cardinal / 4) % 4;
@@ -33,8 +41,18 @@ function rotatePoint(point: PipeConnectionPoint, entityDirection: number): { x: 
   return { x, y, direction };
 }
 
+export type FluidPointState = "open" | "connected" | "sibling" | "siblingMixed";
+
 export interface WorldPipeConnection {
   entityNumber: number;
+  entityName: string;
+  /** The point's own `connectionCategory`/`noCover`, carried through
+   *  unchanged from its PipeConnectionPoint. */
+  categories?: string[];
+  noCover?: boolean;
+  /** The unrotated local point this was built from — what a `fluid-point`
+   *  layer's own `point` is matched against. */
+  local: { x: number; y: number; direction: number };
   /** World tile the point sits on (entity centre + rotated local offset,
    *  rounded) — used for tile-for-tile connectivity matching. */
   x: number;
@@ -69,6 +87,10 @@ export class FluidNetwork {
       // point half a tile off, so round only the final sum for the tile key.
       const point: WorldPipeConnection = {
         entityNumber: entity.entityNumber,
+        entityName: entity.name,
+        categories: c.connectionCategory,
+        noCover: c.noCover,
+        local: { x: c.x, y: c.y, direction: c.direction },
         x: Math.round(entity.x + rotated.x),
         y: Math.round(entity.y + rotated.y),
         offsetX: rotated.x,
@@ -83,17 +105,38 @@ export class FluidNetwork {
     }
   }
 
-  /** True when some other entity's own connection point sits one tile
-   *  outward from `point` (in the direction it faces) and points back —
-   *  a real, physical fluid connection, not just adjacency. */
-  isConnected(point: WorldPipeConnection): boolean {
+  /** Every other entity's connection point sitting one tile outward from
+   *  `point` (in the direction it faces) and pointing back. */
+  private facing(point: WorldPipeConnection): WorldPipeConnection[] {
     const facing = point.direction;
     const targetX = point.x + (facing === 4 ? 1 : facing === 12 ? -1 : 0);
     const targetY = point.y + (facing === 8 ? 1 : facing === 0 ? -1 : 0);
-    const candidates = this.byTile.get(`${targetX},${targetY}`);
-    if (!candidates) return false;
     const back = opposite(facing);
-    return candidates.some((c) => c.entityNumber !== point.entityNumber && c.direction === back);
+    return (this.byTile.get(`${targetX},${targetY}`) ?? []).filter(
+      (c) => c.entityNumber !== point.entityNumber && c.direction === back,
+    );
+  }
+
+  /** True when some other entity's own connection point sits one tile
+   *  outward from `point` (in the direction it faces), points back and
+   *  shares a connection category — a real, physical fluid connection, not
+   *  just adjacency. */
+  isConnected(point: WorldPipeConnection): boolean {
+    return this.facing(point).some((c) => sharesCategory(point, c));
+  }
+
+  /** What `point` is plugged into, for `per: "fluid-point"` art. Meeting a
+   *  port of another entity of the same prototype wins over everything
+   *  else: `sibling` when the two ports share a category, `siblingMixed`
+   *  when they don't — two fusion reactors side by side pair up every
+   *  touching port (Factorio's neighbour_connectable matches plasma with
+   *  coolant ports too), though no fluid flows through a mixed pair.
+   *  Otherwise `connected` for a real fluid connection, else `open`. */
+  stateOf(point: WorldPipeConnection): FluidPointState {
+    const peers = this.facing(point);
+    const siblings = peers.filter((c) => c.entityName === point.entityName);
+    if (siblings.length > 0) return siblings.some((c) => sharesCategory(point, c)) ? "sibling" : "siblingMixed";
+    return peers.some((c) => sharesCategory(point, c)) ? "connected" : "open";
   }
 
   pointsFor(entityNumber: number): WorldPipeConnection[] {
@@ -107,7 +150,8 @@ export class FluidNetwork {
    *  has no notion of a machine's fluid box at all). */
   hasConnectionFacing(x: number, y: number, direction: Cardinal): boolean {
     const candidates = this.byTile.get(`${x},${y}`);
-    return candidates?.some((c) => c.direction === direction) ?? false;
+    // Default-category sockets only: a plain pipe can't join a plasma port.
+    return candidates?.some((c) => c.direction === direction && (c.categories ?? DEFAULT_CATEGORY).includes("default")) ?? false;
   }
 }
 
