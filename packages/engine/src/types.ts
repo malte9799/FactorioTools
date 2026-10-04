@@ -202,6 +202,12 @@ export type GraphicsLayer = {
    *  big-mining-drill's top-nozzle.png must always draw under top.png
    *  despite having the less-negative, "wins by default" shift). */
   ySortBias?: number;
+  /** Set on a layer that only draws in one of a mining drill's two looks:
+   *  `true` for its wet-mining art (the extra pipework Factorio swaps in
+   *  once the drill takes fluid), `false` for the dry art it replaces.
+   *  Absent on everything both looks share. The renderer treats a drill as
+   *  plumbed whenever its fluid ports are showing. */
+  plumbed?: boolean;
 } & (
   | { sprites: Sprite }
   /** Partial: some Factorio entities (e.g. electric-mining-drill's small
@@ -513,6 +519,11 @@ export interface PipeConnectionPoint {
    *  next to its fluoroketone box) — the generic round cover must not be
    *  drawn here. */
   noCover?: boolean;
+  /** True for a mining drill's own `input_fluid_box` points — the drill
+   *  only needs fluid over some resources, so its ports stay hidden until
+   *  something plugs into one: a pipe, or a neighbouring drill whose own
+   *  ports are already showing (see FluidNetwork.pruneUnused). */
+  onlyWhenConnected?: boolean;
 }
 
 /** One `heat_buffer.connections` entry, in the entity's own unrotated
