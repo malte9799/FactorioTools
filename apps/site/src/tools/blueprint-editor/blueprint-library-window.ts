@@ -34,6 +34,39 @@ export interface LibraryWindowOptions {
   /** Copies the string; resolves false if the clipboard refused. */
   onExport(): Promise<boolean>;
   onDelete(): void;
+  /** Set for a blueprint BOOK: the same window, with the book's blueprints
+   *  in place of snap-to-grid, components and the preview. */
+  book?: BookContents;
+}
+
+export interface BookContents {
+  entries: { id: string; label: string; icons: BpIcon[] }[];
+  /** The one loaded in the editor right now, if it is in this book. */
+  activeId?: string;
+  /** Click: open that blueprint in the editor. The window has already
+   *  saved and closed itself. */
+  onOpen(id: string): void;
+  /** Right-click: that blueprint's own library window. */
+  onEdit(id: string): void;
+}
+
+/** How a book's blueprints are laid out — the game's three toggle buttons.
+ *  The last choice is remembered. */
+type BookLayout = "list" | "grid" | "slots";
+const BOOK_LAYOUTS: { layout: BookLayout; title: string; svg: string; iconSize: number }[] = [
+  { layout: "list", title: "List", iconSize: 56, svg: `<svg viewBox="0 0 16 16" aria-hidden="true"><path fill="currentColor" d="M1 2h4v3H1zm6 .5h8v2H7zM1 6.5h4v3H1zm6 .5h8v2H7zM1 11h4v3H1zm6 .5h8v2H7z"/></svg>` },
+  { layout: "grid", title: "Grid", iconSize: 56, svg: `<svg viewBox="0 0 16 16" aria-hidden="true"><path fill="currentColor" d="M1 1h4v4H1zm5 0h4v4H6zm5 0h4v4h-4zM1 6h4v4H1zm5 0h4v4H6zm5 0h4v4h-4zM1 11h4v4H1zm5 0h4v4H6zm5 0h4v4h-4z"/></svg>` },
+  { layout: "slots", title: "Slots", iconSize: 32, svg: `<svg viewBox="0 0 16 16" aria-hidden="true"><path fill="currentColor" d="M1 1h3v3H1zm4 0h3v3H5zm4 0h3v3H9zm4 0h2v3h-2zM1 5h3v3H1zm4 0h3v3H5zm4 0h3v3H9zm4 0h2v3h-2zM1 9h3v3H1zm4 0h3v3H5zm4 0h3v3H9zm4 0h2v3h-2zM1 13h3v2H1zm4 0h3v2H5zm4 0h3v2H9zm4 0h2v2h-2z"/></svg>` },
+];
+const BOOK_LAYOUT_KEY = "factoriotools.blueprint-viewer.library.book-layout";
+
+function readBookLayout(): BookLayout {
+  try {
+    const stored = localStorage.getItem(BOOK_LAYOUT_KEY);
+    return stored === "list" || stored === "slots" ? stored : "grid";
+  } catch {
+    return "grid";
+  }
 }
 
 /** Slots hold the signal by position 1–4; a cleared slot is a gap, kept as
@@ -47,6 +80,8 @@ export function openLibraryWindow(options: LibraryWindowOptions): void {
     if (i >= 0 && i < MAX_ICONS && entry.signal?.name) slots[i] = entry.signal;
   }
   let label = options.meta.label;
+  const book = options.book;
+  const itemName = book ? "blueprint-book" : "blueprint";
   const box = options.blueprint ? contentBox(options.blueprint) : null;
   // What a fresh "Snap to grid" starts from: a cell exactly the content's
   // size, the content in its top-left corner, relative snapping.
@@ -68,7 +103,7 @@ export function openLibraryWindow(options: LibraryWindowOptions): void {
   close.type = "button";
   close.setAttribute("aria-label", "Close");
   close.textContent = "✕";
-  titlebar.append(text("span", "Blueprint in the blueprint library"), grip(), close);
+  titlebar.append(text("span", book ? "Blueprint book in the blueprint library" : "Blueprint in the blueprint library"), grip(), close);
 
   /* ----- left: form ----- */
   const form = el("div", "bp-lib-form");
@@ -83,7 +118,7 @@ export function openLibraryWindow(options: LibraryWindowOptions): void {
   header.append(nameBox, renameButton, actions);
 
   function renderName(): void {
-    nameBox.replaceChildren(label.trim() ? renderRichLabel(label, 16) : document.createTextNode("<Unnamed blueprint>"));
+    nameBox.replaceChildren(label.trim() ? renderRichLabel(label, 16) : document.createTextNode(book ? "<Unnamed book>" : "<Unnamed blueprint>"));
     nameBox.title = label;
   }
   function startRename(): void {
@@ -118,11 +153,13 @@ export function openLibraryWindow(options: LibraryWindowOptions): void {
   const deleteButton = actionButton("is-red", "trash", "Delete");
   let deleteArmed: ReturnType<typeof setTimeout> | undefined;
   actions.append(
-    actionButton("is-blue", "reassign", "Reselect contents — drag a box over the buildings that should make up this blueprint", () => {
-      save();
-      dismiss();
-      options.onReselect();
-    }),
+    book
+      ? actionButton("is-blue", "reassign", "Reselect contents — only a single blueprint has contents to reselect", undefined, true)
+      : actionButton("is-blue", "reassign", "Reselect contents — drag a box over the buildings that should make up this blueprint", () => {
+          save();
+          dismiss();
+          options.onReselect();
+        }),
     actionButton("is-grey", "copy", "Duplicate", () => options.onDuplicate()),
     actionButton("is-green", "upgrade-blueprint", "Upgrade — not supported yet", undefined, true),
     actionButton("is-green", "parametrise", "Parametrise — not supported yet", undefined, true),
@@ -224,7 +261,8 @@ export function openLibraryWindow(options: LibraryWindowOptions): void {
   compPanel.appendChild(compWell);
 
   form.append(header, el("div", "bp-lib-panels"));
-  form.lastElementChild!.append(iconPanel, descPanel, snapPanel, compPanel);
+  if (book) form.lastElementChild!.append(iconPanel, descPanel);
+  else form.lastElementChild!.append(iconPanel, descPanel, snapPanel, compPanel);
 
   /* ----- right: preview ----- */
   const previewPane = el("div", "bp-lib-preview");
@@ -233,14 +271,87 @@ export function openLibraryWindow(options: LibraryWindowOptions): void {
   const previewCanvas = el("div", "bp-lib-preview-canvas");
   previewPane.append(previewHead, previewCanvas);
 
+  /* ----- right, for a book: its blueprints ----- */
+  const contentsPane = el("div", "bp-lib-preview bp-book-contents");
+  const contentsHead = el("div", "bp-lib-preview-head");
+  const layoutButtons = el("div", "bp-book-layouts");
+  contentsHead.append(text("span", "Click a blueprint to open it, right-click to edit it.", "bp-lib-hint"), layoutButtons);
+  const contentsBody = el("div", "bp-book-items");
+  contentsPane.append(contentsHead, contentsBody);
+  let bookLayout = readBookLayout();
+
+  function renderBook(): void {
+    if (!book) return;
+    const current = BOOK_LAYOUTS.find((l) => l.layout === bookLayout)!;
+    layoutButtons.replaceChildren();
+    for (const option of BOOK_LAYOUTS) {
+      const button = el("button", "bp-book-layout");
+      button.type = "button";
+      button.title = option.title;
+      button.setAttribute("aria-label", `${option.title} view`);
+      button.setAttribute("aria-pressed", String(option.layout === bookLayout));
+      button.classList.toggle("is-active", option.layout === bookLayout);
+      button.innerHTML = option.svg;
+      button.addEventListener("click", () => {
+        bookLayout = option.layout;
+        try {
+          localStorage.setItem(BOOK_LAYOUT_KEY, bookLayout);
+        } catch {
+          /* storage unavailable — the choice still holds while the window is open */
+        }
+        renderBook();
+      });
+      layoutButtons.appendChild(button);
+    }
+
+    contentsBody.className = `bp-book-items is-${bookLayout}`;
+    contentsBody.replaceChildren();
+    for (const entry of book.entries) {
+      const item = el("button", "bp-book-item");
+      item.type = "button";
+      item.classList.toggle("is-active", entry.id === book.activeId);
+      // The raw name stays the tooltip — the slots view shows nothing else.
+      item.title = entry.label;
+      const art = el("span", "bp-book-item-icon");
+      art.appendChild(blueprintIcon("blueprint", entry.icons, current.iconSize));
+      const name = el("span", "bp-book-item-label");
+      name.appendChild(renderRichLabel(entry.label, 14));
+      item.append(art, name);
+      item.addEventListener("click", () => {
+        save();
+        dismiss();
+        book.onOpen(entry.id);
+      });
+      item.addEventListener("contextmenu", (e) => {
+        e.preventDefault();
+        save();
+        dismiss();
+        book.onEdit(entry.id);
+      });
+      contentsBody.appendChild(item);
+    }
+    // The grid and slots views pad the last row out with empty slots, as
+    // the game's slot grids do. The column count is whatever the layout
+    // settled on at this width.
+    if (bookLayout !== "list") {
+      const columns = getComputedStyle(contentsBody).gridTemplateColumns.split(" ").filter(Boolean).length || 1;
+      const filledSlots = book.entries.length;
+      for (let i = filledSlots; i < Math.max(columns, Math.ceil(filledSlots / columns) * columns); i++) {
+        const empty = el("span", "bp-book-item is-empty");
+        empty.appendChild(el("span", "bp-book-item-icon")).style.cssText = `width:${current.iconSize}px;height:${current.iconSize}px`;
+        contentsBody.appendChild(empty);
+      }
+    }
+  }
+
   const columns = el("div", "bp-lib-columns");
-  columns.append(form, previewPane);
+  columns.append(form, book ? contentsPane : previewPane);
 
   /* ----- footer ----- */
   const footer = el("div", "bp-edit-footer");
   const saveButton = el("button", "bp-edit-confirm");
   saveButton.type = "button";
-  saveButton.textContent = "Save blueprint";
+  saveButton.textContent = book ? "Save blueprint book" : "Save blueprint";
   footer.append(grip(), saveButton);
 
   win.append(titlebar, columns, footer);
@@ -249,7 +360,9 @@ export function openLibraryWindow(options: LibraryWindowOptions): void {
 
   // The preview is a real renderer: mounted once the window has its size.
   let renderer: BlueprintRenderer | null = null;
-  if (options.blueprint) {
+  if (book) {
+    renderBook();
+  } else if (options.blueprint) {
     renderer = mountRenderer(previewCanvas, getData(), getRenderCatalog(), currentQuality());
     renderer.loadBlueprint(normaliseEntities(options.blueprint), normaliseWires(options.blueprint));
   } else {
@@ -283,7 +396,7 @@ export function openLibraryWindow(options: LibraryWindowOptions): void {
       });
       slotWell.appendChild(slot);
     });
-    preview.replaceChildren(blueprintIcon("blueprint", currentIcons(), PREVIEW_SIZE));
+    preview.replaceChildren(blueprintIcon(itemName, currentIcons(), PREVIEW_SIZE));
   }
 
   function openPicker(index: number, anchor: HTMLElement): void {
@@ -359,7 +472,7 @@ export function openLibraryWindow(options: LibraryWindowOptions): void {
   }
 
   function save(): void {
-    options.onSave({ label, description: descInput.value, icons: currentIcons(), snap: currentSnap() });
+    options.onSave({ label, description: descInput.value, icons: currentIcons(), snap: book ? null : currentSnap() });
   }
 
   function dismiss(): void {

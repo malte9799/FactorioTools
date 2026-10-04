@@ -3,6 +3,7 @@ import type { BlueprintTreeNode } from "@factoriotools/engine";
 import {
   listSaved,
   saveToLibrary,
+  saveFailureMessage,
   deleteFromLibrary,
   deleteBookFromLibrary,
   duplicateInLibrary,
@@ -12,6 +13,13 @@ import {
   readEntryMeta,
   decodeEntry,
   replaceContentsInLibrary,
+  groupLibrary,
+  moveInLibrary,
+  readBookMeta,
+  editBookInLibrary,
+  exportBookString,
+  type LibraryDragSource,
+  type LibraryDropTarget,
   type SavedBlueprint,
 } from "./blueprint-library.js";
 import { openLibraryWindow } from "./blueprint-library-window.js";
@@ -32,8 +40,10 @@ import { icon } from "./legacy-view/icons.js";
 import { renderRichLabel } from "./rich-text.js";
 
 export interface LibraryCallbacks {
-  /** Load this blueprint string as the active one in the editor. */
-  onLoad(bpString: string): void;
+  /** Load this blueprint string as the active one in the editor. `entryId`
+   *  is the library entry it came from, so a later Save can write back to
+   *  it; absent for a built-in example. */
+  onLoad(bpString: string, entryId?: string): void;
   /** Returns the current blueprint string to save, or null if there's nothing to save yet. */
   getCurrentBpString(): string | null;
   /** Clears the canvas back to an empty blueprint, for starting fresh. */
@@ -82,8 +92,8 @@ const BUILTINS: BuiltinEntry[] = [
 /** Inline line-art for the row action buttons, drawn in currentColor so
  *  the button decides the colour — the game's own trash and plus glyphs are
  *  flat white shapes on a coloured square. */
-const TRASH_SVG = `<svg viewBox="0 0 16 16" aria-hidden="true"><path fill="currentColor" d="M6 1h4l.5 1H14v2H2V2h3.5zM3 5h10l-.8 10H3.8zm2.4 2 .3 6h1.2l-.2-6zm2 0v6h1.2V7zm2 0-.2 6h1.2l.3-6z"/></svg>`;
 const PLUS_SVG = `<svg viewBox="0 0 16 16" aria-hidden="true"><path fill="currentColor" d="M7 2h2v5h5v2H9v5H7V9H2V7h5z"/></svg>`;
+const MORE_SVG = `<svg viewBox="0 0 16 16" aria-hidden="true"><path fill="currentColor" d="M2 6.5h3v3H2zm4.5 0h3v3h-3zm4.5 0h3v3h-3z"/></svg>`;
 const SAVE_SVG = `<svg viewBox="0 0 16 16" aria-hidden="true"><path fill="currentColor" d="M2 2h9.5L14 4.5V14H2zm2 1.5V6h6V3.5zM4 9v3.5h8V9z"/></svg>`;
 
 /** Sections the user has folded shut — module-level so the panel remembers
@@ -91,7 +101,91 @@ const SAVE_SVG = `<svg viewBox="0 0 16 16" aria-hidden="true"><path fill="curren
  *  re-renders the whole list from scratch, see refresh() below). Stored as
  *  the collapsed set rather than the open one so a freshly saved book shows
  *  up expanded, like every category in the game's own panel. */
-const collapsed = new Set<string>();
+const COLLAPSED_KEY = "factoriotools.blueprint-viewer.library.collapsed";
+const collapsed = new Set<string>(readCollapsed());
+
+function readCollapsed(): string[] {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(COLLAPSED_KEY) ?? "[]");
+    return Array.isArray(parsed) ? parsed.filter((k): k is string => typeof k === "string") : [];
+  } catch {
+    return [];
+  }
+}
+
+/** Folded sections stay folded across a reload. */
+function storeCollapsed(): void {
+  try {
+    localStorage.setItem(COLLAPSED_KEY, JSON.stringify([...collapsed]));
+  } catch {
+    /* storage unavailable — still remembered for this visit */
+  }
+}
+
+/** What is being dragged right now, between dragstart and dragend. Kept
+ *  here rather than in the event's dataTransfer, which cannot be read
+ *  during dragover — and dragover is where the drop position is decided. */
+let dragSource: LibraryDragSource | undefined;
+
+const DROP_CLASSES = ["is-drop-before", "is-drop-after", "is-drop-into"];
+
+/** Makes `el` a drag handle for `source` (when given) and a drop target.
+ *  `accept` turns the thing being dragged and the pointer position into
+ *  where a drop would land, or undefined to refuse it. */
+function attachDrag(
+  el: HTMLElement,
+  source: LibraryDragSource | undefined,
+  accept: (dragged: LibraryDragSource, e: DragEvent) => LibraryDropTarget | undefined,
+  refresh: () => void,
+  notify: LibraryCallbacks["notify"],
+): void {
+  if (source) {
+    el.draggable = true;
+    el.addEventListener("dragstart", (e) => {
+      e.stopPropagation();
+      dragSource = source;
+      // Firefox only starts a drag that carries some data.
+      e.dataTransfer?.setData("text/plain", "");
+      if (e.dataTransfer) e.dataTransfer.effectAllowed = "move";
+      el.classList.add("is-dragging");
+    });
+    el.addEventListener("dragend", () => {
+      dragSource = undefined;
+      el.classList.remove("is-dragging");
+    });
+  }
+  const clear = () => el.classList.remove(...DROP_CLASSES);
+  el.addEventListener("dragover", (e) => {
+    const target = dragSource && accept(dragSource, e);
+    if (!target) return;
+    e.preventDefault();
+    e.stopPropagation();
+    clear();
+    el.classList.add(target.where === "before" ? "is-drop-before" : target.where === "into" ? "is-drop-into" : "is-drop-after");
+  });
+  el.addEventListener("dragleave", clear);
+  el.addEventListener("drop", (e) => {
+    clear();
+    const target = dragSource && accept(dragSource, e);
+    if (!dragSource || !target) return;
+    e.preventDefault();
+    e.stopPropagation();
+    try {
+      moveInLibrary(dragSource, target);
+    } catch (err) {
+      notify(saveFailureMessage(err, "Couldn't move that."), "error");
+    }
+    dragSource = undefined;
+    refresh();
+  });
+}
+
+/** Where along an element's height the pointer is, 0 at its top edge and 1
+ *  at its bottom. */
+function dropFraction(el: HTMLElement, e: DragEvent): number {
+  const box = el.getBoundingClientRect();
+  return box.height > 0 ? (e.clientY - box.top) / box.height : 0;
+}
 
 /** Which row is the one on screen, highlighted gold like the game's
  *  selected surface. Keyed `builtin:<id>`, `saved:<id>` or
@@ -113,10 +207,6 @@ function makeIconButton(className: string, svg: string, label: string, onClick: 
   return button;
 }
 
-interface SectionActions {
-  onDelete?: () => void;
-  onDuplicate?: () => void;
-}
 
 /** A category header and its rows. `title` can carry a blueprint book's own
  *  label — attacker-controlled and persisted in localStorage — so it only
@@ -124,7 +214,16 @@ interface SectionActions {
 function makeSection(
   key: string,
   title: string,
-  options: { iconName?: string; nested?: boolean; actions?: SectionActions } = {},
+  options: {
+    iconName?: string;
+    /** Replaces the plain item icon — a book's art with its own icons. */
+    iconElement?: HTMLElement;
+    nested?: boolean;
+    drag?: (headerRow: HTMLElement) => void;
+    /** Opens the book's own window — on right-click, and from the
+     *  three-dot button on the header. */
+    onMore?: () => void;
+  } = {},
 ): { section: HTMLElement; body: HTMLElement } {
   const section = document.createElement("div");
   section.className = "bp-section";
@@ -139,7 +238,15 @@ function makeSection(
   const isOpen = !collapsed.has(key);
   header.classList.toggle("is-open", isOpen);
   header.setAttribute("aria-expanded", String(isOpen));
-  if (options.iconName) header.appendChild(icon(options.iconName, "", 16));
+  if (options.iconElement) header.appendChild(options.iconElement);
+  else if (options.iconName) header.appendChild(icon(options.iconName, "", 16));
+  if (options.onMore) {
+    const onMore = options.onMore;
+    headerRow.addEventListener("contextmenu", (e) => {
+      e.preventDefault();
+      onMore();
+    });
+  }
   const label = document.createElement("span");
   label.className = "bp-section-label";
   label.appendChild(renderRichLabel(title, 14));
@@ -150,12 +257,8 @@ function makeSection(
   header.append(label, disclosure);
   headerRow.appendChild(header);
 
-  if (options.actions?.onDelete) {
-    headerRow.appendChild(makeIconButton("is-danger", TRASH_SVG, "Delete book", options.actions.onDelete));
-  }
-  if (options.actions?.onDuplicate) {
-    headerRow.appendChild(makeIconButton("", PLUS_SVG, "Duplicate book", options.actions.onDuplicate));
-  }
+  if (options.onMore) headerRow.appendChild(makeIconButton("", MORE_SVG, "Edit, duplicate, export or delete this book", options.onMore));
+  options.drag?.(headerRow);
 
   const body = document.createElement("div");
   body.className = "bp-section-body";
@@ -164,6 +267,7 @@ function makeSection(
   header.addEventListener("click", () => {
     if (collapsed.has(key)) collapsed.delete(key);
     else collapsed.add(key);
+    storeCollapsed();
     const nowOpen = !collapsed.has(key);
     header.classList.toggle("is-open", nowOpen);
     header.setAttribute("aria-expanded", String(nowOpen));
@@ -212,17 +316,20 @@ interface RowOptions {
    *  icons drawn on it. */
   iconElement?: HTMLElement;
   onClick(): void;
-  /** Trash button; omitted rows show it greyed out, like the game's own
-   *  disabled trash beside "Add space platform". */
-  onDelete?: () => void;
+  /** A built-in example's only action: copy it into the library. */
   onDuplicate?: () => void;
-  onContextMenu?: (e: MouseEvent, labelButton: HTMLButtonElement) => void;
+  /** Opens the blueprint's own window — on right-click, and from the
+   *  three-dot button docked to the row. Delete, duplicate and export all
+   *  live in that window. */
+  onMore?: () => void;
   /** Shift+click instead of a plain click. */
   onPickUp?: () => void;
   onRename?: (labelButton: HTMLButtonElement) => void;
+  /** Wires the row up for drag-to-reorder. */
+  drag?: (row: HTMLElement) => void;
 }
 
-/** One list block: icon + rich-text label, with the trash/duplicate pair
+/** One list block: icon + rich-text label, with the three-dot button
  *  docked to its right edge on hover and on the selected row. */
 function makeRow(label: string, options: RowOptions, refresh: () => void): HTMLElement {
   const row = document.createElement("div");
@@ -258,33 +365,28 @@ function makeRow(label: string, options: RowOptions, refresh: () => void): HTMLE
   }
   row.appendChild(button);
 
-  if (options.onContextMenu) {
-    const onContextMenu = options.onContextMenu;
-    row.addEventListener("contextmenu", (e) => onContextMenu(e, button));
+  if (options.onMore) {
+    const onMore = options.onMore;
+    row.addEventListener("contextmenu", (e) => {
+      e.preventDefault();
+      onMore();
+    });
   }
 
-  if (options.onDelete || options.onDuplicate) {
+  if (options.onMore || options.onDuplicate) {
     const actions = document.createElement("div");
     actions.className = "bp-row-actions";
-    actions.appendChild(makeIconButton("is-danger", TRASH_SVG, "Delete", () => options.onDelete?.(), !options.onDelete));
-    if (options.onDuplicate) actions.appendChild(makeIconButton("", PLUS_SVG, "Duplicate", options.onDuplicate));
+    if (options.onMore) actions.appendChild(makeIconButton("", MORE_SVG, "Edit, duplicate, export or delete", options.onMore));
+    else if (options.onDuplicate) actions.appendChild(makeIconButton("", PLUS_SVG, "Copy into the library", options.onDuplicate));
     row.appendChild(actions);
   }
+  options.drag?.(row);
 
   return row;
 }
 
 function savedRow(entry: SavedBlueprint, callbacks: LibraryCallbacks, refresh: () => void): HTMLElement {
   const key = `saved:${entry.id}`;
-  const remove = () => {
-    deleteFromLibrary(entry.id);
-    if (activeKey === key) activeKey = null;
-    refresh();
-  };
-  const duplicate = () => {
-    duplicateInLibrary(entry.id);
-    refresh();
-  };
   const rename = (labelButton: HTMLButtonElement) => startRename(labelButton, entry.id, entry.label, refresh);
   return makeRow(
     entry.label,
@@ -292,15 +394,23 @@ function savedRow(entry: SavedBlueprint, callbacks: LibraryCallbacks, refresh: (
       key,
       iconName: "blueprint",
       iconElement: blueprintIcon("blueprint", entryIcons(entry), 24),
-      onClick: () => callbacks.onLoad(entry.bpString),
+      onClick: () => callbacks.onLoad(entry.bpString, entry.id),
       onPickUp: () => callbacks.onPickUp(entry.bpString),
-      onDelete: remove,
-      onDuplicate: duplicate,
       onRename: rename,
-      onContextMenu: (e) => {
-        e.preventDefault();
-        openEntryWindow(entry.id, callbacks, refresh);
-      },
+      onMore: () => openEntryWindow(entry.id, callbacks, refresh),
+      // Debug-category entries sit in their own fixed block at the top.
+      drag:
+        entry.category === "debug" && !entry.bookId
+          ? undefined
+          : (row) =>
+              attachDrag(
+                row,
+                { entryId: entry.id },
+                // Upper half drops above this row, lower half below it.
+                (_, e) => ({ entryId: entry.id, where: dropFraction(row, e) < 0.5 ? "before" : "after" }),
+                refresh,
+                callbacks.notify,
+              ),
     },
     refresh,
   );
@@ -326,8 +436,8 @@ function openEntryWindow(id: string, callbacks: LibraryCallbacks, refresh: () =>
       callbacks.onReselect((bpString) => {
         try {
           replaceContentsInLibrary(id, bpString);
-        } catch {
-          callbacks.notify("Couldn't use that selection as the blueprint's contents.", "error");
+        } catch (err) {
+          callbacks.notify(saveFailureMessage(err, "Couldn't use that selection as the blueprint's contents."), "error");
         }
         refresh();
         openEntryWindow(id, callbacks, refresh);
@@ -351,6 +461,55 @@ function openEntryWindow(id: string, callbacks: LibraryCallbacks, refresh: () =>
     onDelete: () => {
       deleteFromLibrary(id);
       if (activeKey === `saved:${id}`) activeKey = null;
+      refresh();
+    },
+  });
+}
+
+/** The library window for a saved book: its name, icons and description,
+ *  and the blueprints inside it. */
+function openBookWindow(bookId: string, callbacks: LibraryCallbacks, refresh: () => void): void {
+  const meta = readBookMeta(bookId);
+  const members = listSaved().filter((e) => e.bookId === bookId);
+  if (!meta || members.length === 0) return;
+  openLibraryWindow({
+    meta,
+    blueprint: undefined,
+    book: {
+      entries: members.map((e) => ({ id: e.id, label: e.label, icons: entryIcons(e) })),
+      activeId: activeKey?.startsWith("saved:") ? activeKey.slice("saved:".length) : undefined,
+      onOpen: (id) => {
+        const entry = listSaved().find((e) => e.id === id);
+        if (!entry) return;
+        activeKey = `saved:${id}`;
+        callbacks.onLoad(entry.bpString, entry.id);
+        refresh();
+      },
+      onEdit: (id) => openEntryWindow(id, callbacks, refresh),
+    },
+    onSave: (next) => {
+      editBookInLibrary(bookId, next);
+      refresh();
+    },
+    onReselect: () => {},
+    onDuplicate: () => {
+      duplicateBookInLibrary(bookId);
+      refresh();
+      callbacks.notify(`Duplicated “${meta.label}”.`);
+    },
+    onExport: async () => {
+      const bpString = exportBookString(bookId);
+      if (!bpString) return false;
+      try {
+        await navigator.clipboard.writeText(bpString);
+        return true;
+      } catch {
+        return false;
+      }
+    },
+    onDelete: () => {
+      if (members.some((e) => activeKey === `saved:${e.id}`)) activeKey = null;
+      deleteBookFromLibrary(bookId);
       refresh();
     },
   });
@@ -386,7 +545,7 @@ function renderBookNode(
  *  game's Surfaces panel: debug fixtures as loose rows at the top, then a
  *  gold-headed category per group (the book on screen, loose saved
  *  blueprints, and one per saved book), each row a bevelled block with the
- *  trash/duplicate pair on its right, and creation (save current, new) in a
+ *  three-dot button on its right, and creation (save current, new) in a
  *  footer at the bottom. Re-renders the whole list on every mutation rather
  *  than patching the DOM — the list is small enough that this is simpler
  *  than diffing. */
@@ -443,7 +602,11 @@ export function buildLibrarySidebar(container: HTMLElement, callbacks: LibraryCa
             // A built-in can't be deleted, but duplicating one is how it
             // becomes an editable library entry.
             onDuplicate: () => {
-              saveToLibrary(entry.bpString, `${entry.label} copy`);
+              try {
+                saveToLibrary(entry.bpString, `${entry.label} copy`);
+              } catch (err) {
+                callbacks.notify(saveFailureMessage(err, "Couldn't duplicate that blueprint."), "error");
+              }
               refresh();
             },
           },
@@ -466,43 +629,51 @@ export function buildLibrarySidebar(container: HTMLElement, callbacks: LibraryCa
       list.appendChild(section);
     }
 
-    const loose = saved.filter((e) => !e.bookId && e.category !== "debug");
-    const books = new Map<string, { label: string; entries: SavedBlueprint[] }>();
-    for (const entry of saved) {
-      if (!entry.bookId) continue;
-      const book = books.get(entry.bookId) ?? { label: entry.bookLabel || "Untitled book", entries: [] };
-      book.entries.push(entry);
-      books.set(entry.bookId, book);
-    }
-
+    // Loose blueprints and books share one list, in the library's own
+    // order — a book is a folder at the place its first blueprint is stored.
+    const items = groupLibrary(saved).filter((item) => item.kind === "book" || item.entry.category !== "debug");
     const { section: savedSection, body: savedBody } = makeSection("saved", "Saved");
-    for (const entry of loose) savedBody.appendChild(savedRow(entry, callbacks, refresh));
-    if (loose.length === 0) {
+    for (const item of items) {
+      if (item.kind === "entry") {
+        savedBody.appendChild(savedRow(item.entry, callbacks, refresh));
+        continue;
+      }
+      const { bookId, entries: members } = item;
+      const { section, body } = makeSection(`book-${bookId}`, item.label, {
+        iconName: "blueprint-book",
+        iconElement: blueprintIcon("blueprint-book", readBookMeta(bookId)?.icons ?? [], 20),
+        nested: true,
+        onMore: () => openBookWindow(bookId, callbacks, refresh),
+        drag: (headerRow) =>
+          attachDrag(
+            headerRow,
+            { bookId },
+            (dragged, e) => {
+              const at = dropFraction(headerRow, e);
+              // A book lands beside another book. A blueprint goes into the
+              // folder, unless it is held at the header's very top or
+              // bottom edge, which puts it beside the folder instead.
+              if ("bookId" in dragged) return { bookId, where: at < 0.5 ? "before" : "after" };
+              return { bookId, where: at < 0.25 ? "before" : at > 0.75 && collapsed.has(`book-${bookId}`) ? "after" : "into" };
+            },
+            refresh,
+            callbacks.notify,
+          ),
+      });
+      for (const entry of members) body.appendChild(savedRow(entry, callbacks, refresh));
+      savedBody.appendChild(section);
+    }
+    if (items.length === 0) {
       const empty = document.createElement("p");
       empty.className = "bp-empty";
-      empty.textContent = books.size === 0 ? "Nothing saved yet — name the current blueprint below to keep it." : "No loose blueprints.";
+      empty.textContent = "Nothing saved yet — name the current blueprint below to keep it.";
       savedBody.appendChild(empty);
     }
+    // Dropping on the list's empty space (below the last row) moves the
+    // thing to the end of the top level — the way out of a book that is
+    // itself the last item.
+    attachDrag(savedBody, undefined, (_, e) => (e.target === savedBody ? { where: "end" } : undefined), refresh, callbacks.notify);
     list.appendChild(savedSection);
-
-    for (const [bookId, book] of books) {
-      const { section, body } = makeSection(`book-${bookId}`, book.label, {
-        iconName: "blueprint-book",
-        actions: {
-          onDelete: () => {
-            if (book.entries.some((e) => activeKey === `saved:${e.id}`)) activeKey = null;
-            deleteBookFromLibrary(bookId);
-            refresh();
-          },
-          onDuplicate: () => {
-            duplicateBookInLibrary(bookId);
-            refresh();
-          },
-        },
-      });
-      for (const entry of book.entries) body.appendChild(savedRow(entry, callbacks, refresh));
-      list.appendChild(section);
-    }
 
     list.scrollTop = scroll;
   }
@@ -525,8 +696,8 @@ export function buildLibrarySidebar(container: HTMLElement, callbacks: LibraryCa
       nameInput.value = "";
       setStatus(`Saved “${label}”.`, "info");
       refresh();
-    } catch {
-      setStatus("Couldn't save — the current blueprint doesn't decode.", "error");
+    } catch (err) {
+      setStatus(saveFailureMessage(err, "Couldn't save — the current blueprint doesn't decode."), "error");
     }
   }
 
