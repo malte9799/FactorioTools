@@ -305,6 +305,17 @@ export interface RailSlot {
   x: number;
   y: number;
   direction: number;
+  /** Signal slots only: the rail joint the slot belongs to. Each side of a
+   *  joint has two slots (half a tile either way along the track) and takes
+   *  one signal — see slotGroup. */
+  ex?: number;
+  ey?: number;
+}
+
+/** One side of one rail joint: the spot a single signal takes, whichever of
+ *  its two slots that signal stands on. */
+export function slotGroup(slot: RailSlot): string {
+  return `${slot.ex},${slot.ey},${slot.direction}`;
 }
 
 /** Signal slots at one rail end point: for each travel direction along the
@@ -323,7 +334,7 @@ export function signalSlotsAt(x: number, y: number, endDir: number): RailSlot[] 
       for (let ox = -2.5; ox <= 2.5; ox++) {
         const lateral = ox * lx + oy * ly;
         const along = ox * ux + oy * uy;
-        if (lateral >= 1 && lateral <= 1.7 && Math.abs(along) <= 1.1) out.push({ x: x + ox, y: y + oy, direction });
+        if (lateral >= 1 && lateral <= 1.7 && Math.abs(along) <= 1.1) out.push({ x: x + ox, y: y + oy, direction, ex: x, ey: y });
       }
     }
   }
@@ -336,7 +347,11 @@ export function signalSlots(rails: RailPiece[]): RailSlot[] {
   for (const rail of rails) {
     if (railShape(rail.name) === "ramp") continue;
     for (const end of railEndsAt(rail)) {
-      for (const slot of signalSlotsAt(end.x, end.y, end.dir)) seen.set(`${slot.x},${slot.y},${slot.direction}`, slot);
+      for (const slot of signalSlotsAt(end.x, end.y, end.dir)) {
+        // A slot two joints share keeps the first joint it was found at.
+        const key = `${slot.x},${slot.y},${slot.direction}`;
+        if (!seen.has(key)) seen.set(key, slot);
+      }
     }
   }
   return [...seen.values()];

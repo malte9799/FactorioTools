@@ -14,6 +14,7 @@ import {
   railName,
   railTiles,
   signalSlots,
+  slotGroup,
   snapStraightRail,
   trainStopSlots,
   type RailEnd,
@@ -54,6 +55,8 @@ export interface RailIndex {
   stopSlots: RailSlot[];
   /** Positions already holding a signal or stop. */
   railsideTaken: Set<string>;
+  /** Joint sides (slotGroup) that already hold a signal. */
+  takenSignalGroups: Set<string>;
   hasRails: boolean;
 }
 
@@ -71,6 +74,7 @@ export function buildRailIndex(entities: PlacedEntity[], footprintOf: (e: Placed
   const rails: RailPiece[] = [];
   const supports = new Set<string>();
   const railsideTaken = new Set<string>();
+  const signalsAt = new Set<string>();
   for (const e of entities) {
     if (isRail(e.name)) {
       rails.push({ name: e.name, x: e.x, y: e.y, direction: e.direction });
@@ -78,6 +82,7 @@ export function buildRailIndex(entities: PlacedEntity[], footprintOf: (e: Placed
     }
     if (isRailSnapped(e.name)) {
       railsideTaken.add(`${e.x},${e.y}`);
+      if (SIGNALS.has(e.name)) signalsAt.add(`${e.x},${e.y},${e.direction}`);
       continue;
     }
     if (e.name === "rail-support") supports.add(`${e.x},${e.y}`);
@@ -97,6 +102,13 @@ export function buildRailIndex(entities: PlacedEntity[], footprintOf: (e: Placed
     }
   }
 
+  // A signal takes its whole joint side: both slots there stop being offered.
+  const groundSignalSlots = signalSlots(rails.filter((r) => !isElevatedRail(r.name)));
+  const takenSignalGroups = new Set<string>();
+  for (const slot of groundSignalSlots) {
+    if (signalsAt.has(`${slot.x},${slot.y},${slot.direction}`)) takenSignalGroups.add(slotGroup(slot));
+  }
+
   return {
     blocked: (tx, ty, elevated) => !elevated && groundTaken.has(`${tx},${ty}`),
     railsAt,
@@ -106,9 +118,10 @@ export function buildRailIndex(entities: PlacedEntity[], footprintOf: (e: Placed
       for (let ty = y - 1; ty <= y; ty++) for (let tx = x - 1; tx <= x; tx++) if (groundTaken.has(`${tx},${ty}`)) return true;
       return false;
     },
-    signalSlots: signalSlots(rails.filter((r) => !isElevatedRail(r.name))),
+    signalSlots: groundSignalSlots,
     stopSlots: trainStopSlots(rails.filter((r) => !isElevatedRail(r.name))),
     railsideTaken,
+    takenSignalGroups,
     hasRails: rails.length > 0,
   };
 }
@@ -177,7 +190,7 @@ export function railStartAt(index: RailIndex, x: number, y: number): { end: Rail
 
 /** The signal or train stop slot a held signal/stop snaps to near a point. */
 export function railsideSlot(index: RailIndex, name: string, x: number, y: number, heldDirection: number): RailSlot | undefined {
-  const slots = SIGNALS.has(name) ? index.signalSlots : index.stopSlots;
+  const slots = SIGNALS.has(name) ? index.signalSlots.filter((s) => !index.takenSignalGroups.has(slotGroup(s))) : index.stopSlots;
   return nearestSlot(slots, x, y, name === "train-stop" ? 3 : 2, heldDirection);
 }
 
@@ -187,5 +200,7 @@ export const SIGNAL_HANDLE_RANGE = 12;
 /** Free signal slots within `radius` of a point — where a held signal shows
  *  a handle on the track. */
 export function signalSlotsNear(index: RailIndex, x: number, y: number, radius = SIGNAL_HANDLE_RANGE): RailSlot[] {
-  return index.signalSlots.filter((s) => !index.railsideTaken.has(`${s.x},${s.y}`) && Math.hypot(s.x - x, s.y - y) <= radius);
+  return index.signalSlots.filter(
+    (s) => Math.hypot(s.x - x, s.y - y) <= radius && !index.railsideTaken.has(`${s.x},${s.y}`) && !index.takenSignalGroups.has(slotGroup(s)),
+  );
 }

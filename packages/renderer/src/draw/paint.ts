@@ -278,24 +278,31 @@ export function drawHoverHighlight(
 }
 
 /** A held signal's placement handle, as the game draws them along track: a
- *  small green rounded square on the slot with a stem reaching back to the
- *  rail, which runs to the right of the signal's 16-way `direction`. */
-export function drawSignalHandle(ctx: CanvasRenderingContext2D, x: number, y: number, direction: number): void {
-  const a = (direction * Math.PI) / 8;
+ *  small green rounded square on the slot, with a stem straight across to
+ *  the rail. The rail runs to the right of the signal's 16-way `direction`,
+ *  through the joint (ex, ey); the stem stops where the rail is, 0.75 tiles
+ *  from the track's centreline, so it neither falls short nor crosses it. */
+export function drawSignalHandle(ctx: CanvasRenderingContext2D, slot: { x: number; y: number; direction: number; ex?: number; ey?: number }): void {
+  const { x, y } = slot;
+  const a = (slot.direction * Math.PI) / 8;
   const ux = Math.sin(a);
   const uy = -Math.cos(a);
   // Right of travel, toward the track.
   const rx = -uy;
   const ry = ux;
   const half = 0.22;
+  const lateral = slot.ex !== undefined && slot.ey !== undefined ? Math.abs((slot.ex - x) * rx + (slot.ey - y) * ry) : 1.5;
+  const stem = lateral - half - 0.75;
   ctx.save();
   ctx.strokeStyle = "#33d433";
   ctx.lineWidth = 0.08;
   ctx.lineJoin = "round";
-  ctx.beginPath();
-  ctx.moveTo(x + rx * half, y + ry * half);
-  ctx.lineTo(x + rx * (half + 0.7), y + ry * (half + 0.7));
-  ctx.stroke();
+  if (stem >= 0.1) {
+    ctx.beginPath();
+    ctx.moveTo(x + rx * half, y + ry * half);
+    ctx.lineTo(x + rx * (half + stem), y + ry * (half + stem));
+    ctx.stroke();
+  }
   ctx.beginPath();
   ctx.roundRect(x - half, y - half, half * 2, half * 2, 0.1);
   ctx.stroke();

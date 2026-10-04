@@ -1463,7 +1463,7 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
     // under the ghost, so the snapped ghost sits on top of its own handle.
     if (mode.kind === "place" && ghostWorldPos && (mode.entityName === "rail-signal" || mode.entityName === "rail-chain-signal")) {
       for (const slot of signalSlotsNear(currentRailIndex(), ghostWorldPos.x, ghostWorldPos.y)) {
-        drawSignalHandle(ctx, slot.x, slot.y, slot.direction);
+        drawSignalHandle(ctx, slot);
       }
     }
     if (ghost) {

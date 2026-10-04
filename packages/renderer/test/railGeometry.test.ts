@@ -4,6 +4,7 @@ import path from "node:path";
 import { collectBlueprints, decodeBlueprintString } from "@factoriotools/engine";
 import { DATA_DIR } from "./dataset.js";
 import { SpatialIndex } from "../src/spatialIndex.js";
+import { buildRailIndex, signalSlotsNear } from "../src/railPlacement.js";
 import {
   isRail,
   railEnds,
@@ -12,6 +13,7 @@ import {
   railHighlightBox,
   railTileOffsets,
   signalSlots,
+  slotGroup,
   snapStraightRail,
   trainStopSlots,
   type RailPiece,
@@ -160,6 +162,30 @@ test("a rail is hovered by its turned box, not its square footprint", () => {
   // Inside the square footprint, well off the track.
   assert.equal(index.hitTest(1.6, 1.6), undefined);
   assert.equal(index.hitTest(-1.6, -1.6), undefined);
+});
+
+test("every signal slot belongs to one of its rail's joints", () => {
+  for (const rail of [
+    { name: "straight-rail", x: 1, y: 1, direction: 0 },
+    { name: "curved-rail-a", x: 0, y: 0, direction: 2 },
+    { name: "half-diagonal-rail", x: 1, y: 1, direction: 4 },
+  ]) {
+    const ends = railEndsAt(rail).map((e) => `${e.x},${e.y}`);
+    for (const slot of signalSlots([rail])) assert.ok(ends.includes(`${slot.ex},${slot.ey}`), `${rail.name}: ${slot.ex},${slot.ey}`);
+  }
+});
+
+test("a signal takes its whole joint side, and only that side", () => {
+  const track = [1, 3, 5].map((y, i) => ({ entityNumber: i + 1, name: "straight-rail", x: 1, y, direction: 0, quality: "normal" as const, modules: [], filterItems: [] }));
+  const free = signalSlotsNear(buildRailIndex(track, () => [2, 2]), 1, 3, 12);
+  const pick = free.find((s) => s.ex === 1 && s.ey === 2)!;
+  const side = free.filter((s) => slotGroup(s) === slotGroup(pick));
+  assert.equal(side.length, 2, "two slots per joint side");
+  const signal = { entityNumber: 9, name: "rail-signal", x: pick.x, y: pick.y, direction: pick.direction, quality: "normal" as const, modules: [], filterItems: [] };
+  const after = signalSlotsNear(buildRailIndex([...track, signal], () => [2, 2]), 1, 3, 12);
+  assert.equal(after.filter((s) => slotGroup(s) === slotGroup(pick)).length, 0, "both slots of the taken side are gone");
+  const otherSide = after.filter((s) => s.ex === 1 && s.ey === 2 && s.direction !== pick.direction);
+  assert.equal(otherSide.length, 2, "the other side of the joint stays free");
 });
 
 console.log(`${passed} passed`);
