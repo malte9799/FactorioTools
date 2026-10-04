@@ -731,10 +731,14 @@ function railRampGraphics(proto: any): EntityGraphics | undefined {
  *  renderer's plain dir8 lookup finds it. */
 function railSupportGraphics(proto: any): EntityGraphics | undefined {
   const layers: GraphicsLayer[] = [];
-  for (const part of proto.graphics_set?.structure?.layers ?? []) {
+  const structure = proto.graphics_set?.structure;
+  // A rotated sprite may be a stack of layers or a single sprite.
+  const parts: any[] = structure?.layers ?? (structure ? [structure] : []);
+  for (const part of parts) {
     const base = toSprite(part);
     if (!base) continue;
-    const perRow = part.line_length ?? 1;
+    // No (or a zero) line_length means all facings sit in one row.
+    const perRow = part.line_length || part.direction_count || DIR8.length;
     const sprites = {} as Record<(typeof DIR8)[number], Sprite>;
     DIR8.forEach((dir, i) => {
       sprites[dir] = {

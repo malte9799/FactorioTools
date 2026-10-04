@@ -61,6 +61,12 @@ test("track crosses track, and elevated track stands over the ground", () => {
   assert.equal(entitiesCollide(at("elevated-straight-rail", 1, 1, 0), at("assembling-machine-1", 1.5, 1.5), footprintOf), false);
 });
 
+test("the very same rail twice collides; distinct rails don't", () => {
+  assert.equal(entitiesCollide(at("straight-rail", 1, 1, 0), at("straight-rail", 1, 1, 8), footprintOf), true, "a straight facing back is the same piece");
+  assert.equal(entitiesCollide(at("curved-rail-a", 0, 0, 2), at("curved-rail-a", 0, 0, 2), footprintOf), true);
+  assert.equal(entitiesCollide(at("curved-rail-a", 0, 0, 2), at("curved-rail-a", 0, 0, 0), footprintOf), false);
+});
+
 test("box selection beside a curve misses it, across its track hits it", () => {
   assert.equal(boxHitsEntity({ left: 1.2, top: -3, right: 2, bottom: -2 }, curve, footprintOf), false);
   assert.equal(boxHitsEntity({ left: -0.8, top: 0.2, right: -0.2, bottom: 0.8 }, curve, footprintOf), true);

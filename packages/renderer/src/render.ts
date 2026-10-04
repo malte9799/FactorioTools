@@ -816,6 +816,8 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
   let railPressOnGround = false;
   // The current press began with a plan already set: its release lays it.
   let railPressAnchored = false;
+  // The held piece a press on open ground starts from, laid on release.
+  let railPendingPiece: RailPiece | null = null;
   // Shift plans all the way to the cursor, past the rail item's length limit.
   let shiftHeld = false;
 
@@ -868,11 +870,13 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
     if (start) {
       railAnchor = start.end;
     } else {
-      // Nothing to continue: lay the held straight piece itself. A drag
-      // plans on from its end facing the held direction; a click doesn't.
+      // Nothing to continue: the held straight piece is the start. It's laid
+      // on release, not now, so a cancelled press leaves nothing behind; a
+      // drag plans on from its end facing the held direction, a click lays
+      // just the piece.
       const elevated = plannerTargetsElevated(mode.entityName) && mode.entityName !== "rail-ramp";
       const { piece, end } = startPiece(ghostWorldPos.x, ghostWorldPos.y, ghostDirection, elevated);
-      railPlaceCallback?.([piece], []);
+      railPendingPiece = piece;
       railAnchor = end;
       railPressOnGround = true;
     }
@@ -1022,6 +1026,7 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
       const preview = currentRailPreview();
       const index = currentRailIndex();
       const asGhost = (p: RailPiece): PlacedEntity => ({ entityNumber: -1, name: p.name, x: p.x, y: p.y, direction: p.direction, quality: "normal", modules: [], filterItems: [] });
+      if (railPendingPiece) railGhosts.push({ entity: asGhost(railPendingPiece), tint: GHOST_VALID_TINT });
       if (preview) {
         // No track can get any closer to the cursor: a red X says so.
         if (preview.pieces.length === 0) railBlocked = { x: ghostWorldPos.x, y: ghostWorldPos.y };
@@ -2283,6 +2288,7 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
       // While track is being planned, right-click drops the plan rather
       // than mining whatever is under the cursor.
       railAnchor = null;
+      railPendingPiece = null;
       invalidate();
       return;
     }
@@ -2506,8 +2512,18 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
       // took the pointer away) lays nothing.
       const cancelled = e.type === "pointercancel";
       const hasPlan = (currentRailPreview()?.pieces.length ?? 0) > 0;
-      if (!cancelled && hasPlan && (railDragMoved || railPressAnchored)) commitRailPreview();
-      else if (railPressOnGround) railAnchor = null;
+      const laysPlan = !cancelled && hasPlan && (railDragMoved || railPressAnchored);
+      if (railPendingPiece && !cancelled) {
+        // The start piece goes down with the dragged plan, as one step.
+        const preview = laysPlan ? currentRailPreview()! : null;
+        railPlaceCallback?.(preview ? [railPendingPiece, ...preview.pieces] : [railPendingPiece], preview?.supports ?? []);
+        railAnchor = preview ? preview.end : null;
+      } else if (laysPlan) {
+        commitRailPreview();
+      } else if (railPressOnGround) {
+        railAnchor = null;
+      }
+      railPendingPiece = null;
       railPressOnGround = false;
       railPressAnchored = false;
       invalidate();
@@ -2787,7 +2803,10 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
       }
       // A rail plan belongs to the item that started it: putting the item
       // away, or swapping between ground and elevated track, drops it.
-      if (newMode.kind !== "place" || mode.kind !== "place" || newMode.entityName !== mode.entityName) railAnchor = null;
+      if (newMode.kind !== "place" || mode.kind !== "place" || newMode.entityName !== mode.entityName) {
+        railAnchor = null;
+        railPendingPiece = null;
+      }
       mode = newMode;
       invalidate();
       if (mode.kind !== "place" && mode.kind !== "paste") {
@@ -2857,6 +2876,7 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
     cancelRailPlan() {
       if (!railAnchor) return false;
       railAnchor = null;
+      railPendingPiece = null;
       invalidate();
       return true;
     },

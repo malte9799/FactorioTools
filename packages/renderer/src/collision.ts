@@ -4,12 +4,12 @@
  *  Most entities collide by their axis-aligned footprints. Track doesn't: a
  *  curve's or diagonal's square footprint is mostly empty, so a ground rail
  *  blocks only the tiles it runs over. Rails cross and run alongside each
- *  other freely (exact duplicates are caught by railKey where track is laid),
+ *  other freely — only the very same piece twice collides —
  *  elevated track stands above everything on the ground, and signals and
  *  train stops stand beside track by design. */
 
 import type { PlacedEntity } from "@factoriotools/engine";
-import { isElevatedRail, isRail, railTiles } from "./railGeometry.js";
+import { isElevatedRail, isRail, railKey, railTiles } from "./railGeometry.js";
 
 export interface Box {
   left: number;
@@ -51,7 +51,7 @@ export function boxHitsEntity(box: Box, e: PlacedEntity, footprintOf: (e: Placed
 export function entitiesCollide(a: PlacedEntity, b: PlacedEntity, footprintOf: (e: PlacedEntity) => [number, number]): boolean {
   const aRail = isRail(a.name);
   const bRail = isRail(b.name);
-  if (aRail && bRail) return false;
+  if (aRail && bRail) return railKey(a) === railKey(b);
   if (aRail || bRail) {
     const rail = aRail ? a : b;
     const other = aRail ? b : a;
