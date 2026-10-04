@@ -6,7 +6,7 @@ import { classifyWall } from "../neighbours/wall.js";
 import { combinatorSymbol } from "../sprites/combinatorSymbol.js";
 import { classifyBeltCell, undergroundSideLoad, type BeltCap } from "../neighbours/beltGraph.js";
 import { classifyPlatform, type PlatformBox } from "../neighbours/platform.js";
-import type { FluidNetwork } from "../neighbours/fluid.js";
+import type { FluidNetwork, FluidPointState } from "../neighbours/fluid.js";
 import type { HeatNetwork } from "../neighbours/heat.js";
 import { PIXELS_PER_TILE, type DrawCommand } from "./commands.js";
 
@@ -76,6 +76,10 @@ interface EntityFrame {
    *  rotated local position (world tile minus entity's own rounded centre,
    *  matching push()'s existing offsetX/offsetY convention). */
   unconnectedPipeCovers: { offsetX: number; offsetY: number; direction: Cardinal }[];
+  /** What each of this entity's own fluid-box connection points is plugged
+   *  into (see FluidNetwork.stateOf), with the unrotated local point a
+   *  `fluid-point` layer's own `point` is matched against. */
+  fluidPoints: { local: { x: number; y: number; direction: number }; state: FluidPointState }[];
   /** Every heat-network connection point this entity has that the real
    *  heat network graph found NO neighbour for — same "unconnected only"
    *  rule as unconnectedPipeCovers (confirmed against the reference
@@ -140,7 +144,7 @@ function resolveFrame(entity: PlacedEntity, visual: ResolvedVisual, ctx: Collect
     // in before the player has placed it.
     unconnectedPipeCovers: ctx.fluidNetwork
       .pointsFor(entity.entityNumber)
-      .filter((p) => entity.entityNumber === -1 || !ctx.fluidNetwork.isConnected(p))
+      .filter((p) => !p.noCover && (entity.entityNumber === -1 || !ctx.fluidNetwork.isConnected(p)))
       .map((p) => {
         const { dx, dy } = step(p.direction);
         // p.offsetX/Y is the point's own unrounded local offset from this
@@ -150,6 +154,11 @@ function resolveFrame(entity: PlacedEntity, visual: ResolvedVisual, ctx: Collect
         // pump's socket at entity.y + 0.5).
         return { offsetX: p.offsetX + dx, offsetY: p.offsetY + dy, direction: p.direction };
       }),
+    // A ghost shows every port open, for the same reason it shows every
+    // cover above.
+    fluidPoints: ctx.fluidNetwork
+      .pointsFor(entity.entityNumber)
+      .map((p) => ({ local: p.local, state: entity.entityNumber === -1 ? ("open" as const) : ctx.fluidNetwork.stateOf(p) })),
     // Fixed [0, 1.5] offset rotated by the ENTITY's own placement direction
     // (not the connection point's facing), and sprite picked by
     // entityDirection+8 — both taken verbatim from the reference renderer's
@@ -502,6 +511,23 @@ export function collectEntity(
         const sprite = layer.sprites[dir4Name(point.direction)];
         if (sprite) push(out, sprite, 0, 0, entity, layer.layer, order, alpha, point.offsetX, point.offsetY);
       }
+      return;
+    }
+
+    // A fusion port's own art: one sprite per connection point, its column
+    // picked by what that point is plugged into — and nothing at all for a
+    // state the layer names no column for.
+    if ("per" in layer && layer.per === "fluid-point") {
+      const { x, y, direction } = layer.point;
+      const state = frame.fluidPoints.find((p) => p.local.x === x && p.local.y === y && p.local.direction === direction)?.state;
+      // No such point right now (its fluid box is switched off): no port, no art.
+      if (!state) return;
+      // A mixed pair carries no fluid, so unless the layer has art for it
+      // the port is simply open.
+      const { open, connected, sibling = connected, siblingMixed = open } = layer.columns;
+      const column = { open, connected, sibling, siblingMixed }[state];
+      const sprite = layer.sprites[dir4Name(entity.direction)];
+      if (sprite && column !== undefined) push(out, sprite, column, 0, entity, layer.layer, order, alpha);
       return;
     }
 

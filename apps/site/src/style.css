@@ -647,7 +647,19 @@ body:has(#library-window.is-collapsed:not([hidden])) #window-toolbar { left: cal
 .bp-row-label .rich-text-icon,
 .bp-section-label .rich-text-icon { vertical-align: -3px; margin: 0 1px; }
 
-/* Trash/duplicate dock onto the right of the hovered or selected row. */
+/* Drag to reorder: the dragged row fades, and the row under the pointer
+   shows where the drop lands — a gold line above or below it, or a gold
+   frame around a book the blueprint would go into. */
+.bp-row.is-dragging,
+.bp-section-row.is-dragging { opacity: 0.4; }
+.bp-list .is-drop-before { box-shadow: 0 -2px 0 var(--gold); position: relative; z-index: 1; }
+.bp-list .is-drop-after { box-shadow: 0 2px 0 var(--gold); position: relative; z-index: 1; }
+.bp-list .is-drop-into { outline: 2px solid var(--gold); outline-offset: -2px; }
+/* Room under the last row to drop on, for moving something to the end. */
+.bp-section > .bp-section-body { padding-bottom: 10px; }
+.bp-section.is-nested > .bp-section-body { padding-bottom: 0; }
+
+/* The three-dot button docks onto the right of the hovered or selected row. */
 .bp-row-actions { display: none; gap: 1px; }
 .bp-row:hover .bp-row-actions,
 .bp-row:focus-within .bp-row-actions,
@@ -2948,6 +2960,46 @@ canvas.select-mode {
 .bp-lib-empty { margin: 16px; color: var(--text-dim); }
 
 .bp-lib-window .bp-edit-footer { padding: 8px 8px 8px 10px; }
+
+/* ---------- a book's contents, in place of the preview: list, grid or
+   slots, picked with the three toggles in the pane's header. ---------- */
+.bp-book-contents .bp-lib-preview-head { align-items: center; }
+.bp-book-contents .bp-lib-hint { flex: 1; }
+.bp-book-layouts { display: flex; gap: 3px; flex: none; }
+.bp-book-layout {
+  width: 28px; height: 28px; padding: 5px; border: 0; cursor: pointer;
+  color: #1d1a14; background: var(--light-button);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.4), 0 1px 0 #000;
+}
+.bp-book-layout.is-active { background: var(--gold); }
+.bp-book-layout svg { display: block; width: 100%; height: 100%; }
+
+.bp-book-items { flex: 1; min-height: 0; overflow-y: auto; padding: 8px; background: #5b595b; align-content: start; }
+.bp-book-item {
+  display: flex; min-width: 0; padding: 0; border: 0; background: none;
+  color: #fff; font-family: var(--display); font-size: 14px; text-align: left; cursor: pointer;
+}
+.bp-book-item.is-empty { cursor: default; }
+.bp-book-item-icon {
+  flex: none; display: grid; place-items: center; padding: 4px;
+  background: #3b3a3b; box-shadow: inset 0 0 0 2px #2a2a2a, inset 0 3px 4px rgba(0, 0, 0, 0.5);
+}
+.bp-book-item.is-empty .bp-book-item-icon { box-sizing: content-box; }
+.bp-book-item:not(.is-empty):hover .bp-book-item-icon { background: #6d6b6c; }
+.bp-book-item.is-active .bp-book-item-icon { background: #7fc878; box-shadow: inset 0 0 0 2px #a6e39f; }
+.bp-book-item-icon .icon { background-color: transparent; border: none; box-shadow: none; }
+.bp-book-item-label { min-width: 0; overflow-wrap: anywhere; }
+
+.bp-book-items.is-list { display: flex; flex-direction: column; }
+.bp-book-items.is-list .bp-book-item { gap: 8px; padding: 6px 0; border-bottom: 1px solid #3b3a3b; }
+.bp-book-items.is-list .bp-book-item-label { padding-top: 2px; font-weight: 700; }
+
+.bp-book-items.is-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(64px, 1fr)); gap: 8px 6px; }
+.bp-book-items.is-grid .bp-book-item { flex-direction: column; align-items: center; gap: 2px; }
+.bp-book-items.is-grid .bp-book-item-label { width: 100%; text-align: center; font-size: 12px; line-height: 1.25; }
+
+.bp-book-items.is-slots { display: grid; grid-template-columns: repeat(auto-fill, 40px); gap: 2px; }
+.bp-book-items.is-slots .bp-book-item-label { display: none; }
 
 @media (max-width: 760px) {
   .bp-lib-columns { flex-direction: column; overflow-y: auto; }

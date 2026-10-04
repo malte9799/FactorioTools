@@ -60,6 +60,8 @@ Plus a live map seed viewer.
       combinators on separate red and green networks — Each, Anything and
       Everything included — switch belts, inserters and machines on and off,
       read their contents, and light lamps and display panels.
+      <br><br>
+      <img src="docs/screenshots/circuit-display.gif" alt="A combinator counting up on a red wire while a display panel shows the value as a battery bar that fills and changes colour from red to green" width="100%">
     </td>
   </tr>
   <tr>

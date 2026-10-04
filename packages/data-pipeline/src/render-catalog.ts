@@ -444,35 +444,56 @@ function artilleryTurretGraphics(proto: any): EntityGraphics | undefined {
   return layers.length > 0 ? { layers } : undefined;
 }
 
-/** fusion-reactor's own border: 8 fixed screen-space patch positions
- *  around its perimeter (graphics_set.connections_graphics, each with its
- *  own baked shift placing it at one specific spot), whose art per slot
- *  is reassigned by facing — graphics_set.direction_to_connections_graphics
- *  maps {north, east} (fusion-reactor is `two_direction_only`, matching
- *  its own tileFootprint being square, so those are its only two facings)
- *  to an 8-length permutation of the 8 pieces' own (1-based) indices. One
- *  GraphicsLayer per PHYSICAL slot (position fixed, from that slot's own
- *  piece's baked shift), with a {north,east} sprite pair — the ART shown
- *  at a fixed position changes with facing, not the position itself.
- *  Confirmed by spike: piece 1's shift is unique and constant across both
- *  entries in direction_to_connections_graphics.north (index 0 -> piece
- *  1) and .east (index 6 -> piece 1) — the permutation reassigns WHICH
- *  piece's art renders at slot 0, not slot 0's own screen position. */
+/** fusion-reactor's own border: 8 connection pieces around its perimeter
+ *  (graphics_set.connections_graphics, each with its own baked shift placing
+ *  it at one specific spot), one per neighbour_connectable connection.
+ *  graphics_set.direction_to_connections_graphics maps {north, east}
+ *  (fusion-reactor is `two_direction_only`) to which piece (1-based) each
+ *  connection uses at that facing — the connections rotate with the entity,
+ *  the pieces don't.
+ *
+ *  Each piece is a 5-frame sheet, and the frame is the port's state, not
+ *  animation. 0 = coolant port (the ordinary round pipe flange), 1 = plasma
+ *  port (the angular one) — the same frame whether the port is bare or has
+ *  a pipe/generator on it, confirmed against the game: a generator's own
+ *  intake housing plugs straight onto frame 1. 2..4 only appear between
+ *  two reactors: 2 = coolant meeting coolant, 3 = plasma meeting plasma,
+ *  4 = a coolant port meeting a plasma one (plating, no pipe). Whether a
+ *  connection is plasma or coolant is its own neighbour_connectable
+ *  category against graphics_set.plasma_category; what it's attached to
+ *  comes from the fluid-box point sitting half a tile inside it (the
+ *  neighbour connection is declared on the entity's edge, its pipe
+ *  connection on the centre of the edge tile). */
 function fusionReactorConnectionLayers(proto: any): GraphicsLayer[] {
   const gs = proto.graphics_set;
   const pieces: { main?: Sprite; shadow?: Sprite }[] = (gs?.connections_graphics ?? []).map((c: any) => unwrap(c.pictures));
   const dirMap = gs?.direction_to_connections_graphics;
+  const connections: any[] = proto.neighbour_connectable?.connections ?? [];
   if (pieces.length === 0 || !dirMap?.north || !dirMap?.east) return [];
+  const points = pipeConnectionsOf(proto);
 
   const layers: GraphicsLayer[] = [];
   for (let slot = 0; slot < pieces.length; slot++) {
     const northPiece = pieces[dirMap.north[slot] - 1];
     const eastPiece = pieces[dirMap.east[slot] - 1];
+    const location = connections[slot]?.location;
+    const [dx, dy] = ({ 0: [0, -1], 4: [1, 0], 8: [0, 1], 12: [-1, 0] } as Record<number, [number, number]>)[location?.direction ?? -1] ?? [0, 0];
+    const found = points.find(
+      (p) =>
+        p.direction === location?.direction &&
+        Math.abs(p.x - (location.position[0] - dx / 2)) < 0.01 &&
+        Math.abs(p.y - (location.position[1] - dy / 2)) < 0.01,
+    );
+    if (!found) throw new Error(`${proto.name}: no fluid point behind neighbour connection ${slot}`);
+    const point = { x: found.x, y: found.y, direction: found.direction };
+    const plasma = connections[slot].category === gs.plasma_category;
+    const own = plasma ? 1 : 0;
+    const columns = { open: own, connected: own, sibling: plasma ? 3 : 2, siblingMixed: 4 };
     if (northPiece?.shadow && eastPiece?.shadow) {
-      layers.push({ layer: Layer.Shadow, sprites: { north: northPiece.shadow, east: eastPiece.shadow }, per: "dir4" });
+      layers.push({ layer: Layer.Shadow, sprites: { north: northPiece.shadow, east: eastPiece.shadow }, per: "fluid-point", point, columns });
     }
     if (northPiece?.main && eastPiece?.main) {
-      layers.push({ layer: Layer.Object, sprites: { north: northPiece.main, east: eastPiece.main }, per: "dir4" });
+      layers.push({ layer: Layer.Object, sprites: { north: northPiece.main, east: eastPiece.main }, per: "fluid-point", point, columns });
     }
   }
   return layers;
@@ -543,6 +564,25 @@ function fusionGeneratorGraphics(proto: any): EntityGraphics | undefined {
   const layers: GraphicsLayer[] = [];
   if (anyShadow) layers.push({ layer: Layer.Shadow, sprites: shadows, per: "dir4" });
   layers.push({ layer: Layer.Object, sprites: mains, per: "dir4" });
+
+  // The plasma intake housings: `fluid_input_graphics` has one entry per
+  // input_fluid_box pipe connection, in order (empty for the pass-through
+  // outputs, whose angular caps are already part of the body sprite). An
+  // intake is only there while something feeds that port.
+  const inputs: any[] = proto.input_fluid_box?.pipe_connections ?? [];
+  for (let index = 0; index < inputs.length; index++) {
+    const point = { x: inputs[index].position[0], y: inputs[index].position[1], direction: inputs[index].direction };
+    const intake: Partial<Record<(typeof DIR4)[number], Sprite>> = {};
+    const intakeShadow: Partial<Record<(typeof DIR4)[number], Sprite>> = {};
+    for (const d of DIR4) {
+      const { main, shadow } = unwrap(gs[`${d}_graphics_set`]?.fluid_input_graphics?.[index]?.sprite);
+      if (main) intake[d] = main;
+      if (shadow) intakeShadow[d] = shadow;
+    }
+    const columns = { connected: 0 };
+    if (Object.keys(intakeShadow).length > 0) layers.push({ layer: Layer.Shadow, sprites: intakeShadow, per: "fluid-point", point, columns });
+    if (Object.keys(intake).length > 0) layers.push({ layer: Layer.Object, sprites: intake, per: "fluid-point", point, columns });
+  }
   return { layers };
 }
 

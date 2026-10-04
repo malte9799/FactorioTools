@@ -394,8 +394,14 @@ export function pipeConnectionsOf(proto: any): PipeConnectionPoint[] {
   // gets the box's own production_type either way.
   const multiBox = boxes.length > 1;
   const boxesOffWhenNoFluidRecipe = proto.fluid_boxes_off_when_no_fluid_recipe === true;
+  const anyCovers = boxes.some((b) => b.pipe_covers);
   boxes.forEach((box, boxIndex) => {
+    // Only set where it changes anything, so every other prototype's points
+    // stay exactly as they were.
+    const noCover = anyCovers && !box.pipe_covers ? true : undefined;
     for (const c of box.pipe_connections ?? []) {
+      const connectionCategory: string[] | undefined =
+        c.connection_category === undefined ? undefined : [c.connection_category].flat();
       // A pipe-to-ground's second entry is its underground link to the
       // paired piece, not a normal surface socket — it has no matching
       // world-space neighbour to ever connect to and no cover art of its
@@ -413,11 +419,11 @@ export function pipeConnectionsOf(proto: any): PipeConnectionPoint[] {
       // meaningless in that case (no single north-frame point exists) and
       // ignored downstream whenever positionsByDirection is present.
       if (Array.isArray(c.positions) && c.positions.length === 4) {
-        out.push({ x: c.positions[0][0], y: c.positions[0][1], direction: c.direction, positionsByDirection: c.positions, fluidboxIndex, flowDirection, boxesOffWhenNoFluidRecipe });
+        out.push({ x: c.positions[0][0], y: c.positions[0][1], direction: c.direction, positionsByDirection: c.positions, fluidboxIndex, flowDirection, boxesOffWhenNoFluidRecipe, connectionCategory, noCover });
         continue;
       }
       if (!Array.isArray(c.position)) continue;
-      out.push({ x: c.position[0], y: c.position[1], direction: c.direction, fluidboxIndex, flowDirection, boxesOffWhenNoFluidRecipe });
+      out.push({ x: c.position[0], y: c.position[1], direction: c.direction, fluidboxIndex, flowDirection, boxesOffWhenNoFluidRecipe, connectionCategory, noCover });
     }
   });
   return out;
@@ -433,7 +439,9 @@ export function pipeConnectionsOf(proto: any): PipeConnectionPoint[] {
  *  shadow still paints in its own Shadow-tier pass. Every fluid-box-bearing
  *  prototype in the dump ships the same four
  *  `pipe_covers.{north,east,south,west}` shape, so this takes the first box
- *  that has one rather than merging across boxes. */
+ *  that has one rather than merging across boxes. A box with no
+ *  `pipe_covers` of its own beside one that has them opts its points out
+ *  via `PipeConnectionPoint.noCover` (see pipeConnectionsOf). */
 const NEVER_COVERED = new Set(["pipe", "infinity-pipe"]);
 
 export function pipeCoversLayers(proto: any): GraphicsLayer[] {

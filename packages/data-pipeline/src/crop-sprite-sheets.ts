@@ -119,7 +119,15 @@ for (const [, visual] of lookup) {
   for (const layer of (visual as any).graphics?.layers ?? []) {
     for (const sp of spritesOfLayer(layer)) {
       if (!sp?.frameWidth) continue;
-      for (const sh of (sp.sheets ?? (sp.sheet ? [sp.sheet] : [])) as string[]) mark(sh, sp.x ?? 0, sp.y ?? 0);
+      for (const sh of (sp.sheets ?? (sp.sheet ? [sp.sheet] : [])) as string[]) {
+        mark(sh, sp.x ?? 0, sp.y ?? 0);
+        // A fluid-point layer names its state columns outright; the
+        // neighbour simulation below never builds a second reactor or a
+        // plasma feed, so those states would otherwise be cropped away.
+        if (layer.per === "fluid-point") {
+          for (const col of Object.values<number>(layer.columns ?? {})) mark(sh, (sp.x ?? 0) + col * sp.frameWidth, sp.y ?? 0);
+        }
+      }
     }
   }
 }
