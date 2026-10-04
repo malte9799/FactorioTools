@@ -1264,8 +1264,13 @@ export function mountBlueprintEditor(root: HTMLElement): () => void {
   // unavailable (private browsing, quota) rather than surfacing an error
   // for what's just a convenience.
   const AUTOSAVE_KEY = EDITOR_AUTOSAVE_KEY;
+  /** False only for a truly empty canvas: a blueprint of nothing but floor
+   *  tiles is still something to save, export and restore. */
+  function hasBlueprintContent(): boolean {
+    return entities.length > 0 || (currentTemplate().tiles?.length ?? 0) > 0;
+  }
   function persistEntities(): void {
-    if (!entities.length) return;
+    if (!hasBlueprintContent()) return;
     try {
       const template = currentTemplate();
       const bpString = encodeBlueprintString({ blueprint: toBlueprint(entities, template, wires) });
@@ -1364,7 +1369,7 @@ export function mountBlueprintEditor(root: HTMLElement): () => void {
     hasUnsavedChanges = false;
     deselect();
     const savedCamera = restoreCameraFromSave ? readSavedCamera() : null;
-    renderer.loadBlueprint(entities, wires);
+    renderer.loadBlueprint(entities, wires, blueprint.tiles);
     restoreCamera(savedCamera);
     rateOverlay.load(entities, wires);
     recalculate();
@@ -2794,7 +2799,7 @@ export function mountBlueprintEditor(root: HTMLElement): () => void {
     }
     // An open entry emptied out is an edit like any other, so it saves as
     // an empty blueprint; one that was empty all along has nothing to save.
-    if (!entities.length && !hasUnsavedChanges) {
+    if (!hasBlueprintContent() && !hasUnsavedChanges) {
       setStatus("Nothing to save yet.", "error");
       return;
     }
@@ -2808,7 +2813,7 @@ export function mountBlueprintEditor(root: HTMLElement): () => void {
     hasUnsavedChanges = false;
     // The autosave still holds what was there before the canvas was
     // emptied; a reload must not bring that back as this entry.
-    if (!entities.length) {
+    if (!hasBlueprintContent()) {
       try {
         localStorage.removeItem(AUTOSAVE_KEY);
       } catch {
@@ -2937,7 +2942,7 @@ export function mountBlueprintEditor(root: HTMLElement): () => void {
       // persistEntities leaves the autosave alone for an empty canvas, so an
       // empty blueprint would otherwise come back after a reload as the one
       // that was open before it.
-      if (!entities.length) {
+      if (!hasBlueprintContent()) {
         try {
           localStorage.removeItem(AUTOSAVE_KEY);
         } catch {
@@ -3025,7 +3030,7 @@ export function mountBlueprintEditor(root: HTMLElement): () => void {
   /** The blueprint on screen as a string, or null with nothing placed —
    *  what the library saves. */
   function currentBpString(): string | null {
-    if (!entities.length) return null;
+    if (!hasBlueprintContent()) return null;
     const template = currentTemplate();
     return encodeBlueprintString({ blueprint: toBlueprint(entities, template, wires) });
   }
@@ -3239,7 +3244,7 @@ export function mountBlueprintEditor(root: HTMLElement): () => void {
   /** Copies the current blueprint; false (with the reason shown) if there
    *  is nothing to copy or the clipboard refused. */
   async function exportToClipboard(): Promise<boolean> {
-    if (!entities.length) {
+    if (!hasBlueprintContent()) {
       setStatus("Nothing to export yet — import or build a blueprint first.", "error");
       return false;
     }
@@ -3797,9 +3802,9 @@ export function mountBlueprintEditor(root: HTMLElement): () => void {
     // A fresh renderer knows nothing of a half-finished pick either, so an
     // armed wire would stop trailing to the cursor across the swap.
     if (pendingWireFrom !== null) renderer.setPendingWire(pendingWireFrom, pendingWireSide);
-    if (entities.length) {
+    if (hasBlueprintContent()) {
       const savedCamera = readSavedCamera();
-      renderer.loadBlueprint(entities, wires);
+      renderer.loadBlueprint(entities, wires, blueprints[selectedBlueprint]?.tiles);
       restoreCamera(savedCamera);
     }
 
@@ -3818,7 +3823,7 @@ export function mountBlueprintEditor(root: HTMLElement): () => void {
     // entities/undoStack/redoStack back to whatever was last decoded from
     // input.value.
     // That reload is still the same library entry, if it was one.
-    if (!entities.length && input.value.trim()) {
+    if (!hasBlueprintContent() && input.value.trim()) {
       const entry = openEntryId;
       if (load(input.value) && entry) setOpenEntry(entry);
     }

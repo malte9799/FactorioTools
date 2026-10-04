@@ -415,10 +415,11 @@ export function denormaliseWires(wires: WireLink[], entities: PlacedEntity[]): B
 
 /** Convenience wrapper bundling denormaliseEntities into a full Blueprint,
  *  ready for encodeBlueprintString. `template` carries the fields that have
- *  no PlacedEntity equivalent (the blueprint's own item/label/version). */
+ *  no PlacedEntity equivalent (the blueprint's own item/label/version, and
+ *  its floor tiles). */
 export function toBlueprint(
   entities: PlacedEntity[],
-  template: Pick<Blueprint, "item" | "label" | "version" | "description" | "icons">,
+  template: Pick<Blueprint, "item" | "label" | "version" | "description" | "icons" | "tiles">,
   wires: WireLink[] = [],
 ): Blueprint {
   const bp: Blueprint = {

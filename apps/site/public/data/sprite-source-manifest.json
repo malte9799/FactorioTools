@@ -377,6 +377,16 @@
     "__base__/graphics/entity/wooden-chest/wooden-chest-shadow.png",
     "__base__/graphics/entity/wooden-chest/wooden-chest.png",
     "__base__/graphics/icons/heat-interface.png",
+    "__base__/graphics/terrain/concrete/concrete.png",
+    "__base__/graphics/terrain/concrete/refined-concrete.png",
+    "__base__/graphics/terrain/hazard-concrete-left/hazard-concrete-left.png",
+    "__base__/graphics/terrain/hazard-concrete-left/refined-hazard-concrete-left.png",
+    "__base__/graphics/terrain/hazard-concrete-right/hazard-concrete-right.png",
+    "__base__/graphics/terrain/hazard-concrete-right/refined-hazard-concrete-right.png",
+    "__base__/graphics/terrain/landfill.png",
+    "__base__/graphics/terrain/stone-path/stone-path-1.png",
+    "__base__/graphics/terrain/stone-path/stone-path-2.png",
+    "__base__/graphics/terrain/stone-path/stone-path-4.png",
     "__core__/graphics/empty.png",
     "__elevated-rails__/graphics/entity/elevated-rail-pylon/elevated-rail-pylon-shadow.png",
     "__elevated-rails__/graphics/entity/elevated-rail-pylon/elevated-rail-pylon.png",
@@ -600,6 +610,14 @@
     "__space-age__/graphics/entity/turbo-transport-belt/turbo-transport-belt.png",
     "__space-age__/graphics/entity/turbo-underground-belt/turbo-underground-belt-structure-back-patch.png",
     "__space-age__/graphics/entity/turbo-underground-belt/turbo-underground-belt-structure-front-patch.png",
-    "__space-age__/graphics/entity/turbo-underground-belt/turbo-underground-belt-structure.png"
+    "__space-age__/graphics/entity/turbo-underground-belt/turbo-underground-belt-structure.png",
+    "__space-age__/graphics/terrain/aquilo/ice-platform.png",
+    "__space-age__/graphics/terrain/artificial-jellynut-soil.png",
+    "__space-age__/graphics/terrain/artificial-yumako-soil.png",
+    "__space-age__/graphics/terrain/foundation/foundation.png",
+    "__space-age__/graphics/terrain/overgrowth-jellynut-soil.png",
+    "__space-age__/graphics/terrain/overgrowth-yumako-soil.png",
+    "__space-age__/graphics/terrain/space-platform/space-platform-1x1.png",
+    "__space-age__/graphics/terrain/space-platform/space-platform-2x2.png"
   ]
 }

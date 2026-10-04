@@ -2,7 +2,7 @@
  *  blueprint but has no rate of its own. One explicit adapter per prototype
  *  family, each checked against a real dump. */
 import { Layer } from "@factoriotools/engine";
-import type { EntityGraphics, GraphicsLayer, MenuGroup, MenuPosition, RenderCatalog, RenderEntityProto, Sprite } from "@factoriotools/engine";
+import type { EntityGraphics, GraphicsLayer, MenuGroup, MenuPosition, RenderCatalog, RenderEntityProto, Sprite, TileProto, TileVariantSheet } from "@factoriotools/engine";
 import type { LocaleTables } from "./locale.js";
 import {
   animationListGraphics,
@@ -1117,6 +1117,60 @@ function buildMenuIndex(
   return { menuGroups, menuPositions, itemMenuPositions, recipeMenuPositions, itemNames, signals };
 }
 
+/** A material texture is one picture per 8x8 tiles (the prototype's
+ *  `material_texture_width_in_tiles` default). */
+const MATERIAL_TILES = 8;
+
+/** Floor art for every tile the player can lay — the only tiles a
+ *  blueprint carries. Just the flat floor: the edge transitions against
+ *  neighbouring tiles are not extracted.
+ *
+ *  A tile that is only ever a changed form of a laid one (Aquilo's frozen
+ *  concrete) keeps its map colour but no art, which would otherwise be
+ *  ~4 MB a sheet for something a blueprint rarely holds. */
+function buildTiles(raw: Raw): Record<string, TileProto> {
+  const laid = new Set<string>();
+  for (const table of ITEM_TABLES) {
+    for (const item of Object.values(raw[table] ?? {})) {
+      const tile = item.place_as_tile?.result;
+      if (!tile) continue;
+      laid.add(tile);
+      const other = raw.tile?.[tile]?.next_direction;
+      if (other) laid.add(other);
+    }
+  }
+  const tiles: Record<string, TileProto> = {};
+  for (const proto of Object.values(raw.tile ?? {})) {
+    if (!proto.minable) continue;
+    const material = proto.variants?.material_background;
+    const variants: TileVariantSheet[] = [];
+    if (!laid.has(proto.name)) {
+      // Map colour only.
+    } else if (material) {
+      const tilePx = 32 / (material.scale ?? 1);
+      variants.push({
+        sheet: material.picture, size: MATERIAL_TILES, count: material.count, x: material.x ?? 0, y: material.y ?? 0,
+        lineLength: material.line_length ?? material.count, tilePx, probability: 1, repeats: true,
+      });
+    } else {
+      for (const main of proto.variants?.main ?? []) {
+        variants.push({
+          sheet: main.picture, size: main.size, count: main.count, x: main.x ?? 0, y: main.y ?? 0,
+          lineLength: main.line_length ?? main.count, tilePx: 32 / (main.scale ?? 1),
+          probability: main.size === 1 ? 1 : (main.probability ?? 1),
+        });
+      }
+      variants.sort((a, b) => b.size - a.size);
+    }
+    const c = proto.map_color ?? {};
+    // A Color is 0-1 floats unless any channel is above 1, then 0-255.
+    const channels = [c.r ?? c[0] ?? 0, c.g ?? c[1] ?? 0, c.b ?? c[2] ?? 0];
+    const rgb = channels.every((channel) => channel <= 1) ? channels.map((channel) => Math.round(channel * 255)) : channels;
+    tiles[proto.name] = { name: proto.name, variants, mapColor: `rgb(${rgb.join(",")})` };
+  }
+  return tiles;
+}
+
 export function buildRenderCatalog(raw: Raw, locale: LocaleTables, version: string): RenderCatalog {
   const entities: Record<string, RenderEntityProto> = {};
 
@@ -1268,5 +1322,5 @@ export function buildRenderCatalog(raw: Raw, locale: LocaleTables, version: stri
   }
 
   const { menuGroups, menuPositions, itemMenuPositions, recipeMenuPositions, itemNames, signals } = buildMenuIndex(raw, locale);
-  return { version, entities, menuGroups, menuPositions, itemMenuPositions, recipeMenuPositions, itemNames, signals };
+  return { version, entities, menuGroups, menuPositions, itemMenuPositions, recipeMenuPositions, itemNames, signals, tiles: buildTiles(raw) };
 }
