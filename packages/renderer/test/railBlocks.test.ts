@@ -33,12 +33,22 @@ test("a signal at a joint splits the track into two blocks of different colours"
   assert.equal(new Set(above).size, 1);
   assert.notEqual(below[0], above[0]);
   assert.notEqual(blocks.colors[below[0]!], blocks.colors[above[0]!]);
-  // Northbound trains leave the lower block through the signal: an arrow.
-  // The upper block's end there has no signal facing back along it: a diamond.
+  // Northbound trains leave the lower block and enter the upper one there.
   const lower = blocks.markers.find((m) => m.block === below[0]);
   const upper = blocks.markers.find((m) => m.block === above[0]);
-  assert.equal(lower?.kind, "arrow");
-  assert.equal(upper?.kind, "diamond");
+  assert.equal(lower?.kind, "exit");
+  assert.equal(upper?.kind, "entry");
+  // The block lines stop short of the signalled joint, and only there.
+  const cuts = blocks.pieces.flatMap((p) => p.cut).filter(Boolean);
+  assert.equal(cuts.length, 2);
+});
+
+test("signals both ways at a joint give both blocks a diamond", () => {
+  const blocks = computeRailBlocks(line, (x, y, dir) => x === 1 && y === -4 && (dir === 0 || dir === 8));
+  assert.deepEqual(
+    blocks.markers.map((m) => m.kind),
+    ["diamond", "diamond"],
+  );
 });
 
 test("crossing track joins the block it crosses", () => {

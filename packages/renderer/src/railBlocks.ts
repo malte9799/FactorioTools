@@ -11,18 +11,23 @@ import { isElevatedRail, railEndsAt, railTiles, type RailEnd, type RailPiece } f
 export interface RailBlockPiece {
   piece: RailPiece;
   block: number;
+  /** Per end, in railEndsAt order: true where a signal cuts the joint, so
+   *  the block line stops short of it at the marker. */
+  cut: [boolean, boolean];
 }
 
-/** Where a block ends at a signalled joint: a triangle pointing into the
- *  joint when a signal there governs trains leaving the block this way,
- *  otherwise a diamond (the joint's signal faces the other way). */
+/** Where a block ends at a signalled joint, as the game marks it. With
+ *  signals one way only, both blocks get a triangle pointing the way those
+ *  signals let trains through: "exit" on the block trains leave (tip at the
+ *  joint), "entry" on the block they enter (base at the joint). With signals
+ *  both ways, both blocks get a diamond. */
 export interface RailBlockMarker {
   x: number;
   y: number;
   /** Outward 16-way direction of the piece end the marker sits on. */
   dir: number;
   block: number;
-  kind: "arrow" | "diamond";
+  kind: "exit" | "entry" | "diamond";
 }
 
 export interface RailBlocks {
@@ -80,10 +85,11 @@ export function computeRailBlocks(rails: RailPiece[], signalled: (x: number, y: 
   });
 
   const blockOf = new Map<number, number>();
-  const pieces = ground.map((piece, i) => {
+  const pieces = ground.map((piece, i): RailBlockPiece => {
     const root = find(i);
     if (!blockOf.has(root)) blockOf.set(root, blockOf.size);
-    return { piece, block: blockOf.get(root)! };
+    const [a, b] = ends[i]!;
+    return { piece, block: blockOf.get(root)!, cut: [!!a && jointCut(a), !!b && jointCut(b)] };
   });
 
   const markers: RailBlockMarker[] = [];
@@ -92,9 +98,11 @@ export function computeRailBlocks(rails: RailPiece[], signalled: (x: number, y: 
     if (!jointCut(group[0]!.end)) continue;
     for (const { index, end } of group) {
       const block = pieces[index]!.block;
-      // A signal facing back along this end stops trains leaving through it.
-      const governs = signalled(end.x, end.y, (end.dir + 8) % 16);
-      markers.push({ x: end.x, y: end.y, dir: end.dir, block, kind: governs ? "arrow" : "diamond" });
+      // A signal faces against the traffic it governs: one facing back along
+      // this end lets trains leave through it, one facing out lets them in.
+      const exit = signalled(end.x, end.y, (end.dir + 8) % 16);
+      const entry = signalled(end.x, end.y, end.dir);
+      markers.push({ x: end.x, y: end.y, dir: end.dir, block, kind: exit && entry ? "diamond" : exit ? "exit" : "entry" });
       for (const other of group) if (other.index !== index) neighbours[block]!.add(pieces[other.index]!.block);
     }
   }

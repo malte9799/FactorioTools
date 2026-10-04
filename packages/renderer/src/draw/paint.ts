@@ -332,7 +332,7 @@ export function drawRailBlockLine(ctx: CanvasRenderingContext2D, points: [number
   if (points.length < 2) return;
   ctx.save();
   ctx.strokeStyle = color;
-  ctx.lineWidth = 0.14;
+  ctx.lineWidth = 0.09;
   ctx.lineCap = "round";
   ctx.lineJoin = "round";
   ctx.beginPath();
@@ -342,29 +342,58 @@ export function drawRailBlockLine(ctx: CanvasRenderingContext2D, points: [number
   ctx.restore();
 }
 
-/** Where a block line ends at a signalled joint: a triangle pointing into
- *  the joint (a signal there governs trains leaving this way), or a diamond.
- *  `dir` is the outward 16-way direction of the track end at (x, y). */
-export function drawRailBlockMarker(ctx: CanvasRenderingContext2D, x: number, y: number, dir: number, kind: "arrow" | "diamond", color: string): void {
-  const a = (dir * Math.PI) / 8;
-  const ux = Math.sin(a);
-  const uy = -Math.cos(a);
-  // Sit just inside the end, so the two blocks' markers meet at the joint.
-  const cx = x - ux * 0.32;
-  const cy = y - uy * 0.32;
+/** How far short of a signalled joint a block line stops, where its marker
+ *  takes over. */
+export const RAIL_BLOCK_MARKER_INSET = 0.3;
+
+/** `points` with `fromStart` and `fromEnd` of its length cut off. */
+export function trimPolyline(points: [number, number][], fromStart: number, fromEnd: number): [number, number][] {
+  const cut = (pts: [number, number][], by: number): [number, number][] => {
+    let left = by;
+    for (let i = 1; i < pts.length; i++) {
+      const [ax, ay] = pts[i - 1]!;
+      const [bx, by2] = pts[i]!;
+      const seg = Math.hypot(bx - ax, by2 - ay);
+      if (seg >= left) {
+        const t = seg === 0 ? 0 : left / seg;
+        return [[ax + (bx - ax) * t, ay + (by2 - ay) * t], ...pts.slice(i)];
+      }
+      left -= seg;
+    }
+    return [];
+  };
+  const head = fromStart > 0 ? cut(points, fromStart) : points;
+  return fromEnd > 0 ? cut([...head].reverse(), fromEnd).reverse() : head;
+}
+
+/** Where a block line ends at a signalled joint: a triangle pointing out
+ *  through the joint ("exit") or in from it ("entry"), or a diamond. Each
+ *  sits just inside its own piece, so the two blocks' markers face each
+ *  other across the joint with a sliver of gap. `dir` is the outward 16-way
+ *  direction of the track end at (x, y). */
+export function drawRailBlockMarker(ctx: CanvasRenderingContext2D, x: number, y: number, dir: number, kind: "exit" | "entry" | "diamond", color: string): void {
+  // Local frame: -y points out through the joint at the origin.
+  const gap = 0.08;
+  const len = 0.28;
+  const half = 0.19;
   ctx.save();
-  ctx.translate(cx, cy);
-  ctx.rotate(a);
+  ctx.translate(x, y);
+  ctx.rotate((dir * Math.PI) / 8);
   ctx.beginPath();
-  if (kind === "arrow") {
-    ctx.moveTo(0, -0.3);
-    ctx.lineTo(0.24, 0.12);
-    ctx.lineTo(-0.24, 0.12);
+  if (kind === "exit") {
+    ctx.moveTo(0, gap);
+    ctx.lineTo(half, gap + len);
+    ctx.lineTo(-half, gap + len);
+  } else if (kind === "entry") {
+    ctx.moveTo(half, gap);
+    ctx.lineTo(-half, gap);
+    ctx.lineTo(0, gap + len);
   } else {
-    ctx.moveTo(0, -0.26);
-    ctx.lineTo(0.2, 0);
-    ctx.lineTo(0, 0.26);
-    ctx.lineTo(-0.2, 0);
+    const cy = gap + 0.18;
+    ctx.moveTo(0, cy - 0.18);
+    ctx.lineTo(0.15, cy);
+    ctx.lineTo(0, cy + 0.18);
+    ctx.lineTo(-0.15, cy);
   }
   ctx.closePath();
   ctx.fillStyle = color;

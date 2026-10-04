@@ -11,7 +11,7 @@ import type { PlatformBox } from "./neighbours/platform.js";
 import { buildWireNetwork, resolveWires, terminalFor, terminalSideAt, type ResolvedWire, type WireNetwork } from "./neighbours/wires.js";
 import { drawSupplyAreas, drawWires, type SupplyArea } from "./draw/wireDraw.js";
 import { collectEntity, collectInserterPlatform, type CollectContext } from "./draw/collect.js";
-import { paint, paintPlain, drawOutline, drawDirectionArrows, drawHoverHighlight, drawInserterIndication, drawRailStartArrow, drawBlockedCross, drawSignalHandle, drawStopHandle, drawRailBlockLine, drawRailBlockMarker, drawUndergroundLine, type PaintTally } from "./draw/paint.js";
+import { paint, paintPlain, drawOutline, drawDirectionArrows, drawHoverHighlight, drawInserterIndication, drawRailStartArrow, drawBlockedCross, drawSignalHandle, drawStopHandle, drawRailBlockLine, drawRailBlockMarker, trimPolyline, RAIL_BLOCK_MARKER_INSET, drawUndergroundLine, type PaintTally } from "./draw/paint.js";
 import { getHoverHighlightSprite, getIndicationSprites, getUndergroundLinesSprite } from "./hoverHighlightSprite.js";
 import { compareDrawCommands, type DrawCommand } from "./draw/commands.js";
 import { planBake, type BakePlan } from "./draw/bake.js";
@@ -1515,9 +1515,10 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
     if (mode.kind === "place" && ghostWorldPos && (mode.entityName === "rail-signal" || mode.entityName === "rail-chain-signal")) {
       const index = currentRailIndex();
       const blocks = index.blocks();
-      for (const { piece, block } of blocks.pieces) {
+      for (const { piece, block, cut } of blocks.pieces) {
         const color = RAIL_BLOCK_COLORS[blocks.colors[block]!]!;
-        drawRailBlockLine(ctx, railCentreline(piece.name, piece.direction, 12).map(([x, y]) => [piece.x + x, piece.y + y]), color);
+        const line = railCentreline(piece.name, piece.direction, 12).map(([x, y]): [number, number] => [piece.x + x, piece.y + y]);
+        drawRailBlockLine(ctx, trimPolyline(line, cut[0] ? RAIL_BLOCK_MARKER_INSET : 0, cut[1] ? RAIL_BLOCK_MARKER_INSET : 0), color);
       }
       for (const m of blocks.markers) drawRailBlockMarker(ctx, m.x, m.y, m.dir, m.kind, RAIL_BLOCK_COLORS[blocks.colors[m.block]!]!);
       for (const slot of signalSlotsNear(index, ghostWorldPos.x, ghostWorldPos.y)) {
