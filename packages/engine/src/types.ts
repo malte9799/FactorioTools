@@ -227,8 +227,10 @@ export type GraphicsLayer = {
   /** Connection art that belongs to ONE specific fluid-box connection
    *  point and changes with what that point is plugged into — fusion-reactor
    *  and fusion-generator's own ports, which don't use the generic round
-   *  pipe-covers. `point` indexes the entity's own `pipeConnections`
-   *  (declaration order); `sprites` is keyed by the entity's facing and
+   *  pipe-covers. `point` names that point by its own unrotated local
+   *  position and direction, the same values its `pipeConnections` entry
+   *  carries — not a list index, which would silently address another
+   *  port once a recipe filters some out; `sprites` is keyed by the entity's facing and
    *  already carries its own baked shift. `columns` names the sheet column
    *  for each state of that point: `open` (nothing attached), `connected`
    *  (a matching fluid connection), `sibling` (meeting a same-category port
@@ -240,7 +242,7 @@ export type GraphicsLayer = {
   | {
       sprites: Partial<Record<Dir4Name, Sprite>>;
       per: "fluid-point";
-      point: number;
+      point: { x: number; y: number; direction: 0 | 4 | 8 | 12 };
       columns: { open?: number; connected?: number; sibling?: number; siblingMixed?: number };
     }
   /** One small pipe-stub cap per `heat_buffer.connections` entry, drawn at

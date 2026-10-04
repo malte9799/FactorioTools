@@ -50,6 +50,9 @@ export interface WorldPipeConnection {
    *  unchanged from its PipeConnectionPoint. */
   categories?: string[];
   noCover?: boolean;
+  /** The unrotated local point this was built from — what a `fluid-point`
+   *  layer's own `point` is matched against. */
+  local: { x: number; y: number; direction: number };
   /** World tile the point sits on (entity centre + rotated local offset,
    *  rounded) — used for tile-for-tile connectivity matching. */
   x: number;
@@ -87,6 +90,7 @@ export class FluidNetwork {
         entityName: entity.name,
         categories: c.connectionCategory,
         noCover: c.noCover,
+        local: { x: c.x, y: c.y, direction: c.direction },
         x: Math.round(entity.x + rotated.x),
         y: Math.round(entity.y + rotated.y),
         offsetX: rotated.x,

@@ -77,9 +77,9 @@ interface EntityFrame {
    *  matching push()'s existing offsetX/offsetY convention). */
   unconnectedPipeCovers: { offsetX: number; offsetY: number; direction: Cardinal }[];
   /** What each of this entity's own fluid-box connection points is plugged
-   *  into, in declaration order (matching a `fluid-point` layer's own
-   *  `point` index) — see FluidNetwork.stateOf. */
-  fluidPoints: FluidPointState[];
+   *  into (see FluidNetwork.stateOf), with the unrotated local point a
+   *  `fluid-point` layer's own `point` is matched against. */
+  fluidPoints: { local: { x: number; y: number; direction: number }; state: FluidPointState }[];
   /** Every heat-network connection point this entity has that the real
    *  heat network graph found NO neighbour for — same "unconnected only"
    *  rule as unconnectedPipeCovers (confirmed against the reference
@@ -158,7 +158,7 @@ function resolveFrame(entity: PlacedEntity, visual: ResolvedVisual, ctx: Collect
     // cover above.
     fluidPoints: ctx.fluidNetwork
       .pointsFor(entity.entityNumber)
-      .map((p): FluidPointState => (entity.entityNumber === -1 ? "open" : ctx.fluidNetwork.stateOf(p))),
+      .map((p) => ({ local: p.local, state: entity.entityNumber === -1 ? ("open" as const) : ctx.fluidNetwork.stateOf(p) })),
     // Fixed [0, 1.5] offset rotated by the ENTITY's own placement direction
     // (not the connection point's facing), and sprite picked by
     // entityDirection+8 — both taken verbatim from the reference renderer's
@@ -518,7 +518,10 @@ export function collectEntity(
     // picked by what that point is plugged into — and nothing at all for a
     // state the layer names no column for.
     if ("per" in layer && layer.per === "fluid-point") {
-      const state = frame.fluidPoints[layer.point] ?? "open";
+      const { x, y, direction } = layer.point;
+      const state = frame.fluidPoints.find((p) => p.local.x === x && p.local.y === y && p.local.direction === direction)?.state;
+      // No such point right now (its fluid box is switched off): no port, no art.
+      if (!state) return;
       const { open, connected, sibling = connected, siblingMixed = sibling } = layer.columns;
       const column = { open, connected, sibling, siblingMixed }[state];
       const sprite = layer.sprites[dir4Name(entity.direction)];

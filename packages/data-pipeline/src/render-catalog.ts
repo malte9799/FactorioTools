@@ -478,13 +478,14 @@ function fusionReactorConnectionLayers(proto: any): GraphicsLayer[] {
     const eastPiece = pieces[dirMap.east[slot] - 1];
     const location = connections[slot]?.location;
     const [dx, dy] = ({ 0: [0, -1], 4: [1, 0], 8: [0, 1], 12: [-1, 0] } as Record<number, [number, number]>)[location?.direction ?? -1] ?? [0, 0];
-    const point = points.findIndex(
+    const found = points.find(
       (p) =>
         p.direction === location?.direction &&
         Math.abs(p.x - (location.position[0] - dx / 2)) < 0.01 &&
         Math.abs(p.y - (location.position[1] - dy / 2)) < 0.01,
     );
-    if (point < 0) throw new Error(`${proto.name}: no fluid point behind neighbour connection ${slot}`);
+    if (!found) throw new Error(`${proto.name}: no fluid point behind neighbour connection ${slot}`);
+    const point = { x: found.x, y: found.y, direction: found.direction };
     const plasma = connections[slot].category === gs.plasma_category;
     const own = plasma ? 1 : 0;
     const columns = { open: own, connected: own, sibling: plasma ? 3 : 2, siblingMixed: 4 };
@@ -567,15 +568,14 @@ function fusionGeneratorGraphics(proto: any): EntityGraphics | undefined {
   // The plasma intake housings: `fluid_input_graphics` has one entry per
   // input_fluid_box pipe connection, in order (empty for the pass-through
   // outputs, whose angular caps are already part of the body sprite). An
-  // intake is only there while something feeds that port. input_fluid_box
-  // is the first box pipeConnectionsOf walks, so the entry index is the
-  // point index.
-  const inputCount = gs?.north_graphics_set?.fluid_input_graphics?.length ?? 0;
-  for (let point = 0; point < inputCount; point++) {
+  // intake is only there while something feeds that port.
+  const inputs: any[] = proto.input_fluid_box?.pipe_connections ?? [];
+  for (let index = 0; index < inputs.length; index++) {
+    const point = { x: inputs[index].position[0], y: inputs[index].position[1], direction: inputs[index].direction };
     const intake: Partial<Record<(typeof DIR4)[number], Sprite>> = {};
     const intakeShadow: Partial<Record<(typeof DIR4)[number], Sprite>> = {};
     for (const d of DIR4) {
-      const { main, shadow } = unwrap(gs[`${d}_graphics_set`]?.fluid_input_graphics?.[point]?.sprite);
+      const { main, shadow } = unwrap(gs[`${d}_graphics_set`]?.fluid_input_graphics?.[index]?.sprite);
       if (main) intake[d] = main;
       if (shadow) intakeShadow[d] = shadow;
     }
