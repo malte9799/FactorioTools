@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
-import { planEnd, planRail, supportsFor } from "../src/railPlanner.js";
-import { railEndsAt, railTiles, type RailEnd, type RailPiece } from "../src/railGeometry.js";
+import { planEnd, planRail, RAIL_PLAN_LENGTH_LIMIT, supportsFor } from "../src/railPlanner.js";
+import { railEndsAt, railLength, railTiles, type RailEnd, type RailPiece } from "../src/railGeometry.js";
 import { buildRailIndex, railStartAt } from "../src/railPlacement.js";
 
 let passed = 0;
@@ -101,6 +101,29 @@ test("the start arrow only shows on a placed rail, toward the cursor's half", ()
   // Beside the track, or just past its end: nothing.
   assert.equal(railStartAt(index, 2.6, 1), undefined);
   assert.equal(railStartAt(index, 1, -0.6), undefined);
+});
+
+const trackLength = (pieces: RailPiece[]) => pieces.reduce((sum, p) => sum + railLength(p.name, p.direction), 0);
+
+test("without Shift a placement lays 11 straights toward a far cursor", () => {
+  const pieces = planRail({ start: north, target: { x: 1, y: -80 }, targetElevated: false, blocked: open, maxLength: RAIL_PLAN_LENGTH_LIMIT });
+  assert.equal(pieces.length, 11);
+  assert.ok(pieces.every((p) => p.name === "straight-rail"));
+});
+
+test("without Shift a far turn heads the cursor's way and stops at the limit", () => {
+  const target = { x: 60, y: -60 };
+  const pieces = planRail({ start: north, target, targetElevated: false, blocked: open, maxLength: RAIL_PLAN_LENGTH_LIMIT });
+  assert.ok(pieces.length > 0 && connected(north, pieces));
+  assert.ok(trackLength(pieces) <= RAIL_PLAN_LENGTH_LIMIT + 1e-6, `laid ${trackLength(pieces)}`);
+  const end = planEnd(north, pieces);
+  assert.ok(Math.hypot(end.x - target.x, end.y - target.y) < Math.hypot(north.x - target.x, north.y - target.y) - 15, "got well closer");
+  assert.ok(pieces.some((p) => p.name.startsWith("curved")), "turns toward the cursor");
+});
+
+test("without Shift, a cursor no track can get closer to gets no plan", () => {
+  // Just beside the end, at right angles: every piece leads away from it.
+  assert.deepEqual(planRail({ start: north, target: { x: 4, y: 1 }, targetElevated: false, blocked: open, maxLength: RAIL_PLAN_LENGTH_LIMIT }), []);
 });
 
 console.log(`${passed} passed`);

@@ -12,7 +12,12 @@ refresh the rail data from the game.
 | **Rail signal / chain signal** | Snaps to the nearest signal slot beside placed track, facing the trains it stops. Which side of the track it goes on follows the cursor. Green handles mark every free signal spot on track within 12 tiles of the cursor. Away from track the ghost is red and nothing is placed. |
 | **Train stop** | Snaps to the slot beside a straight cardinal rail, on the right-hand side of travel. |
 
-- **No length limit.** Every plan lays in full, however long.
+- **Length limit.** One placement lays at most the rail item's
+  `manual_length_limit` of track (22.5 tiles: 11 straights, or 3–4 curves),
+  heading as close to the cursor as that gets. When no track can get any
+  closer, a red X shows at the cursor instead.
+- **Shift** lifts the limit: the plan reaches the cursor however long and
+  winding it has to be.
 - **R** turns the held straight piece in 45° steps (8 ways), and the
   direction a drag from open ground plans in. **Shift+R** turns it the other
   way.

@@ -309,6 +309,27 @@ export function drawSignalHandle(ctx: CanvasRenderingContext2D, slot: { x: numbe
   ctx.restore();
 }
 
+/** The game's "can't build" cross: a red X about a tile across, centred on
+ *  (x, y) — the rail planner shows it at the cursor when no track can get
+ *  any closer. */
+export function drawBlockedCross(ctx: CanvasRenderingContext2D, x: number, y: number): void {
+  const r = 0.4;
+  ctx.save();
+  ctx.lineCap = "round";
+  ctx.beginPath();
+  ctx.moveTo(x - r, y - r);
+  ctx.lineTo(x + r, y + r);
+  ctx.moveTo(x + r, y - r);
+  ctx.lineTo(x - r, y + r);
+  ctx.strokeStyle = "#a01818";
+  ctx.lineWidth = 0.28;
+  ctx.stroke();
+  ctx.strokeStyle = "#f25a5a";
+  ctx.lineWidth = 0.17;
+  ctx.stroke();
+  ctx.restore();
+}
+
 /** The rail planner's start arrow, as the game draws it on track: a
  *  rounded green triangle whose flat side runs across the rail's centre
  *  (x, y) and whose tip points along the 16-way `dir`, toward the end the

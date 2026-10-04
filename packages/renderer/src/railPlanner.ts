@@ -84,6 +84,10 @@ const STEPS: Step[][][] = [0, 1].map((layer) => {
   return byHeading;
 });
 
+/** The rail item's manual_length_limit: how much track one placement lays
+ *  without Shift — 11 straight pieces, or 3–4 curves (9–12 rail items). */
+export const RAIL_PLAN_LENGTH_LIMIT = 22.5;
+
 export interface PlanRequest {
   /** Where the track starts: an end point, heading the way the new track
    *  should leave it. */
@@ -94,6 +98,11 @@ export interface PlanRequest {
   /** True when a piece may not cover this tile on this layer. */
   blocked: (tx: number, ty: number, elevated: boolean) => boolean;
   maxNodes?: number;
+  /** Track length one placement may lay. Within it the search finds the
+   *  track that gets closest to the target, so a far cursor gets a plan
+   *  that heads its way and stops at the limit; one that can't get any
+   *  closer gets no plan at all. Unlimited when undefined. */
+  maxLength?: number;
 }
 
 interface Node {
@@ -103,6 +112,8 @@ interface Node {
   heading: number;
   elevated: boolean;
   g: number;
+  /** Track laid so far (g without the curve penalties). */
+  length: number;
   f: number;
   parent: Node | undefined;
   step: Step | undefined;
@@ -157,6 +168,7 @@ const GOAL_RADIUS = 1.5;
 export function planRail(req: PlanRequest): RailPiece[] {
   const { start, target, targetElevated, blocked } = req;
   const maxNodes = req.maxNodes ?? 20000;
+  const maxLength = req.maxLength ?? Infinity;
   const dist = (x: number, y: number) => Math.hypot(target.x - x, target.y - y);
   const pieceFree = (piece: RailPiece, elevatedPiece: boolean) => {
     for (const [tx, ty] of railTiles(piece)) if (blocked(tx, ty, elevatedPiece)) return false;
@@ -170,6 +182,7 @@ export function planRail(req: PlanRequest): RailPiece[] {
     heading: start.dir,
     elevated: start.elevated,
     g: 0,
+    length: 0,
     f: dist(start.x, start.y),
     parent: undefined,
     step: undefined,
@@ -207,9 +220,12 @@ export function planRail(req: PlanRequest): RailPiece[] {
       const y = node.y + step.ey;
       const key = `${x},${y},${step.heading},${step.elevated ? 1 : 0}`;
       const g = node.g + step.cost;
+      // The limit counts track laid, not the curves' planner penalty.
+      if (node.length + railLength(step.name, step.direction) > maxLength + 1e-6) continue;
       if ((best.get(key) ?? Infinity) <= g) continue;
       best.set(key, g);
-      open.push({ key, x, y, heading: step.heading, elevated: step.elevated, g, f: g + dist(x, y), parent: node, step });
+      const length = node.length + railLength(step.name, step.direction);
+      open.push({ key, x, y, heading: step.heading, elevated: step.elevated, g, length, f: g + dist(x, y), parent: node, step });
     }
   }
 

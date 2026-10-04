@@ -11,7 +11,7 @@ import type { PlatformBox } from "./neighbours/platform.js";
 import { buildWireNetwork, resolveWires, terminalFor, type ResolvedWire, type WireNetwork } from "./neighbours/wires.js";
 import { drawSupplyAreas, drawWires, type SupplyArea } from "./draw/wireDraw.js";
 import { collectEntity, collectInserterPlatform, type CollectContext } from "./draw/collect.js";
-import { paint, paintPlain, drawOutline, drawHoverHighlight, drawRailStartArrow, drawSignalHandle, drawUndergroundLine, type PaintTally } from "./draw/paint.js";
+import { paint, paintPlain, drawOutline, drawHoverHighlight, drawRailStartArrow, drawBlockedCross, drawSignalHandle, drawUndergroundLine, type PaintTally } from "./draw/paint.js";
 import { getHoverHighlightSprite, getUndergroundLinesSprite } from "./hoverHighlightSprite.js";
 import { compareDrawCommands, type DrawCommand } from "./draw/commands.js";
 import { planBake, type BakePlan } from "./draw/bake.js";
@@ -808,6 +808,8 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
   // The current press started on open ground: a plain click there lays just
   // the held piece and leaves no plan behind; only a drag plans on from it.
   let railPressOnGround = false;
+  // Shift plans all the way to the cursor, past the rail item's length limit.
+  let shiftHeld = false;
 
   function currentRailIndex(): RailIndex {
     if (!railIndex || railIndexVersion !== entitiesVersion) {
@@ -825,10 +827,10 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
     if (mode.kind !== "place" || !railAnchor || !ghostWorldPos) return null;
     const target = { x: Math.round(ghostWorldPos.x), y: Math.round(ghostWorldPos.y) };
     const elevated = plannerTargetsElevated(mode.entityName);
-    const key = `${entitiesVersion}|${railAnchor.x},${railAnchor.y},${railAnchor.dir},${railAnchor.elevated}|${target.x},${target.y}|${elevated}`;
+    const key = `${entitiesVersion}|${railAnchor.x},${railAnchor.y},${railAnchor.dir},${railAnchor.elevated}|${target.x},${target.y}|${elevated}|${shiftHeld}`;
     if (key !== railPreviewKey) {
       railPreviewKey = key;
-      railPreviewCache = previewRail(currentRailIndex(), railAnchor, target, elevated);
+      railPreviewCache = previewRail(currentRailIndex(), railAnchor, target, elevated, shiftHeld);
     }
     return railPreviewCache;
   }
@@ -994,11 +996,14 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
     // the next press or release.
     const railGhosts: { entity: PlacedEntity; tint: string }[] = [];
     let railArrow: { x: number; y: number; dir: number } | null = null;
+    let railBlocked: { x: number; y: number } | null = null;
     if (mode.kind === "place" && ghostWorldPos && isRailPlannerItem(mode.entityName)) {
       const preview = currentRailPreview();
       const index = currentRailIndex();
       const asGhost = (p: RailPiece): PlacedEntity => ({ entityNumber: -1, name: p.name, x: p.x, y: p.y, direction: p.direction, quality: "normal", modules: [], filterItems: [] });
       if (preview) {
+        // No track can get any closer to the cursor: a red X says so.
+        if (preview.pieces.length === 0) railBlocked = { x: ghostWorldPos.x, y: ghostWorldPos.y };
         for (const p of preview.pieces) railGhosts.push({ entity: asGhost(p), tint: GHOST_VALID_TINT });
         for (const sp of preview.supports) railGhosts.push({ entity: asGhost(sp), tint: GHOST_VALID_TINT });
       } else {
@@ -1520,6 +1525,7 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
       for (const commands of byTint.values()) paint(ctx, atlas, commands, tintedRes);
     }
     if (railArrow) drawRailStartArrow(ctx, railArrow.x, railArrow.y, railArrow.dir);
+    if (railBlocked) drawBlockedCross(ctx, railBlocked.x, railBlocked.y);
 
     phases.ghost += performance.now() - tGhostDraw;
 
@@ -2255,6 +2261,7 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
     if (mode.kind === "place") {
       isPlacingDrag = true;
       placedThisGesture = new Set();
+      shiftHeld = e.shiftKey;
       if (isRailPlannerItem(mode.entityName)) {
         // Captured so a drag that ends off the canvas still lays its track.
         canvas.setPointerCapture(e.pointerId);
@@ -2338,6 +2345,7 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
     }
     if (mode.kind === "place") {
       ghostWorldPos = worldAtPointer(e);
+      shiftHeld = e.shiftKey;
       invalidate(); // the ghost follows the cursor, so the picture changed
       if (isPlacingDrag) {
         if (isRailPlannerItem(mode.entityName)) railDragMoved = true;
@@ -2520,6 +2528,10 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
   const isTypingTarget = () =>
     document.activeElement instanceof HTMLInputElement || document.activeElement instanceof HTMLTextAreaElement;
   const onKeyDown = (e: KeyboardEvent) => {
+    if (e.key === "Shift" && !shiftHeld) {
+      shiftHeld = true;
+      if (railAnchor) invalidate();
+    }
     const key = e.key.toLowerCase();
     if (key !== "w" && key !== "a" && key !== "s" && key !== "d") return;
     if (e.metaKey || e.ctrlKey || e.altKey || isTypingTarget()) return;
@@ -2527,6 +2539,10 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
     heldKeys.add(key);
   };
   const onKeyUp = (e: KeyboardEvent) => {
+    if (e.key === "Shift" && shiftHeld) {
+      shiftHeld = false;
+      if (railAnchor) invalidate();
+    }
     heldKeys.delete(e.key.toLowerCase());
   };
   // A key can go down, then the window loses focus (alt-tab, DevTools)

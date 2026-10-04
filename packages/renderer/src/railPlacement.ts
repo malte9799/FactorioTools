@@ -21,7 +21,7 @@ import {
   type RailPiece,
   type RailSlot,
 } from "./railGeometry.js";
-import { planEnd, planRail, supportsFor } from "./railPlanner.js";
+import { planEnd, planRail, RAIL_PLAN_LENGTH_LIMIT, supportsFor } from "./railPlanner.js";
 
 /** Held items that drive the rail planner rather than placing one entity.
  *  The ramp item plans toward the elevated layer, climbing a ramp first
@@ -146,8 +146,12 @@ export interface RailPreview {
   end: RailEnd;
 }
 
-export function previewRail(index: RailIndex, start: RailEnd, target: { x: number; y: number }, targetElevated: boolean): RailPreview {
-  const pieces = planRail({ start, target, targetElevated, blocked: index.blocked });
+/** Plans track from `start` toward `target`. Without `unlimited` (Shift), one
+ *  placement lays at most the rail item's length limit, heading as close to
+ *  the target as that gets — an empty plan means no track can get closer. */
+export function previewRail(index: RailIndex, start: RailEnd, target: { x: number; y: number }, targetElevated: boolean, unlimited: boolean): RailPreview {
+  const maxLength = unlimited ? undefined : RAIL_PLAN_LENGTH_LIMIT;
+  const pieces = planRail({ start, target, targetElevated, blocked: index.blocked, maxLength });
   const supports = supportsFor(start, pieces, index.supported, (x, y) => index.supportBlocked(x, y)).filter((s) => !index.supported(s.x, s.y));
   return { pieces, supports, end: planEnd(start, pieces) };
 }
