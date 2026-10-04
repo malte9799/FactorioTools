@@ -137,6 +137,7 @@ function attachDrag(
   source: LibraryDragSource | undefined,
   accept: (dragged: LibraryDragSource, e: DragEvent) => LibraryDropTarget | undefined,
   refresh: () => void,
+  notify: LibraryCallbacks["notify"],
 ): void {
   if (source) {
     el.draggable = true;
@@ -169,7 +170,11 @@ function attachDrag(
     if (!dragSource || !target) return;
     e.preventDefault();
     e.stopPropagation();
-    moveInLibrary(dragSource, target);
+    try {
+      moveInLibrary(dragSource, target);
+    } catch (err) {
+      notify(saveFailureMessage(err, "Couldn't move that."), "error");
+    }
     dragSource = undefined;
     refresh();
   });
@@ -404,6 +409,7 @@ function savedRow(entry: SavedBlueprint, callbacks: LibraryCallbacks, refresh: (
                 // Upper half drops above this row, lower half below it.
                 (_, e) => ({ entryId: entry.id, where: dropFraction(row, e) < 0.5 ? "before" : "after" }),
                 refresh,
+                callbacks.notify,
               ),
     },
     refresh,
@@ -651,6 +657,7 @@ export function buildLibrarySidebar(container: HTMLElement, callbacks: LibraryCa
               return { bookId, where: at < 0.25 ? "before" : at > 0.75 && collapsed.has(`book-${bookId}`) ? "after" : "into" };
             },
             refresh,
+            callbacks.notify,
           ),
       });
       for (const entry of members) body.appendChild(savedRow(entry, callbacks, refresh));
@@ -665,7 +672,7 @@ export function buildLibrarySidebar(container: HTMLElement, callbacks: LibraryCa
     // Dropping on the list's empty space (below the last row) moves the
     // thing to the end of the top level — the way out of a book that is
     // itself the last item.
-    attachDrag(savedBody, undefined, (_, e) => (e.target === savedBody ? { where: "end" } : undefined), refresh);
+    attachDrag(savedBody, undefined, (_, e) => (e.target === savedBody ? { where: "end" } : undefined), refresh, callbacks.notify);
     list.appendChild(savedSection);
 
     list.scrollTop = scroll;

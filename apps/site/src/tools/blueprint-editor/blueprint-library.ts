@@ -154,7 +154,8 @@ export type LibraryDropTarget =
  *  book; dropped anywhere else it becomes a loose blueprint. Books stay at
  *  the top level — one dropped on another book lands beside it. A book whose
  *  last blueprint is moved out is gone, since a book only exists as the
- *  blueprints tagged with it. */
+ *  blueprints tagged with it. Throws LibraryWriteError when the new order
+ *  couldn't be stored. */
 export function moveInLibrary(source: LibraryDragSource, target: LibraryDropTarget): SavedBlueprint[] {
   const entries = readAll();
   const items = groupLibrary(entries);
@@ -222,7 +223,7 @@ export function moveInLibrary(source: LibraryDragSource, target: LibraryDropTarg
       // nothing, beside it takes it out — it lands where the book was.
       if (emptied?.bookId !== target.bookId || target.where === "into") return entries;
       items.splice(emptied.at, 0, asLoose(moved));
-      writeAll(flattenLibrary(items));
+      if (!writeAll(flattenLibrary(items))) throw new LibraryWriteError();
       return flattenLibrary(items);
     }
     const book = items[at] as Extract<LibraryItem, { kind: "book" }>;
@@ -233,7 +234,7 @@ export function moveInLibrary(source: LibraryDragSource, target: LibraryDropTarg
   }
 
   const next = flattenLibrary(items);
-  writeAll(next);
+  if (!writeAll(next)) throw new LibraryWriteError();
   return next;
 }
 
@@ -273,9 +274,15 @@ export function saveToLibrary(bpString: string, label: string, category?: "debug
   }
   // Newest on top, as the list has always shown it.
   entries.unshift(...fresh);
-  if (!writeAll(entries)) throw new LibraryWriteError();
-  // A real book brings its own description and icons along.
-  if (bookId && envelope.blueprint_book) storeBookMeta(bookId, envelope.blueprint_book.description, envelope.blueprint_book.icons);
+  // A real book brings its own description and icons along. Stored first,
+  // so a book is never saved without them — and taken back out if the
+  // entries themselves then don't fit.
+  const book = bookId ? envelope.blueprint_book : undefined;
+  if (book && !storeBookMeta(bookId!, book.description, book.icons)) throw new LibraryWriteError();
+  if (!writeAll(entries)) {
+    if (book) storeBookMeta(bookId!, undefined, undefined);
+    throw new LibraryWriteError();
+  }
   return entries;
 }
 
@@ -506,20 +513,22 @@ function readBooks(): Record<string, StoredBook> {
   }
 }
 
-function writeBooks(books: Record<string, StoredBook>): void {
+/** Whether the write landed — false when storage is unavailable or full. */
+function writeBooks(books: Record<string, StoredBook>): boolean {
   try {
     localStorage.setItem(BOOKS_KEY, JSON.stringify(books));
+    return true;
   } catch {
-    /* storage unavailable or quota exceeded */
+    return false;
   }
 }
 
-function storeBookMeta(bookId: string, description: string | undefined, icons: BpIcon[] | undefined): void {
+function storeBookMeta(bookId: string, description: string | undefined, icons: BpIcon[] | undefined): boolean {
   const books = readBooks();
   const clean = cleanIcons(icons);
   if (description || clean.length) books[bookId] = { description: description || undefined, icons: clean };
   else delete books[bookId];
-  writeBooks(books);
+  return writeBooks(books);
 }
 
 /** What the library window shows for a book; undefined when no blueprint

@@ -2703,9 +2703,10 @@ export function mountBlueprintEditor(root: HTMLElement): () => void {
       const choice = await confirmUnsavedChanges();
       if (choice === "cancel") return;
     }
-    await withSpinner(() => load(text));
+    const loaded = await withSpinner(() => load(text));
     // load() forgot the previous entry; this one came out of the library.
-    if (entryId) setOpenEntry(entryId);
+    // A load that failed left the old blueprint and its entry in place.
+    if (loaded && entryId) setOpenEntry(entryId);
   }
 
   /** The library entry the editor's blueprint was opened from or last saved
@@ -2824,13 +2825,14 @@ export function mountBlueprintEditor(root: HTMLElement): () => void {
     startNew();
   }
 
-  function load(text: string, restoreCameraFromSave = false) {
+  /** Whether the blueprint was read and is now the one on the canvas. */
+  function load(text: string, restoreCameraFromSave = false): boolean {
     try {
       const envelope = decodeBlueprintString(text);
       blueprints = collectBlueprints(envelope);
       if (blueprints.length === 0) {
         setStatus("That decoded fine but contains no blueprints.", "error");
-        return;
+        return false;
       }
       // Whatever was open before is replaced; guardedLoad sets the entry
       // again when this load came out of the library.
@@ -2858,12 +2860,14 @@ export function mountBlueprintEditor(root: HTMLElement): () => void {
           : `Read ${total} entities.`,
       );
       selectBlueprint(0, restoreCameraFromSave);
+      return true;
     } catch (error) {
       resultsWindow.hide();
       setStatus(
         error instanceof BlueprintError ? error.message : "Couldn't read that blueprint.",
         "error",
       );
+      return false;
     }
   }
 
@@ -3660,8 +3664,7 @@ export function mountBlueprintEditor(root: HTMLElement): () => void {
     } catch {
       /* storage unavailable */
     }
-    load(autosaved, true);
-    if (reopened) setOpenEntry(reopened);
+    if (load(autosaved, true) && reopened) setOpenEntry(reopened);
   } else {
     loadExamplePool()
       .then((pool) => {
