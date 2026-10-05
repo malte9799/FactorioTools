@@ -2359,6 +2359,13 @@ export function mountBlueprintEditor(root: HTMLElement): () => void {
    *  right-click-a-slot removal, same as setModuleSlot above. */
   function setFilterSlot(slotIndex: number, itemName: string): void {
     updateSelectedEntity((e) => {
+      // A splitter has one filter, and it leaves on the output priority
+      // side: the game picks left when none was set.
+      if (getData().splitters?.[e.name]) {
+        e.splitterFilter = itemName || undefined;
+        if (itemName) e.splitterOutputPriority ??= "left";
+        return;
+      }
       const slots = [...e.filterItems];
       while (slots.length <= slotIndex) slots.push("");
       slots[slotIndex] = itemName;
@@ -2612,6 +2619,12 @@ export function mountBlueprintEditor(root: HTMLElement): () => void {
       },
       onSetSpoilPriority(priority) {
         updateSelectedEntity((e) => { e.spoilPriority = priority; });
+      },
+      onSetSplitterPriority(which, side) {
+        updateSelectedEntity((e) => {
+          if (which === "input") e.splitterInputPriority = side;
+          else e.splitterOutputPriority = side;
+        });
       },
       circuit: {
         wired: wires.some((w) => w.color !== "copper" && (w.from === selectedEntity!.entityNumber || w.to === selectedEntity!.entityNumber)),

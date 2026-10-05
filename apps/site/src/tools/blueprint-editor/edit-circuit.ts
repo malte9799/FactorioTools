@@ -851,6 +851,28 @@ export function buildCircuitSection(container: HTMLElement, entity: PlacedEntity
     return () => {};
   }
 
+  // A splitter has no enable/disable: the network picks its input side,
+  // its output side and its filter. The condition rows stay in place,
+  // greyed out, while their checkbox is off, as in game.
+  if (data.splitters?.[entity.name]) {
+    const sideSection = (flag: "set_input_side" | "set_output_side", text: string, signal: string, left: "input_left_condition" | "output_left_condition", right: "input_right_condition" | "output_right_condition") => {
+      const on = !!behavior[flag];
+      box.appendChild(checkbox(text, on, commitFlag(flag)));
+      const sideRow = (sideText: string, key: typeof left | typeof right, comparator: string) => {
+        const row = el("div", `circuit-side-row${on ? "" : " is-off"}`);
+        const cond = behavior[key] ?? { first_signal: { type: "virtual", name: signal }, comparator, constant: 0 };
+        row.append(el("span", "circuit-label", sideText), conditionRow(cond, [], (c) => cb.commit((b) => (b[key] = c))));
+        box.appendChild(row);
+      };
+      sideRow("Left", left, "<");
+      sideRow("Right", right, ">");
+    };
+    sideSection("set_input_side", "Set input side", "signal-I", "input_left_condition", "input_right_condition");
+    sideSection("set_output_side", "Set output side", "signal-O", "output_left_condition", "output_right_condition");
+    box.appendChild(checkbox("Set filter", !!behavior.set_filter, commitFlag("set_filter")));
+    return () => refreshers.forEach((r) => r());
+  }
+
   const enabled = !!(behavior.circuit_enabled ?? behavior.circuit_enable_disable ?? (/lamp/.test(entity.name) && behavior.circuit_condition));
   box.appendChild(checkbox("Enable/disable", enabled, (on) => cb.commit((b) => {
     delete b.circuit_enable_disable;
