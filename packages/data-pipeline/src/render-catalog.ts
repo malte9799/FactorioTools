@@ -284,12 +284,18 @@ function roboportGraphics(proto: any): EntityGraphics | undefined {
  *  (the boxes' `draw_only_when_connected`) — a bare thruster shows none.
  *  The fifth entry, a `fadeout` exhaust-flame effect, only shows while
  *  running and is skipped for the same reason animationListGraphics skips
- *  !always_draw entries. */
+ *  !always_draw entries.
+ *
+ *  Under it all goes the `integration_patch` (thruster-bckg), on its own
+ *  `integration_patch_render_layer` (floor): the pipework that joins each
+ *  elbow to the body. Without it the elbows float a gap away from it. */
 function thrusterGraphics(proto: any): EntityGraphics | undefined {
   const gs = proto.graphics_set;
   const { main, shadow } = unwrap(gs?.animation);
   if (!main) return undefined;
   const layers: GraphicsLayer[] = [];
+  const patch = unwrap(gs?.integration_patch?.north ?? gs?.integration_patch).main;
+  if (patch) layers.push({ layer: layerOf(gs?.integration_patch_render_layer, Layer.Floor), sprites: patch });
   if (shadow) layers.push({ layer: Layer.Shadow, sprites: shadow });
   layers.push({ layer: Layer.Object, sprites: main });
   const pipes = animationListGraphics(gs?.working_visualisations, fluidEnablersOf(proto));
