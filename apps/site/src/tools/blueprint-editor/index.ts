@@ -15,7 +15,7 @@ import {
   getRenderCatalog,
   loadData,
   ROTATION_TEST_BLUEPRINT,
-  DEBUG_BLUEPRINT,
+  loadDebugBlueprint,
   TIMESCALE_FACTOR,
   remapSelectionForPaste,
   refreshSignalItems,
@@ -3928,10 +3928,11 @@ export function mountBlueprintEditor(root: HTMLElement): () => void {
     /** Load the built-in renderer debug lab — every entity kind, every
      *  facing, grown over time as render bugs get fixed (see
      *  DEBUG_BLUEPRINT's own doc comment in packages/engine/src/data/
-     *  debug-lab.ts). */
-    loadDebugLab() {
-      input.value = DEBUG_BLUEPRINT;
-      load(DEBUG_BLUEPRINT);
+     *  debug-lab.ts). It is fetched as its own chunk on first use. */
+    async loadDebugLab() {
+      const bpString = await loadDebugBlueprint();
+      input.value = bpString;
+      load(bpString);
     },
     /** Every placed entity's name, position and facing. */
     listEntities() {
