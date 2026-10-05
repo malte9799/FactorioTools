@@ -4000,7 +4000,7 @@ export function mountBlueprintEditor(root: HTMLElement): () => void {
       renderer.camera.state.y = y;
       if (pixelsPerTile !== undefined) renderer.camera.state.pixelsPerTile = pixelsPerTile;
     },
-    /** Set zoom directly, in screen pixels per world tile (camera.ts clamps to [6, 256]). */
+    /** Set zoom directly, in screen pixels per world tile (camera.ts clamps to [2, 256]). */
     setZoom(pixelsPerTile: number) {
       renderer.camera.state.pixelsPerTile = pixelsPerTile;
     },
