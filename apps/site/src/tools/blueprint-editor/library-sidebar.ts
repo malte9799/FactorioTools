@@ -1,4 +1,4 @@
-import { ROTATION_TEST_BLUEPRINT, loadDebugBlueprint, RED_SCIENCE_240_BLUEPRINT, GREEN_SCIENCE_240_BLUEPRINT } from "@factoriotools/engine";
+import { loadDebugBlueprint } from "@factoriotools/engine";
 import type { BlueprintTreeNode } from "@factoriotools/engine";
 import {
   listSaved,
@@ -84,14 +84,9 @@ function builtinString(entry: BuiltinEntry): Promise<string> {
 }
 
 /** Debug fixtures, listed loose at the top of the panel the way the game's
- *  Surfaces panel lists "Space map" above its categories. The throughput
- *  builds are known to hit full throughput in game: what the rate
- *  calculator should reproduce. */
+ *  Surfaces panel lists "Space map" above its categories. */
 const BUILTINS: BuiltinEntry[] = [
-  { id: "builtin-rotation-test", label: "Rotation test", icon: "inserter", bpString: ROTATION_TEST_BLUEPRINT },
   { id: "builtin-debug-lab", label: "Debug lab", icon: "lab", bpString: loadDebugBlueprint },
-  { id: "builtin-red-science-240", label: "Red science 240/s", icon: "assembling-machine-1", bpString: RED_SCIENCE_240_BLUEPRINT },
-  { id: "builtin-green-science-240", label: "Green science 240/s", icon: "assembling-machine-2", bpString: GREEN_SCIENCE_240_BLUEPRINT },
 ];
 
 /** Inline line-art for the row action buttons, drawn in currentColor so
