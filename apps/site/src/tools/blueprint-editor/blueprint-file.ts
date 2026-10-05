@@ -9,7 +9,8 @@
  * - just the string (a .txt saved from the game's export box),
  * - the string among other text (notes, a forum post, a Markdown list) —
  *   the first string-shaped token is taken,
- * - a factorioprints.com / fprints.xyz link (resolved like a typed link),
+ * - a factorioprints.com / fprints.xyz link (resolved like a typed link;
+ *   factoriobin.com links are recognised but can't be read cross-origin),
  * - the decoded JSON envelope ({"blueprint": …} or {"blueprint_book": …}),
  *   re-encoded to a string here.
  *

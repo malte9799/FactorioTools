@@ -14,6 +14,13 @@
  *   browser app can't read it; the user gets told to copy the string from
  *   the page instead.
  *
+ * - factoriobin.com serves the raw string from cdn.factoriobin.com under a
+ *   per-post hashed path that only the post page reveals, and neither the
+ *   post page nor the CDN sends CORS headers; so, like factorioblueprints.tech,
+ *   the user is told to use the post's Copy button instead. Posting is
+ *   blocked the same way (cross-origin POSTs get a 403, and the form has no
+ *   query-string prefill), so sharing is copy + open the site.
+ *
  * Each backend must also be listed in index.html's CSP connect-src. Other
  * sites get a "not supported" message rather than a blind fetch the CSP
  * would block anyway. A pasted blueprint string (rather than a link) is
@@ -26,10 +33,11 @@ const FPRINTS_ANON_KEY =
   "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InR1dHBtb2t6bm94c2dvZHBrbGFnIiwicm9sZSI6ImFub24iLCJpYXQiOjE3MzEzMDQwODgsImV4cCI6MjA0Njg4MDA4OH0.sa0iS2etN1Vr4nLv7kyJ7cn8Q1uOaCegJzMtUVMQXNc";
 
 /** Where "Share on …" sends the user after copying the string: each site's
- *  own upload page (both need an account, and neither has an upload API). */
+ *  own upload page (the first two need an account, and none has an upload API). */
 export const SHARE_TARGETS = [
   { name: "factorioprints.com", url: "https://factorioprints.com/create" },
   { name: "fprints.xyz", url: "https://fprints.xyz/my-blueprints" },
+  { name: "factoriobin.com", url: "https://factoriobin.com/" },
 ] as const;
 
 export class BlueprintLinkError extends Error {}
@@ -43,6 +51,7 @@ type LinkSource =
   | { site: "factorioprints"; id: string }
   | { site: "fprints"; id: string }
   | { site: "factorioblueprints.tech"; id: string }
+  | { site: "factoriobin"; id: string }
   | { site: "other"; host: string };
 
 export function parseBlueprintLink(text: string): LinkSource | null {
@@ -58,6 +67,7 @@ export function parseBlueprintLink(text: string): LinkSource | null {
   if (host === "factorioprints.com" && parts[0] === "view" && parts[1]) return { site: "factorioprints", id: parts[1] };
   if (host === "fprints.xyz" && parts[0] === "blueprint" && parts[1]) return { site: "fprints", id: parts[1] };
   if (host === "factorioblueprints.tech" && parts[0] === "page" && parts[1]) return { site: "factorioblueprints.tech", id: parts[1] };
+  if (host === "factoriobin.com" && parts[0] === "post" && parts[1]) return { site: "factoriobin", id: parts[1] };
   return { site: "other", host };
 }
 
@@ -88,6 +98,10 @@ export async function resolveBlueprintLink(text: string): Promise<string> {
     case "factorioblueprints.tech":
       throw new BlueprintLinkError(
         "factorioblueprints.tech doesn't let other sites read its blueprints — copy the string from the page and import from clipboard.",
+      );
+    case "factoriobin":
+      throw new BlueprintLinkError(
+        "factoriobin.com doesn't let other sites read its posts — press the post's Copy button and import from clipboard.",
       );
     case "other":
       throw new BlueprintLinkError(`Links from ${source.host} aren't supported — factorioprints.com and fprints.xyz are.`);
