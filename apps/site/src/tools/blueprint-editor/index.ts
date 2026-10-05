@@ -49,7 +49,8 @@ const TEMPLATE = `
   <div id="schematic" class="schematic-frame"></div>
   <div id="machine-tooltip" class="machine-tooltip gui-window" hidden></div>
 
-  <div id="load-spinner" class="load-spinner" hidden aria-hidden="true">
+  <div id="load-spinner" class="load-spinner" aria-hidden="true">
+    <div id="load-spinner-file" class="load-spinner-file"></div>
     <div class="load-spinner-ring"></div>
   </div>
 
@@ -2141,8 +2142,9 @@ export function mountBlueprintEditor(root: HTMLElement): () => void {
     // itself is declared further down (only ever CALLED once actual sprite
     // loads happen, well after that point in module init, so no temporal-
     // dead-zone issue registering the callback here first). */
-    renderer.onLoadingChange((loading) => {
+    renderer.onLoadingChange((loading, file) => {
       setSpinnerReason("sprite-load", loading);
+      if (file) setSpinnerFile(file);
     });
   }
   wireEditCallbacks();
@@ -2709,7 +2711,74 @@ export function mountBlueprintEditor(root: HTMLElement): () => void {
   function setSpinnerReason(reason: string, active: boolean): void {
     if (active) spinnerReasons.add(reason);
     else spinnerReasons.delete(reason);
-    spinner.hidden = spinnerReasons.size === 0;
+    const show = spinnerReasons.size > 0;
+    clearTimeout(spinnerHideTimer);
+    if (show === spinner.classList.contains("is-visible")) return;
+    // A load that settles within a frame or two would otherwise start
+    // leaving before the badge has even faded in — hold it on screen for
+    // a minimum stretch so a fast load still reads as one.
+    if (!show) {
+      const wait = spinnerShownAt + SPINNER_MIN_VISIBLE_MS - performance.now();
+      if (wait > 0) {
+        spinnerHideTimer = window.setTimeout(() => setSpinnerReason(reason, false), wait);
+        return;
+      }
+    } else {
+      spinnerShownAt = performance.now();
+    }
+    clearTimeout(spinnerLeaveTimer);
+    spinner.classList.toggle("is-visible", show);
+    // Enters from below, leaves upward: is-leaving holds the exit pose
+    // until the transition is over, then the badge snaps back (invisible)
+    // to its resting spot below, ready for the next entrance.
+    spinner.classList.toggle("is-leaving", !show);
+    if (!show) {
+      spinnerLeaveTimer = window.setTimeout(() => {
+        spinner.classList.remove("is-leaving");
+        clearTimeout(spinnerFileTimer);
+        spinnerFile.replaceChildren();
+        spinnerFileName = "";
+      }, SPINNER_LEAVE_MS);
+    }
+  }
+
+  // The sheet the sprite atlas is fetching right now, as a one-line ticker
+  // beside the ring: each new name rises in from below while the one it
+  // replaces slides out the top. Left in place when loading finishes so
+  // the last name rides out with the badge instead of blanking first.
+  const SPINNER_LEAVE_MS = 260;
+  const SPINNER_MIN_VISIBLE_MS = 700;
+  const SPINNER_FILE_HOLD_MS = 140;
+  let spinnerShownAt = 0;
+  let spinnerHideTimer: number | undefined;
+  let spinnerFileTimer: number | undefined;
+  let spinnerFileSwappedAt = 0;
+  const spinnerFile = $<HTMLDivElement>("#load-spinner-file");
+  let spinnerLeaveTimer: number | undefined;
+  let spinnerFileName = "";
+  function setSpinnerFile(file: string): void {
+    // Sheets settle faster than the slide takes during a burst, and a name
+    // swapped out mid-slide never gets read at all — each name holds for
+    // a beat, with only the newest one waiting to take its place.
+    clearTimeout(spinnerFileTimer);
+    if (file === spinnerFileName) return;
+    const wait = spinnerFileSwappedAt + SPINNER_FILE_HOLD_MS - performance.now();
+    if (wait > 0) {
+      spinnerFileTimer = window.setTimeout(() => setSpinnerFile(file), wait);
+      return;
+    }
+    spinnerFileSwappedAt = performance.now();
+    spinnerFileName = file;
+    for (const old of spinnerFile.querySelectorAll(".is-out")) old.remove();
+    const previous = spinnerFile.firstElementChild;
+    if (previous) {
+      previous.classList.add("is-out");
+      previous.addEventListener("animationend", () => previous.remove(), { once: true });
+    }
+    const line = document.createElement("span");
+    line.className = "load-spinner-file-line";
+    line.textContent = file;
+    spinnerFile.append(line);
   }
 
   /** Shows the loading spinner, yields one frame so it actually paints

@@ -386,8 +386,9 @@ export interface BlueprintRenderer {
    *  loading a blueprint). Drives a small, non-blocking "still loading
    *  sprites" badge rather than a full-screen spinner — the canvas keeps
    *  drawing outline fallbacks for not-yet-loaded entities the whole time,
-   *  nothing is actually blocked. */
-  onLoadingChange(callback: (loading: boolean) => void): void;
+   *  nothing is actually blocked. `file` is the basename of the sheet most
+   *  recently started and still loading, for the badge to name. */
+  onLoadingChange(callback: (loading: boolean, file?: string) => void): void;
   /** Snapshot of live performance/scene numbers — for the app's own debug
    *  panel (not shown by default), not read anywhere in the renderer
    *  itself. fps/frameTimeMs/renderTimeMs average the last 30 frames;
@@ -2797,7 +2798,7 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
       pasteCallback = callback;
     },
     onLoadingChange(callback) {
-      atlas.setOnPendingChange((pending) => callback(pending > 0));
+      atlas.setOnPendingChange((pending, file) => callback(pending > 0, file));
     },
     getVisualLookup() {
       return visualLookup;

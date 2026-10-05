@@ -1090,14 +1090,70 @@ body:has(#library-window.is-collapsed:not([hidden])) #window-toolbar { left: cal
   bottom: 20px;
   z-index: 1500;
   pointer-events: none;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  /* Resting pose: invisible, a little below. is-visible slides it up into
+     place; is-leaving carries it on out the top. No transition on the
+     resting pose itself, so dropping is-leaving snaps back down unseen. */
+  opacity: 0;
+  transform: translateY(14px);
 }
 
-/* display only when NOT hidden — a plain `.load-spinner { display: block }`
-   would win over the browser's own `[hidden]{display:none}` default
-   (equal specificity, this class rule comes later in the cascade),
-   permanently showing the spinner regardless of the hidden attribute. */
-.load-spinner:not([hidden]) {
+.load-spinner.is-visible,
+.load-spinner.is-leaving {
+  transition: opacity 0.24s ease, transform 0.24s cubic-bezier(0.2, 0.7, 0.2, 1);
+}
+
+.load-spinner.is-visible {
+  opacity: 1;
+  transform: none;
+}
+
+.load-spinner.is-leaving {
+  transform: translateY(-14px);
+}
+
+/* Name of the sheet loading right now — a one-line ticker, each name
+   rising in from below and the one it replaces sliding out the top.
+   Same timing and no fade on either, so the two travel as one flush
+   strip with no blank gap between them. */
+.load-spinner-file {
+  position: relative;
+  height: 16px;
+  min-width: 1px;
+  max-width: min(46vw, 320px);
+  overflow: hidden;
+  font-family: var(--mono);
+  font-size: 11px;
+  line-height: 16px;
+  color: var(--gold);
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.85);
+  white-space: nowrap;
+}
+
+.load-spinner-file-line {
   display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  text-align: right;
+  animation: load-spinner-file-in 0.12s ease-out;
+}
+
+.load-spinner-file-line.is-out {
+  position: absolute;
+  top: 0;
+  right: 0;
+  max-width: 100%;
+  animation: load-spinner-file-out 0.12s ease-out forwards;
+}
+
+@keyframes load-spinner-file-in {
+  from { transform: translateY(100%); }
+}
+
+@keyframes load-spinner-file-out {
+  to { transform: translateY(-100%); }
 }
 
 .load-spinner-ring {
@@ -1108,6 +1164,7 @@ body:has(#library-window.is-collapsed:not([hidden])) #window-toolbar { left: cal
   border-top-color: var(--gold-strong);
   animation: load-spinner-spin 0.8s linear infinite;
   filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.4));
+  flex: none;
 }
 
 @keyframes load-spinner-spin {
