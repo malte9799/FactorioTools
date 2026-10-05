@@ -20,6 +20,7 @@ import { buildVisualLookup, makeConnectorPredicates, activeFluidConnections } fr
 import { buildGrid } from "../src/neighbours/grid.js";
 import { buildFluidNetwork } from "../src/neighbours/fluid.js";
 import { buildHeatNetwork } from "../src/neighbours/heat.js";
+import { buildCargoBayGrid } from "../src/neighbours/cargoBay.js";
 import { collectEntity, type CollectContext } from "../src/draw/collect.js";
 import type { DrawCommand } from "../src/draw/commands.js";
 import { AnimProfileCache, type AnimProfile } from "../src/draw/animProfile.js";
@@ -96,7 +97,7 @@ function contextFor(all: PlacedEntity[]): CollectContext {
     }),
     heatNetwork: buildHeatNetwork(all, (n: string) => lookup.get(n)?.heatConnections),
     ...connectors,
-    platformBoxes: [],
+    cargoBays: buildCargoBayGrid(all, connectors.cargoBayShapeOf),
     animationFrame: 0,
   } as unknown as CollectContext;
 }

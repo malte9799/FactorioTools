@@ -1,5 +1,6 @@
 import type { EntityGraphics, GameData, HeatConnectionPoint, InserterGraphics, PipeConnectionPoint, PlacedEntity, RenderCatalog, WireAttachPoints } from "@factoriotools/engine";
 import { toCardinal, opposite, step, Dir } from "./neighbours/grid.js";
+import type { CargoBayShape } from "./neighbours/cargoBay.js";
 import { isRail, railFootprint } from "./railGeometry.js";
 
 /** One lookup over both GameData (entities with rates) and the RenderCatalog
@@ -447,6 +448,11 @@ export function makeConnectorPredicates(lookup: Map<string, ResolvedVisual>) {
   const isHeatPipeLike = has("heat-pipe");
   const isWallLike = (name: string) => has("wall")(name) || name === "gate";
   const isBeltLike = has("belt");
-  const isPlatformLike = has("platform");
-  return { isPipeLike, isHeatPipeLike, isWallLike, isBeltLike, isPlatformLike };
+  const cargoBayShapeOf = (name: string): CargoBayShape | undefined => {
+    const visual = lookup.get(name);
+    return visual?.graphics?.connector === "cargo-bay"
+      ? { footprint: visual.tileFootprint, surface: visual.graphics.cargoSurface }
+      : undefined;
+  };
+  return { isPipeLike, isHeatPipeLike, isWallLike, isBeltLike, cargoBayShapeOf };
 }

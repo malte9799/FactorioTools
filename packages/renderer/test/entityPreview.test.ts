@@ -6,6 +6,7 @@ import { computeFitBox } from "../src/entityPreview.js";
 import { NeighbourGrid } from "../src/neighbours/grid.js";
 import { FluidNetwork } from "../src/neighbours/fluid.js";
 import { HeatNetwork } from "../src/neighbours/heat.js";
+import { CargoBayGrid } from "../src/neighbours/cargoBay.js";
 import type { DrawCommand } from "../src/draw/commands.js";
 import { hasDataset, requireDataset } from "./dataset.js";
 
@@ -91,7 +92,7 @@ if (!hasDataset()) {
       commands,
       entity,
       visual!,
-      { grid: new NeighbourGrid(), fluidNetwork: new FluidNetwork(), heatNetwork: new HeatNetwork(), isPipeLike: never, isHeatPipeLike: never, isWallLike: never, isBeltLike: never, platformBoxes: [], animationFrame: 0 },
+      { grid: new NeighbourGrid(), fluidNetwork: new FluidNetwork(), heatNetwork: new HeatNetwork(), isPipeLike: never, isHeatPipeLike: never, isWallLike: never, isBeltLike: never, cargoBays: new CargoBayGrid(), animationFrame: 0 },
       1,
     );
     assert.ok(commands.length >= 10, `expected the base+shadow+8 crane parts (>=10 commands), got ${commands.length} — a lower count means the crane parts aren't being collected`);

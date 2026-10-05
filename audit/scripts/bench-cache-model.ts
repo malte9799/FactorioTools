@@ -7,6 +7,7 @@ import { buildVisualLookup, makeConnectorPredicates, activeFluidConnections, eff
 import { buildGrid } from "../../packages/renderer/src/neighbours/grid.js";
 import { buildFluidNetwork } from "../../packages/renderer/src/neighbours/fluid.js";
 import { buildHeatNetwork } from "../../packages/renderer/src/neighbours/heat.js";
+import { buildCargoBayGrid } from "../../packages/renderer/src/neighbours/cargoBay.js";
 import { SpatialIndex } from "../../packages/renderer/src/spatialIndex.js";
 import { collectEntity } from "../../packages/renderer/src/draw/collect.js";
 import { compareDrawCommands, type DrawCommand } from "../../packages/renderer/src/draw/commands.js";
@@ -35,7 +36,8 @@ for (const ex of [...examples].sort((a,b)=>b.entities-a.entities).slice(0,3)) {
   const byId = new Map(entities.map(e=>[e.entityNumber,e]));
   const bb = index.boundingBox!;
 
-  const mkCtx = (f:number):any => ({ grid, fluidNetwork, heatNetwork, ...connectors, platformBoxes: [], animationFrame: f });
+  const cargoBays = buildCargoBayGrid(entities, connectors.cargoBayShapeOf);
+  const mkCtx = (f:number):any => ({ grid, fluidNetwork, heatNetwork, ...connectors, cargoBays, animationFrame: f });
 
   const TODAY = (f:number) => {
     const ids = index.queryRect(bb.minX-4, bb.minY-4, bb.maxX+4, bb.maxY+4);

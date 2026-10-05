@@ -755,33 +755,46 @@ function railSupportGraphics(proto: any): EntityGraphics | undefined {
   return layers.length > 0 ? { layers } : undefined;
 }
 
-/** Cargo hubs and bays declare an array of random appearance variants, each
- *  holding only the structure's edge pieces; the body sits separately under
- *  `animation`. Variant 0 is the static representative. The actual platform
- *  surface comes from `connections` — see platformGraphics below. */
-function variantStackGraphics(proto: any): EntityGraphics | undefined {
-  const gs = proto.graphics_set;
-  const layers: GraphicsLayer[] = [];
-  for (const l of gs?.picture?.[0]?.layers ?? []) {
-    if (l.draw_as_glow || l.blend_mode === "additive") continue;
-    const sprite = toSprite(l);
-    if (sprite) layers.push({ layer: l.draw_as_shadow ? Layer.Shadow : Layer.Object, sprites: sprite });
-  }
-  for (const l of unwrapAll(gs?.animation)) {
-    layers.push({ layer: l.shadow ? Layer.Shadow : Layer.Object, sprites: l.sprite });
-  }
-  const platform = platformGraphics(gs?.connections);
-  if (platform) layers.push(...platform);
-  return layers.length > 0 ? { layers, connector: platform ? "platform" : undefined } : undefined;
+/** The game render layers a cargo hub's art is spread over, as this
+ *  renderer's tiers. Finer than sprite-shapes' RENDER_LAYERS, which folds
+ *  everything between lower-object and object into one tier for every other
+ *  entity: a hub's pieces overlap its neighbours' wholesale, so here the
+ *  game's own order has to hold. */
+const CARGO_RENDER_LAYERS: Record<string, Layer> = {
+  "lower-object-above-shadow": Layer.LowerObjectAboveShadow,
+  "lower-object-overlay": Layer.LowerObjectOverlay,
+  "object-under": Layer.ObjectUnder,
+  object: Layer.Object,
+  "cargo-hatch": Layer.CargoHatch,
+  "above-inserters": Layer.AboveObject,
+};
+
+function cargoLayer(raw: any, renderLayer: string | undefined): Layer {
+  if (raw.draw_as_shadow) return Layer.Shadow;
+  return (renderLayer ? CARGO_RENDER_LAYERS[renderLayer] : undefined) ?? layerOf(renderLayer);
 }
 
-/** The 17 shapes cargo hubs/bays pick between for their floor plating,
- *  keyed by which of their own kind sit adjacent — an auto-tiling system
- *  like walls, but per edge/corner of a whole multi-tile footprint rather
- *  than per tile. Each shape ships 1-4 random-looking variants (this pipeline
- *  always takes variant 0) built from four sub-images layered in a fixed
- *  order, each with its own render_layer. */
-const PLATFORM_SHAPES = [
+/** The sprites of a layered sprite or animation, minus the glow and additive
+ *  ones — those need a blend mode this renderer lacks, and drawn plainly
+ *  they paint a black box over the art beneath. */
+function drawableLayers(source: any): any[] {
+  const raws: any[] = source?.layers ?? (source?.filename ? [source] : []);
+  return raws.filter((l) => !l.draw_as_glow && !l.draw_as_light && l.blend_mode !== "additive");
+}
+
+/** One sprite of a hub's own art: its first frame (idle, hatches shut),
+ *  sorted at the hub's centre whatever its shift, so that within a tier the
+ *  pieces paint in the order the prototype stacks them. */
+function cargoPiece(raw: any, renderLayer: string | undefined, [ox, oy]: [number, number] = [0, 0]): GraphicsLayer | undefined {
+  const sprite = toSprite(raw);
+  if (!sprite) return undefined;
+  const shift: [number, number] = [(sprite.shift?.[0] ?? 0) + ox, (sprite.shift?.[1] ?? 0) + oy];
+  return { layer: cargoLayer(raw, renderLayer), sprites: { ...sprite, columns: undefined, shift }, ySortBias: -shift[1] };
+}
+
+/** The 17 shapes a cargo hub or bay plates its outline and seams with — see
+ *  the renderer's neighbours/cargoBay.ts for which goes where. */
+const CARGO_CONNECTION_SHAPES = [
   "top_wall",
   "right_wall",
   "bottom_wall",
@@ -801,28 +814,84 @@ const PLATFORM_SHAPES = [
   "bridge_crossing",
 ] as const;
 
-function platformGraphics(connections: any): GraphicsLayer[] | undefined {
-  if (!connections) return undefined;
-  // Every shape's variant 0 has the same four sub-images in the same order;
-  // one GraphicsLayer per sub-image position, each keyed by shape name.
-  const bySlot: Record<string, Sprite>[] = [];
-  const slotLayer: Layer[] = [];
-  for (const shape of PLATFORM_SHAPES) {
-    const variant = connections[shape]?.[0];
-    if (!Array.isArray(variant)) return undefined;
-    variant.forEach((sub: any, slot: number) => {
-      const raw = sub.layers?.[0] ?? sub;
-      const sprite = toSprite(raw);
-      if (!sprite) return;
-      (bySlot[slot] ??= {})[shape] = sprite;
-      slotLayer[slot] = layerOf(sub.render_layer, Layer.Object);
+/** Each shape ships a few interchangeable variants, and each variant is a
+ *  stack of sub-images, one per render layer — floor, overlay, under-body,
+ *  body — the last sometimes with a shadow. One GraphicsLayer per position
+ *  in that stack, holding every shape and variant that has art there. */
+function cargoConnectionLayers(connections: any): GraphicsLayer[] {
+  const variants: Record<string, number> = {};
+  const slots = new Map<string, { layer: Layer; sprites: Record<string, Sprite> }>();
+  for (const shape of CARGO_CONNECTION_SHAPES) {
+    const looks: any[] = connections?.[shape] ?? [];
+    if (looks.length === 0) continue;
+    variants[shape] = looks.length;
+    looks.forEach((look: any, variant: number) => {
+      (Array.isArray(look) ? look : [look]).forEach((sub: any, position: number) => {
+        drawableLayers(sub).forEach((raw, index) => {
+          const sprite = toSprite(raw);
+          if (!sprite) return;
+          const layer = cargoLayer(raw, sub.render_layer);
+          const key = `${position}/${layer === Layer.Shadow ? "shadow" : index}`;
+          let slot = slots.get(key);
+          if (!slot) slots.set(key, (slot = { layer, sprites: {} }));
+          slot.sprites[`${shape}.${variant}`] = sprite;
+        });
+      });
     });
   }
-  return bySlot.map((sprites, slot) => ({
-    layer: slotLayer[slot]!,
-    sprites,
-    per: "connection" as const,
-  }));
+  return [...slots.values()].map((slot) => ({ ...slot, per: "cargo-connection" as const, variants }));
+}
+
+/** A cargo hub or bay. `picture` is not a list of looks to choose between
+ *  but one stack: each entry names the render layer its sprites belong to,
+ *  from the floor plating up to the body and the rim round a hatch. On top
+ *  of it come the idle `animation`, the hatches (shut — a hatch's doors
+ *  close over the rim, so they follow the picture), and the connection art
+ *  that joins the entity to its neighbours.
+ *
+ *  A cargo bay carries a second, complete set for space platforms; both are
+ *  emitted, each layer marked with the surface it belongs to. */
+function cargoBayGraphics(proto: any, cargoSurface?: "planet" | "space"): EntityGraphics | undefined {
+  const station = proto.cargo_station_parameters;
+  const hatches: GraphicsLayer[] = [];
+  const addHatch = (graphics: any, renderLayer: string, offset?: [number, number]) => {
+    for (const raw of drawableLayers(graphics)) {
+      const piece = cargoPiece(raw, renderLayer, offset);
+      if (piece) hatches.push(piece);
+    }
+  };
+  // A landing pad's door for logistic robots, set into its body.
+  addHatch(proto.robot_animation, "object");
+  for (const hatch of [...(proto.hatch_definitions ?? []), ...(station?.hatch_definitions ?? [])]) {
+    addHatch(hatch.hatch_graphics, hatch.hatch_render_layer ?? "cargo-hatch", hatch.offset);
+  }
+  for (const giga of station?.giga_hatch_definitions ?? []) {
+    addHatch(giga.hatch_graphics_back, giga.hatch_render_layer_back ?? "higher-object-under");
+    addHatch(giga.hatch_graphics_front, giga.hatch_render_layer_front ?? "higher-object-above");
+  }
+
+  const setLayers = (gs: any): GraphicsLayer[] => {
+    const layers: GraphicsLayer[] = [];
+    for (const entry of [gs?.picture ?? []].flat()) {
+      for (const raw of drawableLayers(entry)) {
+        const piece = cargoPiece(raw, entry.render_layer);
+        if (piece) layers.push(piece);
+      }
+    }
+    for (const raw of drawableLayers(gs?.animation)) {
+      const piece = cargoPiece(raw, gs.animation_render_layer ?? "object");
+      if (piece) layers.push(piece);
+    }
+    return [...layers, ...hatches, ...cargoConnectionLayers(gs?.connections)];
+  };
+
+  const layers = proto.platform_graphics_set
+    ? [
+        ...setLayers(proto.graphics_set).map((l) => ({ ...l, onSpacePlatform: false })),
+        ...setLayers(proto.platform_graphics_set).map((l) => ({ ...l, onSpacePlatform: true })),
+      ]
+    : setLayers(proto.graphics_set);
+  return layers.length > 0 ? { layers, connector: "cargo-bay", cargoSurface } : undefined;
 }
 
 /** The largest y-shift among an entity's body (Object-layer) sprites — the
@@ -1333,10 +1402,14 @@ export function buildRenderCatalog(raw: Raw, locale: LocaleTables, version: stri
   for (const proto of Object.values(raw["rail-support"] ?? {})) {
     add(proto, railSupportGraphics(proto));
   }
-  for (const table of ["cargo-landing-pad", "space-platform-hub", "cargo-bay"]) {
-    for (const proto of Object.values(raw[table] ?? {})) {
-      add(proto, variantStackGraphics(proto));
-    }
+  for (const proto of Object.values(raw["cargo-landing-pad"] ?? {})) {
+    add(proto, cargoBayGraphics(proto, "planet"));
+  }
+  for (const proto of Object.values(raw["space-platform-hub"] ?? {})) {
+    add(proto, cargoBayGraphics(proto, "space"));
+  }
+  for (const proto of Object.values(raw["cargo-bay"] ?? {})) {
+    add(proto, cargoBayGraphics(proto));
   }
   for (const proto of Object.values(raw.inserter ?? {})) {
     add(proto, undefined);
