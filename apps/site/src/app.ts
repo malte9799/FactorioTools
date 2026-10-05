@@ -1,9 +1,6 @@
 import "./style.css";
 import { renderNav, ROUTES } from "./nav.js";
-import { startFaviconCycle } from "./favicon-cycle.js";
 import { mountBlueprintEditor } from "./tools/blueprint-editor/index.js";
-
-startFaviconCycle();
 
 const navRoot = document.getElementById("nav-root")!;
 const toolRoot = document.getElementById("tool-root")!;
