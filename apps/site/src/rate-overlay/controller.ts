@@ -528,7 +528,9 @@ export class RateOverlay {
         issues: this.issues,
         hover: this.enabled && this.settings.layers.hover ? this.hover : undefined,
         icons: getSharedIconAtlas(),
-        showPorts: this.settings.layers.ports || this.forcePorts || this.portsOnly,
+        // The calculator's own port layer only counts while it's open; alt
+        // mode on its own shows just the ports that are switched on.
+        showPorts: this.enabled && (this.settings.layers.ports || this.forcePorts) ? "all" : this.portsOnly ? "enabled" : "none",
         altDisplays: this.altDisplays && this.hasAltDisplays,
         highlightPort: this.highlightPort ?? this.editingPort,
       });
