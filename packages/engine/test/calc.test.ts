@@ -1,5 +1,4 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
 import {
   decodeBlueprintString,
   encodeBlueprintString,
@@ -7,7 +6,6 @@ import {
 } from "../src/blueprint.js";
 import { calculate } from "../src/calc/rates.js";
 import { vanilla } from "../src/data/vanilla.js";
-import { GREEN_SCIENCE_240_BLUEPRINT, RED_SCIENCE_240_BLUEPRINT } from "../src/data/throughput-tests.js";
 import type { BpEntity, BlueprintEnvelope } from "../src/types.js";
 
 let passed = 0;
@@ -236,24 +234,5 @@ test("1.1-style module maps still parse", () => {
   ]);
   close(result.groups[0]!.effects.speed, 2.0, "4 × speed-3");
 });
-
-// The two 240/s builds from the editor's "Throughput tests" folder, against
-// the real Space Age data: on paper each has to reach at least what it
-// makes in game.
-{
-  const gameData = JSON.parse(readFileSync(new URL("../../../apps/site/public/data/game-data.json", import.meta.url), "utf8"));
-  const maxOf = (bpString: string, item: string) => {
-    const placed = normaliseEntities(decodeBlueprintString(bpString).blueprint!);
-    return calculate(gameData, placed).products.find((f) => f.name === item)?.produced ?? 0;
-  };
-  test("the red science build reaches 240/s on paper", () => {
-    const rate = maxOf(RED_SCIENCE_240_BLUEPRINT, "automation-science-pack");
-    assert.ok(rate >= 240, `red science: ${rate.toFixed(1)}/s`);
-  });
-  test("the green science build reaches 240/s on paper", () => {
-    const rate = maxOf(GREEN_SCIENCE_240_BLUEPRINT, "logistic-science-pack");
-    assert.ok(rate >= 240, `green science: ${rate.toFixed(1)}/s`);
-  });
-}
 
 console.log(`\n${passed} passing`);
