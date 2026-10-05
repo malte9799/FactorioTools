@@ -2348,6 +2348,10 @@ canvas.select-mode {
 .inserter-gui-side .circuit-indent { margin-left: 0; }
 .inserter-gui-side .circuit-output-choice { flex-direction: row; gap: 14px; }
 
+/* Any other wired entity: its normal 300px column plus the circuit column. */
+#properties-window:has(.entity-gui-layout.has-side) { width: 560px; }
+.entity-gui-layout .inserter-gui-main .entity-preview { height: auto; margin-bottom: 8px; }
+
 @media (max-width: 760px) {
   .inserter-gui.has-side { grid-template-columns: minmax(0, 1fr); }
 }

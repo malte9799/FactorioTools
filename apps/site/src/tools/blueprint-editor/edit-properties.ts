@@ -235,9 +235,11 @@ export function buildPropertiesPanel(
   const splitter = data.splitters?.[entity.name];
   let main = container;
   let side: HTMLElement | undefined;
-  if (inserter || splitter) {
+  // Every other wired entity (machines, belts, ...) gets the same two-column
+  // layout, with its usual rows in the main column.
+  if (inserter || splitter || (circuit?.wired && !circuitFirst)) {
     const layout = document.createElement("div");
-    layout.className = splitter ? "inserter-gui splitter-gui" : "inserter-gui";
+    layout.className = splitter ? "inserter-gui splitter-gui" : inserter ? "inserter-gui" : "inserter-gui entity-gui-layout";
     main = document.createElement("div");
     main.className = "inserter-gui-main";
     layout.appendChild(main);
@@ -292,7 +294,7 @@ export function buildPropertiesPanel(
   header.appendChild(nameEl);
   // The window's title already names it in a circuit GUI, an inserter's and
   // a splitter's.
-  if (!circuitFirst && !inserter && !splitter) container.appendChild(header);
+  if (!circuitFirst && !inserter && !splitter) main.appendChild(header);
 
   if (machine) {
     const bottleneck = findBottleneck(entity.entityNumber, bottlenecks);
@@ -300,7 +302,7 @@ export function buildPropertiesPanel(
     const statusRow = document.createElement("div");
     statusRow.className = `entity-gui-status status-${status.kind}`;
     statusRow.innerHTML = `<span class="status-dot"></span>${status.text}`;
-    container.appendChild(statusRow);
+    main.appendChild(statusRow);
   }
 
   // Recipe row: current recipe icon + a gear button that opens the
@@ -329,7 +331,7 @@ export function buildPropertiesPanel(
     gearButton.textContent = "⚙";
     recipeRow.appendChild(gearButton);
 
-    container.appendChild(recipeRow);
+    main.appendChild(recipeRow);
 
     gearButton.addEventListener("click", () => callbacks.onOpenRecipePicker());
   }
@@ -363,7 +365,7 @@ export function buildPropertiesPanel(
       cell.appendChild(slotButton);
       slotsRow.appendChild(cell);
     }
-    container.appendChild(slotsRow);
+    main.appendChild(slotsRow);
   }
 
   // Inserter-only settings: filters (whitelist/blacklist + up to 5 item
