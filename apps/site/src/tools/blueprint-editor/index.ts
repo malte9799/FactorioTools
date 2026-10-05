@@ -2142,9 +2142,9 @@ export function mountBlueprintEditor(root: HTMLElement): () => void {
     // itself is declared further down (only ever CALLED once actual sprite
     // loads happen, well after that point in module init, so no temporal-
     // dead-zone issue registering the callback here first). */
-    renderer.onLoadingChange((loading, file) => {
+    renderer.onLoadingChange((loading, group) => {
       setSpinnerReason("sprite-load", loading);
-      if (file) setSpinnerFile(file);
+      if (group) setSpinnerFile(group);
     });
   }
   wireEditCallbacks();
@@ -2755,13 +2755,15 @@ export function mountBlueprintEditor(root: HTMLElement): () => void {
     }
   }
 
-  // The sheet the sprite atlas is fetching right now, as a one-line ticker
+  // What the sprite atlas is fetching right now — the building, not the
+  // individual sheet, so a wall's sixteen sheets read as one "wall" rather
+  // than sixteen names flashing past — as a one-line ticker
   // beside the ring: each new name rises in from below while the one it
   // replaces slides out the top. Left in place when loading finishes so
   // the last name rides out with the badge instead of blanking first.
   const SPINNER_LEAVE_MS = 260;
   const SPINNER_MIN_VISIBLE_MS = 700;
-  const SPINNER_FILE_HOLD_MS = 140;
+  const SPINNER_FILE_HOLD_MS = 220;
   let spinnerShownAt = 0;
   let spinnerHideTimer: number | undefined;
   let spinnerFileTimer: number | undefined;

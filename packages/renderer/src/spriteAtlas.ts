@@ -21,6 +21,17 @@ function sheetUrl(modPath: string): string {
   return ENTITY_SPRITE_BASE + basename;
 }
 
+/** What a sheet belongs to, for the loading badge: the folder Factorio
+ *  keeps a prototype's art in, e.g. "transport-belt" for every sheet under
+ *  "__base__/graphics/entity/transport-belt/", however deep. Falls back to
+ *  the sheet's own name where there is no such folder. */
+function sheetGroup(modPath: string): string {
+  const parts = modPath.split("/");
+  const graphics = parts.indexOf("graphics");
+  const folder = graphics >= 0 && parts.length > graphics + 3 ? parts[graphics + 2] : undefined;
+  return folder ?? parts[parts.length - 1]!.replace(/\.png$/, "");
+}
+
 export class SpriteAtlas {
   // Keyed by the raw modPath (e.g. "__base__/graphics/entity/foo/foo.png"),
   // not the derived local URL — get() is called for every visible entity
@@ -44,15 +55,16 @@ export class SpriteAtlas {
   // "every sheet ever requested this session", which loading.size alone
   // conflates (entries are never removed once settled).
   private pendingCount = 0;
-  private onPendingChange: ((pending: number, file: string | undefined) => void) | null = null;
-  // Basenames of the sheets fetching/decoding right now (started, not just
-  // queued), in start order — the newest one is what the loading badge
-  // names. A Set so a sheet settling out of order drops cleanly.
-  private inFlight = new Set<string>();
+  private onPendingChange: ((pending: number, group: string | undefined) => void) | null = null;
+  // The sheets fetching/decoding right now (started, not just queued), in
+  // start order, each mapped to its sheetGroup() — the newest one's group
+  // is what the loading badge names. Keyed per sheet so one settling out
+  // of order drops cleanly while its siblings keep the group alive.
+  private inFlight = new Map<string, string>();
 
   private notifyPending(): void {
     let newest: string | undefined;
-    for (const file of this.inFlight) newest = file;
+    for (const group of this.inFlight.values()) newest = group;
     this.onPendingChange?.(this.pendingCount, newest);
   }
   // Chrome/Firefox appear to seriously contend when many large (some
@@ -91,12 +103,12 @@ export class SpriteAtlas {
 
   /** Subscribes to pendingCount changes — called with the new count every
    *  time a sheet load is requested, starts or settles, along with the
-   *  basename of the sheet most recently started and still in flight
+   *  sheetGroup() of the sheet most recently started and still in flight
    *  (undefined when none is). Only one subscriber at a time
    *  (render.ts's own small loading badge); a second call replaces the
    *  first, matching every other single-callback setter in this
    *  codebase (onHover, onPlace, etc). */
-  setOnPendingChange(callback: ((pending: number, file: string | undefined) => void) | null): void {
+  setOnPendingChange(callback: ((pending: number, group: string | undefined) => void) | null): void {
     this.onPendingChange = callback;
   }
 
@@ -116,18 +128,17 @@ export class SpriteAtlas {
     if (existing) return existing;
     if (!this.loading.has(modPath)) {
       const url = sheetUrl(modPath);
-      const file = url.slice(ENTITY_SPRITE_BASE.length);
       this.pendingCount++;
       this.notifyPending();
       const settle = () => {
         this.pendingCount--;
-        this.inFlight.delete(file);
+        this.inFlight.delete(modPath);
         this.notifyPending();
         this.decodeSettled();
       };
       const promise = new Promise<SpriteSurface>((resolve, reject) => {
         this.runOrQueueDecode(() => {
-          this.inFlight.add(file);
+          this.inFlight.set(modPath, sheetGroup(modPath));
           this.notifyPending();
           // fetch + createImageBitmap rather than <img>: this decodes once,
           // on a worker thread, and yields a surface drawImage can sample

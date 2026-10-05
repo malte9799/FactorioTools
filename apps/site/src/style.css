@@ -1116,8 +1116,8 @@ body:has(#library-window.is-collapsed:not([hidden])) #window-toolbar { left: cal
 
 /* Name of the sheet loading right now — a one-line ticker, each name
    rising in from below and the one it replaces sliding out the top.
-   Same timing and no fade on either, so the two travel as one flush
-   strip with no blank gap between them. */
+   Same timing on both, so the two travel as one flush strip, each
+   fading as it crosses the edge. */
 .load-spinner-file {
   position: relative;
   height: 16px;
@@ -1137,7 +1137,7 @@ body:has(#library-window.is-collapsed:not([hidden])) #window-toolbar { left: cal
   overflow: hidden;
   text-overflow: ellipsis;
   text-align: right;
-  animation: load-spinner-file-in 0.12s ease-out;
+  animation: load-spinner-file-in 0.18s ease-out;
 }
 
 .load-spinner-file-line.is-out {
@@ -1145,15 +1145,15 @@ body:has(#library-window.is-collapsed:not([hidden])) #window-toolbar { left: cal
   top: 0;
   right: 0;
   max-width: 100%;
-  animation: load-spinner-file-out 0.12s ease-out forwards;
+  animation: load-spinner-file-out 0.18s ease-out forwards;
 }
 
 @keyframes load-spinner-file-in {
-  from { transform: translateY(100%); }
+  from { transform: translateY(100%); opacity: 0; }
 }
 
 @keyframes load-spinner-file-out {
-  to { transform: translateY(-100%); }
+  to { transform: translateY(-100%); opacity: 0; }
 }
 
 .load-spinner-ring {
