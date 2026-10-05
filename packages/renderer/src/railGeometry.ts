@@ -75,6 +75,70 @@ export function iconName(name: string): string {
   return isRail(name) && railShape(name) !== "ramp" ? "rail" : name;
 }
 
+/** How far above its ground position the deck is drawn, in tiles (the
+ *  elevated rail sprites' own shift). Hovering, selecting and planning
+ *  elevated track all happen up here, where the track is seen. */
+export const RAIL_DECK_HEIGHT = 3;
+
+/** rail-support's and rail-ramp's support_range: how much track either side
+ *  of a support, and beyond a ramp's top, stays held up. */
+export const SUPPORT_RANGE = 11;
+export const RAMP_SUPPORT_RANGE = 9;
+
+/** The facing of a rail support under track that runs along `dir`. A support
+ *  looks the same from both sides (back_equals_front), so it has 8 facings in
+ *  22.5° steps — the 16-way direction folded in half. */
+export function supportDirection(dir: number): number {
+  return ((Math.floor(dir) % 8) + 8) % 8;
+}
+
+/** True when a support facing `supportDir` carries track running along `dir`. */
+export function supportHolds(supportDir: number, dir: number): boolean {
+  return supportDirection(supportDir) === supportDirection(dir);
+}
+
+/** Half the side of a support's collision box (2.78 square), which turns
+ *  with the support. */
+const SUPPORT_HALF = 1.39;
+
+/** True when a support's turned collision box overlaps an axis-aligned box. */
+export function supportHitsBox(
+  support: { x: number; y: number; direction: number },
+  box: { left: number; top: number; right: number; bottom: number },
+): boolean {
+  const a = (supportDirection(support.direction) * Math.PI) / 8;
+  const ux = Math.cos(a);
+  const uy = Math.sin(a);
+  const hw = (box.right - box.left) / 2;
+  const hh = (box.bottom - box.top) / 2;
+  const dx = (box.left + box.right) / 2 - support.x;
+  const dy = (box.top + box.bottom) / 2 - support.y;
+  // Separating axes: the box's two, then the support's two.
+  const spread = SUPPORT_HALF * (Math.abs(ux) + Math.abs(uy));
+  if (Math.abs(dx) >= hw + spread || Math.abs(dy) >= hh + spread) return false;
+  if (Math.abs(dx * ux + dy * uy) >= SUPPORT_HALF + hw * Math.abs(ux) + hh * Math.abs(uy)) return false;
+  if (Math.abs(-dx * uy + dy * ux) >= SUPPORT_HALF + hw * Math.abs(uy) + hh * Math.abs(ux)) return false;
+  return true;
+}
+
+/** Collision boxes sit a little inside the tiles they fill; a tile counts as
+ *  under a support when one that deep into it would be hit. */
+const TILE_INSET = 0.1;
+
+/** World tiles (top-left corners) a support's collision box reaches into:
+ *  a 4×4 block for the cardinal facings, a diamond for the diagonal ones. */
+export function supportTiles(support: { x: number; y: number; direction: number }): [number, number][] {
+  const out: [number, number][] = [];
+  const x0 = Math.floor(support.x);
+  const y0 = Math.floor(support.y);
+  for (let ty = y0 - 3; ty <= y0 + 2; ty++) {
+    for (let tx = x0 - 3; tx <= x0 + 2; tx++) {
+      if (supportHitsBox(support, { left: tx + TILE_INSET, top: ty + TILE_INSET, right: tx + 1 - TILE_INSET, bottom: ty + 1 - TILE_INSET })) out.push([tx, ty]);
+    }
+  }
+  return out;
+}
+
 export function isElevatedRail(name: string): boolean {
   return name.startsWith("elevated-") && name in SHAPE_OF;
 }
@@ -317,12 +381,15 @@ export interface RailSlot {
    *  one signal — see slotGroup. */
   ex?: number;
   ey?: number;
+  /** True for a signal slot beside elevated track: the signal stands on
+   *  the deck (the blueprint's rail_layer). */
+  elevated?: boolean;
 }
 
 /** One side of one rail joint: the spot a single signal takes, whichever of
  *  its two slots that signal stands on. */
 export function slotGroup(slot: RailSlot): string {
-  return `${slot.ex},${slot.ey},${slot.direction}`;
+  return `${slot.ex},${slot.ey},${slot.direction}${slot.elevated ? ",e" : ""}`;
 }
 
 /** The two signal slots one rail end offers, one per travel direction:
@@ -402,7 +469,8 @@ export function nearestSlot(slots: RailSlot[], x: number, y: number, reach: numb
 /** The box a rail is hovered and selected by, relative to its position:
  *  centred between its two ends and turned to lie along them, the size of
  *  the prototype's collision box (1.5 wide and as long as the track; a
- *  cardinal straight is a 2×2 square, a ramp 3.6 × 15.6). */
+ *  cardinal straight is a 2×2 square, a ramp 3.6 × 15.6). Elevated track's
+ *  box is up on the deck, where the track is drawn. */
 export function railHighlightBox(name: string, direction: number): { cx: number; cy: number; w: number; h: number; angle: number } {
   const ends = railEnds(name, direction);
   if (ends.length !== 2) return { cx: 0, cy: 0, w: 2, h: 2, angle: 0 };
@@ -411,7 +479,7 @@ export function railHighlightBox(name: string, direction: number): { cx: number;
   const cardinalStraight = shape === "straight" && Math.floor(direction / 2) % 2 === 0;
   return {
     cx: (a.dx + b.dx) / 2,
-    cy: (a.dy + b.dy) / 2,
+    cy: (a.dy + b.dy) / 2 - (isElevatedRail(name) ? RAIL_DECK_HEIGHT : 0),
     w: shape === "ramp" ? 3.6 : cardinalStraight ? 2 : 1.5,
     h: shape === "ramp" ? 15.6 : railLength(name, direction),
     // Clockwise from vertical, the way the box's long side runs.

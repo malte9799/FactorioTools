@@ -1,5 +1,6 @@
 import { Layer, type FluidPointRef, type GraphicsLayer, type InserterGraphics, type PlacedEntity, type Sprite } from "@factoriotools/engine";
 import type { ResolvedVisual } from "../entityLookup.js";
+import { RAIL_DECK_HEIGHT } from "../railGeometry.js";
 import { dir4Name, dir8Name, toCardinal, opposite, splitterLaneCells, step, Dir, type Cardinal, type NeighbourGrid } from "../neighbours/grid.js";
 import { classifyPipe } from "../neighbours/pipe.js";
 import { classifyWall } from "../neighbours/wall.js";
@@ -326,7 +327,8 @@ function axisIndex(axis: GraphicsLayer["column"], frame: EntityFrame): number {
     // 16-row grid, one row per placement facing).
     case "direction16": return frame.rawDirection;
     case "direction16Grid": {
-      const index = ((frame.rawDirection % 16) + 16) % 16;
+      const count = axis.count ?? 16;
+      const index = ((frame.rawDirection % count) + count) % count;
       return axis.axis === "column" ? index % axis.lineLength : Math.floor(index / axis.lineLength);
     }
   }
@@ -708,4 +710,15 @@ export function collectEntity(
       }
     }
   });
+
+  // A signal on elevated track is drawn with its ground art up on the deck,
+  // over the track it stands beside; its shadow stays on the ground.
+  if (entity.railLayer === "elevated") {
+    for (let i = first; i < out.length; i++) {
+      const c = out[i]!;
+      if (c.layer === Layer.Shadow) continue;
+      c.dy -= RAIL_DECK_HEIGHT;
+      c.layer = Layer.ElevatedRailMetal;
+    }
+  }
 }

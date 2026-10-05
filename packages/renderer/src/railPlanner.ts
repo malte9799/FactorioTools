@@ -15,15 +15,22 @@ import {
   railName,
   railShape,
   railTiles,
+  RAMP_SUPPORT_RANGE,
+  SUPPORT_RANGE,
+  supportDirection,
   type RailEnd,
   type RailPiece,
   type RailShape,
 } from "./railGeometry.js";
 
-/** A support carries elevated track this far either side (rail-support's
- *  support_range); a ramp carries its own top end this far. */
-const SUPPORT_RANGE = 11;
-const RAMP_SUPPORT_RANGE = 9;
+/** What a piece stands on, which decides what it collides with: track on
+ *  the ground, track up on the deck, or a ramp, which is solid from the
+ *  ground to the deck. */
+export type RailLevel = "ground" | "elevated" | "ramp";
+
+export function railLevel(name: string): RailLevel {
+  return name === "rail-ramp" ? "ramp" : isElevatedRail(name) ? "elevated" : "ground";
+}
 
 /** Track pieces per layer, each with its prototype's extra_planner_penalty. */
 const SHAPES: { shape: Exclude<RailShape, "ramp">; penalty: number }[] = [
@@ -95,8 +102,11 @@ export interface PlanRequest {
   target: { x: number; y: number };
   /** The layer the track should finish on; ramps are inserted to get there. */
   targetElevated: boolean;
-  /** True when a piece may not cover this tile on this layer. */
-  blocked: (tx: number, ty: number, elevated: boolean) => boolean;
+  /** True when a piece on this level may not cover this tile. */
+  blocked: (tx: number, ty: number, level: RailLevel) => boolean;
+  /** True for a piece that is already placed: the plan runs along it
+   *  rather than being blocked by it. */
+  exists?: (piece: RailPiece) => boolean;
   maxNodes?: number;
   /** Track length one placement may lay. Within it the search finds the
    *  track that gets closest to the target, so a far cursor gets a plan
@@ -170,8 +180,10 @@ export function planRail(req: PlanRequest): RailPiece[] {
   const maxNodes = req.maxNodes ?? 20000;
   const maxLength = req.maxLength ?? Infinity;
   const dist = (x: number, y: number) => Math.hypot(target.x - x, target.y - y);
-  const pieceFree = (piece: RailPiece, elevatedPiece: boolean) => {
-    for (const [tx, ty] of railTiles(piece)) if (blocked(tx, ty, elevatedPiece)) return false;
+  const pieceFree = (piece: RailPiece) => {
+    if (req.exists?.(piece)) return true;
+    const level = railLevel(piece.name);
+    for (const [tx, ty] of railTiles(piece)) if (blocked(tx, ty, level)) return false;
     return true;
   };
 
@@ -213,9 +225,7 @@ export function planRail(req: PlanRequest): RailPiece[] {
       // A ramp only ever takes the track toward the layer it should end on.
       if (isRamp && node.elevated === targetElevated) continue;
       const piece: RailPiece = { name: step.name, x: node.x + step.dx, y: node.y + step.dy, direction: step.direction };
-      // Elevated track only collides with what stands on the ground at its
-      // supports, which are placed afterwards; a ramp sits on the ground.
-      if (!pieceFree(piece, isElevatedRail(step.name))) continue;
+      if (!pieceFree(piece)) continue;
       const x = node.x + step.ex;
       const y = node.y + step.ey;
       const key = `${x},${y},${step.heading},${step.elevated ? 1 : 0}`;
@@ -248,76 +258,95 @@ export function planEnd(start: RailEnd, pieces: RailPiece[]): RailEnd {
   return at;
 }
 
-/** Rail supports to carry a run of planned elevated track: one at every
- *  end where the track would otherwise pass out of reach of the last
- *  support (or the ramp it climbed out of). `supported` says whether an
- *  existing support or ramp already holds the start; `blocked` rejects an
- *  end whose support would land on something. */
-export function supportsFor(
-  start: RailEnd,
-  pieces: RailPiece[],
-  supported: (x: number, y: number) => boolean,
-  blocked: (x: number, y: number, direction: number) => boolean,
-): { supports: RailPiece[]; covered: boolean } {
-  const out: RailPiece[] = [];
-  // False once some stretch of deck can't be held up — every spot a support
-  // could stand on along it is taken.
+/** What already holds planned elevated track up, and where a support may go. */
+export interface SupportSite {
+  /** How much further the deck is already held at the plan's start, by a
+   *  support or ramp on the track it continues from. Negative when nothing
+   *  holds it. */
+  startReach: number;
+  /** True when a placed support at this joint carries track running along `dir`. */
+  supported: (x: number, y: number, dir: number) => boolean;
+  /** True when a support for track running along `dir` can't stand at this joint. */
+  blocked: (x: number, y: number, dir: number) => boolean;
+}
+
+/** Rail supports to carry planned track's elevated stretches. Every point
+ *  of the deck has to lie within support_range of a support along the
+ *  track, or within a ramp's (shorter) range of its top. Supports stand
+ *  under the joints between pieces; as few as possible are added, each as
+ *  far along as it can go. `covered` is false when some stretch can't be
+ *  held up because every joint near it is blocked. */
+export function supportsFor(start: RailEnd, pieces: RailPiece[], site: SupportSite): { supports: RailPiece[]; covered: boolean } {
+  const supports: RailPiece[] = [];
   let covered = true;
-  let at = start;
-  // Track length since the last thing holding the deck up, and how far that
-  // thing reaches.
-  let since = 0;
-  let reach = start.elevated && supported(start.x, start.y) ? SUPPORT_RANGE : -1;
-  let candidate: RailEnd | undefined;
-  let candidateSince = 0;
-  const place = (end: RailEnd) => {
-    out.push({ name: "rail-support", x: end.x, y: end.y, direction: end.dir % 8 });
-  };
-  for (const p of pieces) {
-    const next = planEnd(at, [p]);
-    const len = railLength(p.name, p.direction);
-    if (railShape(p.name) === "ramp") {
-      // Climbing out of a ramp: its top end is held for RAMP_SUPPORT_RANGE.
-      since = 0;
-      reach = next.elevated ? RAMP_SUPPORT_RANGE : -1;
-      candidate = undefined;
-      at = next;
-      continue;
-    }
-    if (!isElevatedRail(p.name)) {
-      at = next;
-      continue;
-    }
-    if (reach < 0) {
-      // Unsupported start: hold it up right where the deck begins.
-      if (!blocked(at.x, at.y, at.dir)) place(at);
-      else covered = false;
-      reach = SUPPORT_RANGE;
-      since = 0;
-    }
-    since += len;
-    // The far side of this piece must stay within reach of the last support
-    // AND of the next one; a support every 2 * range keeps both true.
-    if (since > reach + SUPPORT_RANGE - 1) {
-      if (candidate) {
-        place(candidate);
-        since -= candidateSince;
-        reach = SUPPORT_RANGE;
-        candidate = undefined;
-      } else if (since > reach + SUPPORT_RANGE) {
-        covered = false;
+
+  /** One unbroken stretch of deck: its joints by distance along it, and the
+   *  parts something already holds. */
+  interface Run {
+    joints: { end: RailEnd; pos: number; free: boolean }[];
+    held: [number, number][];
+    length: number;
+  }
+  const finish = (run: Run) => {
+    const held = run.held;
+    for (const j of run.joints) {
+      if (site.supported(j.end.x, j.end.y, j.end.dir)) {
+        held.push([j.pos - SUPPORT_RANGE, j.pos + SUPPORT_RANGE]);
+        j.free = false;
       }
     }
-    if (!blocked(next.x, next.y, next.dir)) {
-      candidate = next;
-      candidateSince = since;
+    for (;;) {
+      // The first point of the deck nothing holds yet.
+      held.sort((a, b) => a[0] - b[0]);
+      let need = 0;
+      for (const [lo, hi] of held) {
+        if (lo > need + 1e-6) break;
+        need = Math.max(need, hi);
+      }
+      if (need >= run.length - 1e-6) return;
+      let pick: Run["joints"][number] | undefined;
+      for (const j of run.joints) {
+        if (!j.free || j.pos > need + SUPPORT_RANGE + 1e-6 || j.pos + SUPPORT_RANGE <= need + 1e-6) continue;
+        if (!pick || j.pos > pick.pos) pick = j;
+      }
+      if (!pick) {
+        covered = false;
+        return;
+      }
+      pick.free = false;
+      held.push([pick.pos - SUPPORT_RANGE, pick.pos + SUPPORT_RANGE]);
+      supports.push({ name: "rail-support", x: pick.end.x, y: pick.end.y, direction: supportDirection(pick.end.dir) });
     }
+  };
+
+  let at = start;
+  let run: Run | undefined;
+  let previous: RailPiece | undefined;
+  for (const p of pieces) {
+    const next = planEnd(at, [p]);
+    if (isElevatedRail(p.name)) {
+      if (!run) {
+        run = { joints: [], held: [], length: 0 };
+        const fromRamp = previous !== undefined && railShape(previous.name) === "ramp";
+        if (fromRamp) run.held.push([-Infinity, RAMP_SUPPORT_RANGE]);
+        else if (!previous && site.startReach > 0) run.held.push([-Infinity, site.startReach]);
+        // A ramp's top is the ramp itself: no support fits under it.
+        run.joints.push({ end: at, pos: 0, free: !fromRamp && !site.blocked(at.x, at.y, at.dir) });
+      }
+      run.length += railLength(p.name, p.direction);
+      run.joints.push({ end: next, pos: run.length, free: !site.blocked(next.x, next.y, next.dir) });
+    } else if (run) {
+      // The deck ends at a ramp back down, which holds its own top.
+      if (railShape(p.name) === "ramp") {
+        run.held.push([run.length - RAMP_SUPPORT_RANGE, Infinity]);
+        run.joints[run.joints.length - 1]!.free = false;
+      }
+      finish(run);
+      run = undefined;
+    }
+    previous = p;
     at = next;
   }
-  // Leave the far end of the run held up too.
-  if (reach >= 0 && since > reach) {
-    if (candidate) place(candidate);
-    else covered = false;
-  }
-  return { supports: out, covered };
+  if (run) finish(run);
+  return { supports, covered };
 }

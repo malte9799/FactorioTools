@@ -119,7 +119,10 @@ for (const [name, entry] of Object.entries(rails.entities)) {
   for (const sheet of sheetsOf(entry.graphics)) {
     const basename = claimBasename(sheet);
     files.add(sheet);
-    const src = path.join(spriteRoot, sheet);
+    // An export keeps the mod paths as written (__base__/…); a Factorio
+    // data directory names the same folders without the underscores.
+    const exported = path.join(spriteRoot, sheet);
+    const src = existsSync(exported) ? exported : path.join(spriteRoot, sheet.replace(/^__(.+?)__/, "$1"));
     const dest = path.join(SPRITE_OUT_DIR, basename);
     if (existsSync(dest)) continue;
     if (!existsSync(src)) throw new Error(`missing sprite sheet: ${src}`);
