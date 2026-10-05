@@ -965,6 +965,15 @@ export interface BpControlBehavior {
   stack_control_input_signal?: BpSignalId;
   /** Belts: read contents (mode 0 pulse, 1 hold, 2 entire belt). */
   circuit_contents_read_mode?: number;
+  /** Splitters: the network picks the input side, the output side (each by
+   *  a condition per side) and the filter. */
+  set_input_side?: boolean;
+  input_left_condition?: BpCircuitCondition;
+  input_right_condition?: BpCircuitCondition;
+  set_output_side?: boolean;
+  output_left_condition?: BpCircuitCondition;
+  output_right_condition?: BpCircuitCondition;
+  set_filter?: boolean;
   /** Crafting machines and containers. */
   read_contents?: boolean;
   read_working?: boolean;

@@ -2488,6 +2488,32 @@ canvas.select-mode {
 .inserter-gui-row.is-off .spoil-priority-option,
 .inserter-gui-row.is-off button { cursor: default; }
 
+/* Splitter window: the inserter's layout, with a wider circuit column for
+   its per-side condition rows. */
+#properties-window:has(.splitter-gui.has-side) { width: 770px; }
+.splitter-gui.has-side { grid-template-columns: minmax(0, 1fr) 276px; }
+.splitter-gui .entity-gui-status { margin-bottom: 8px; }
+.splitter-gui-row { justify-content: flex-start; gap: 22px; }
+.splitter-gui-row .entity-gui-checkbox-row { min-width: 132px; }
+.splitter-gui-row .entity-gui-checkbox-row:has(input:disabled) { cursor: default; }
+
+.splitter-side-label { color: var(--text-dim); cursor: pointer; }
+.splitter-side-label.is-active { color: var(--gold-strong); font-weight: 600; }
+.splitter-side-switch.is-neutral::after { left: 10px; }
+.splitter-side-row.is-off > * { opacity: 0.45; }
+.splitter-side-row.is-off .splitter-side-label:hover { opacity: 1; }
+.splitter-side-row.is-off button { cursor: default; }
+
+.splitter-filter { display: flex; align-items: center; gap: 10px; margin-left: auto; }
+
+.circuit-side-row { display: flex; align-items: center; gap: 8px; }
+.circuit-side-row .circuit-label { width: 38px; color: var(--text); }
+.circuit-side-row.is-off { opacity: 0.45; }
+
+@media (max-width: 760px) {
+  .splitter-gui.has-side { grid-template-columns: minmax(0, 1fr); }
+}
+
 @media (prefers-reduced-motion: reduce) {
   * { transition-duration: 0ms !important; }
 }
