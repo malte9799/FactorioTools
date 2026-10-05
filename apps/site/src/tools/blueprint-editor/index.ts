@@ -37,6 +37,7 @@ import { buildLibrarySidebar } from "./library-sidebar.js";
 import { buildQuickbar, readAltLayers, writeAltLayers, type AltLayers, type QuickbarHandle, type QuickbarItem } from "./quickbar.js";
 import { buildGridMenu } from "./grid-menu.js";
 import { BlueprintLinkError, looksLikeBlueprintString, parseBlueprintLink, resolveBlueprintLink, SHARE_TARGETS } from "./blueprint-links.js";
+import { BLUEPRINT_FILE_ACCEPT, BlueprintFileError, readBlueprintFile } from "./blueprint-file.js";
 import { listSaved, replaceContentsInLibrary, saveFailureMessage, saveToLibrary } from "./blueprint-library.js";
 import { RateOverlay } from "../../rate-overlay/controller.js";
 import { setCurrentBlueprint, EDITOR_AUTOSAVE_KEY, readAutosave } from "../../current-blueprint.js";
@@ -294,6 +295,8 @@ const TEMPLATE = `
 
   <div id="import-menu" class="toolbar-menu" role="menu" hidden>
     <button type="button" role="menuitem" id="import-clipboard" class="toolbar-menu-item">Import from clipboard</button>
+    <button type="button" role="menuitem" id="import-file" class="toolbar-menu-item" title="A text file holding a blueprint string — or drop one on the editor">Import from file…</button>
+    <input id="import-file-input" type="file" accept="${BLUEPRINT_FILE_ACCEPT}" hidden />
     <form id="import-link-form" class="toolbar-menu-link">
       <input id="import-link" type="text" placeholder="Link or blueprint string…" aria-label="Blueprint link"
         autocomplete="off" spellcheck="false" />
@@ -3265,6 +3268,43 @@ export function mountBlueprintEditor(root: HTMLElement): () => void {
       setStatus(err instanceof BlueprintLinkError ? err.message : "Couldn't import from that link.", "error");
     }
   }
+
+  async function importFromFile(file: File): Promise<void> {
+    try {
+      const content = await readBlueprintFile(file);
+      if (content.kind === "link") await importFromLink(content.value);
+      else await importText(content.value);
+    } catch (err) {
+      setStatus(err instanceof BlueprintFileError ? err.message : `Couldn't read ${file.name}.`, "error");
+    }
+  }
+
+  const importFileInput = $<HTMLInputElement>("#import-file-input");
+  $("#import-file").addEventListener("click", () => {
+    setImportMenuOpen(false);
+    importFileInput.click();
+  }, { signal });
+  importFileInput.addEventListener("change", () => {
+    const file = importFileInput.files?.[0];
+    // Cleared so picking the same file again still fires "change".
+    importFileInput.value = "";
+    if (file) void importFromFile(file);
+  }, { signal });
+
+  // A file dragged from the desktop onto the editor imports the same way.
+  // Only file drags are claimed; anything else keeps the browser default.
+  const isFileDrag = (e: DragEvent): boolean => e.dataTransfer?.types.includes("Files") ?? false;
+  window.addEventListener("dragover", (e) => {
+    if (!isFileDrag(e)) return;
+    e.preventDefault();
+    e.dataTransfer!.dropEffect = "copy";
+  }, { signal });
+  window.addEventListener("drop", (e) => {
+    if (!isFileDrag(e)) return;
+    e.preventDefault();
+    const file = e.dataTransfer!.files[0];
+    if (file) void importFromFile(file);
+  }, { signal });
 
   $<HTMLFormElement>("#import-link-form").addEventListener("submit", (e) => {
     e.preventDefault();
