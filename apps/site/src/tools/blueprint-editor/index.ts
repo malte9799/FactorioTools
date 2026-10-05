@@ -37,6 +37,7 @@ import { buildLibrarySidebar } from "./library-sidebar.js";
 import { buildQuickbar, readAltLayers, writeAltLayers, type AltLayers, type QuickbarHandle, type QuickbarItem } from "./quickbar.js";
 import { buildGridMenu } from "./grid-menu.js";
 import { BlueprintLinkError, looksLikeBlueprintString, parseBlueprintLink, resolveBlueprintLink, SHARE_TARGETS } from "./blueprint-links.js";
+import { BLUEPRINT_FILE_ACCEPT, BlueprintFileError, readBlueprintFile } from "./blueprint-file.js";
 import { listSaved, replaceContentsInLibrary, saveFailureMessage, saveToLibrary } from "./blueprint-library.js";
 import { RateOverlay } from "../../rate-overlay/controller.js";
 import { setCurrentBlueprint, EDITOR_AUTOSAVE_KEY, readAutosave } from "../../current-blueprint.js";
@@ -48,7 +49,8 @@ const TEMPLATE = `
   <div id="schematic" class="schematic-frame"></div>
   <div id="machine-tooltip" class="machine-tooltip gui-window" hidden></div>
 
-  <div id="load-spinner" class="load-spinner" hidden aria-hidden="true">
+  <div id="load-spinner" class="load-spinner" aria-hidden="true">
+    <div id="load-spinner-file" class="load-spinner-file"></div>
     <div class="load-spinner-ring"></div>
   </div>
 
@@ -294,6 +296,8 @@ const TEMPLATE = `
 
   <div id="import-menu" class="toolbar-menu" role="menu" hidden>
     <button type="button" role="menuitem" id="import-clipboard" class="toolbar-menu-item">Import from clipboard</button>
+    <button type="button" role="menuitem" id="import-file" class="toolbar-menu-item" title="A text file holding a blueprint string — or drop one on the editor">Import from file…</button>
+    <input id="import-file-input" type="file" accept="${BLUEPRINT_FILE_ACCEPT}" hidden />
     <form id="import-link-form" class="toolbar-menu-link">
       <input id="import-link" type="text" placeholder="Link or blueprint string…" aria-label="Blueprint link"
         autocomplete="off" spellcheck="false" />
@@ -2138,8 +2142,9 @@ export function mountBlueprintEditor(root: HTMLElement): () => void {
     // itself is declared further down (only ever CALLED once actual sprite
     // loads happen, well after that point in module init, so no temporal-
     // dead-zone issue registering the callback here first). */
-    renderer.onLoadingChange((loading) => {
+    renderer.onLoadingChange((loading, group) => {
       setSpinnerReason("sprite-load", loading);
+      if (group) setSpinnerFile(group);
     });
   }
   wireEditCallbacks();
@@ -2354,6 +2359,13 @@ export function mountBlueprintEditor(root: HTMLElement): () => void {
    *  right-click-a-slot removal, same as setModuleSlot above. */
   function setFilterSlot(slotIndex: number, itemName: string): void {
     updateSelectedEntity((e) => {
+      // A splitter has one filter, and it leaves on the output priority
+      // side: the game picks left when none was set.
+      if (getData().splitters?.[e.name]) {
+        e.splitterFilter = itemName || undefined;
+        if (itemName) e.splitterOutputPriority ??= "left";
+        return;
+      }
       const slots = [...e.filterItems];
       while (slots.length <= slotIndex) slots.push("");
       slots[slotIndex] = itemName;
@@ -2608,6 +2620,12 @@ export function mountBlueprintEditor(root: HTMLElement): () => void {
       onSetSpoilPriority(priority) {
         updateSelectedEntity((e) => { e.spoilPriority = priority; });
       },
+      onSetSplitterPriority(which, side) {
+        updateSelectedEntity((e) => {
+          if (which === "input") e.splitterInputPriority = side;
+          else e.splitterOutputPriority = side;
+        });
+      },
       circuit: {
         wired: wires.some((w) => w.color !== "copper" && (w.from === selectedEntity!.entityNumber || w.to === selectedEntity!.entityNumber)),
         commit(mutate) {
@@ -2706,7 +2724,76 @@ export function mountBlueprintEditor(root: HTMLElement): () => void {
   function setSpinnerReason(reason: string, active: boolean): void {
     if (active) spinnerReasons.add(reason);
     else spinnerReasons.delete(reason);
-    spinner.hidden = spinnerReasons.size === 0;
+    const show = spinnerReasons.size > 0;
+    clearTimeout(spinnerHideTimer);
+    if (show === spinner.classList.contains("is-visible")) return;
+    // A load that settles within a frame or two would otherwise start
+    // leaving before the badge has even faded in — hold it on screen for
+    // a minimum stretch so a fast load still reads as one.
+    if (!show) {
+      const wait = spinnerShownAt + SPINNER_MIN_VISIBLE_MS - performance.now();
+      if (wait > 0) {
+        spinnerHideTimer = window.setTimeout(() => setSpinnerReason(reason, false), wait);
+        return;
+      }
+    } else {
+      spinnerShownAt = performance.now();
+    }
+    clearTimeout(spinnerLeaveTimer);
+    spinner.classList.toggle("is-visible", show);
+    // Enters from below, leaves upward: is-leaving holds the exit pose
+    // until the transition is over, then the badge snaps back (invisible)
+    // to its resting spot below, ready for the next entrance.
+    spinner.classList.toggle("is-leaving", !show);
+    if (!show) {
+      spinnerLeaveTimer = window.setTimeout(() => {
+        spinner.classList.remove("is-leaving");
+        clearTimeout(spinnerFileTimer);
+        spinnerFile.replaceChildren();
+        spinnerFileName = "";
+      }, SPINNER_LEAVE_MS);
+    }
+  }
+
+  // What the sprite atlas is fetching right now — the building, not the
+  // individual sheet, so a wall's sixteen sheets read as one "wall" rather
+  // than sixteen names flashing past — as a one-line ticker
+  // beside the ring: each new name rises in from below while the one it
+  // replaces slides out the top. Left in place when loading finishes so
+  // the last name rides out with the badge instead of blanking first.
+  const SPINNER_LEAVE_MS = 260;
+  const SPINNER_MIN_VISIBLE_MS = 700;
+  const SPINNER_FILE_HOLD_MS = 220;
+  let spinnerShownAt = 0;
+  let spinnerHideTimer: number | undefined;
+  let spinnerFileTimer: number | undefined;
+  let spinnerFileSwappedAt = 0;
+  const spinnerFile = $<HTMLDivElement>("#load-spinner-file");
+  let spinnerLeaveTimer: number | undefined;
+  let spinnerFileName = "";
+  function setSpinnerFile(file: string): void {
+    // Sheets settle faster than the slide takes during a burst, and a name
+    // swapped out mid-slide never gets read at all — each name holds for
+    // a beat, with only the newest one waiting to take its place.
+    clearTimeout(spinnerFileTimer);
+    if (file === spinnerFileName) return;
+    const wait = spinnerFileSwappedAt + SPINNER_FILE_HOLD_MS - performance.now();
+    if (wait > 0) {
+      spinnerFileTimer = window.setTimeout(() => setSpinnerFile(file), wait);
+      return;
+    }
+    spinnerFileSwappedAt = performance.now();
+    spinnerFileName = file;
+    for (const old of spinnerFile.querySelectorAll(".is-out")) old.remove();
+    const previous = spinnerFile.firstElementChild;
+    if (previous) {
+      previous.classList.add("is-out");
+      previous.addEventListener("animationend", () => previous.remove(), { once: true });
+    }
+    const line = document.createElement("span");
+    line.className = "load-spinner-file-line";
+    line.textContent = file;
+    spinnerFile.append(line);
   }
 
   /** Shows the loading spinner, yields one frame so it actually paints
@@ -3265,6 +3352,45 @@ export function mountBlueprintEditor(root: HTMLElement): () => void {
       setStatus(err instanceof BlueprintLinkError ? err.message : "Couldn't import from that link.", "error");
     }
   }
+
+  async function importFromFile(file: File): Promise<void> {
+    try {
+      const content = await readBlueprintFile(file);
+      // The editor may have been left while the file was being read.
+      if (signal.aborted) return;
+      if (content.kind === "link") await importFromLink(content.value);
+      else await importText(content.value);
+    } catch (err) {
+      setStatus(err instanceof BlueprintFileError ? err.message : `Couldn't read ${file.name}.`, "error");
+    }
+  }
+
+  const importFileInput = $<HTMLInputElement>("#import-file-input");
+  $("#import-file").addEventListener("click", () => {
+    setImportMenuOpen(false);
+    importFileInput.click();
+  }, { signal });
+  importFileInput.addEventListener("change", () => {
+    const file = importFileInput.files?.[0];
+    // Cleared so picking the same file again still fires "change".
+    importFileInput.value = "";
+    if (file) void importFromFile(file);
+  }, { signal });
+
+  // A file dragged from the desktop onto the editor imports the same way.
+  // Only file drags are claimed; anything else keeps the browser default.
+  const isFileDrag = (e: DragEvent): boolean => e.dataTransfer?.types.includes("Files") ?? false;
+  window.addEventListener("dragover", (e) => {
+    if (!isFileDrag(e)) return;
+    e.preventDefault();
+    e.dataTransfer!.dropEffect = "copy";
+  }, { signal });
+  window.addEventListener("drop", (e) => {
+    if (!isFileDrag(e)) return;
+    e.preventDefault();
+    const file = e.dataTransfer!.files[0];
+    if (file) void importFromFile(file);
+  }, { signal });
 
   $<HTMLFormElement>("#import-link-form").addEventListener("submit", (e) => {
     e.preventDefault();
@@ -3889,7 +4015,7 @@ export function mountBlueprintEditor(root: HTMLElement): () => void {
       renderer.camera.state.y = y;
       if (pixelsPerTile !== undefined) renderer.camera.state.pixelsPerTile = pixelsPerTile;
     },
-    /** Set zoom directly, in screen pixels per world tile (camera.ts clamps to [6, 256]). */
+    /** Set zoom directly, in screen pixels per world tile (camera.ts clamps to [2, 256]). */
     setZoom(pixelsPerTile: number) {
       renderer.camera.state.pixelsPerTile = pixelsPerTile;
     },

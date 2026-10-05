@@ -117,7 +117,7 @@ test("zoom is clamped to the camera's own limits", () => {
   camera.zoomAt(1000, 400, 300, 800, 600);
   assert.equal(camera.state.pixelsPerTile, 256);
   camera.zoomAt(0.00001, 400, 300, 800, 600);
-  assert.equal(camera.state.pixelsPerTile, 6);
+  assert.equal(camera.state.pixelsPerTile, 2);
 });
 
 test("panByScreenDelta moves 1:1 with the cursor at any zoom", () => {
@@ -145,7 +145,7 @@ test("frame centres a box and fits it inside the viewport", () => {
 test("framing a huge box still respects the minimum zoom", () => {
   const camera = new Camera({ x: 0, y: 0, pixelsPerTile: 32 });
   camera.frame({ minX: 0, minY: 0, maxX: 100000, maxY: 100000 }, 800, 600);
-  assert.equal(camera.state.pixelsPerTile, 6);
+  assert.equal(camera.state.pixelsPerTile, 2);
 });
 
 console.log(`\n${passed} passing`);

@@ -1,4 +1,4 @@
-import type { BottleneckSubgroup, GameData, ModuleStack, PlacedEntity, QualityName, RenderCatalog } from "@factoriotools/engine";
+import type { BottleneckSubgroup, BpSplitterSide, GameData, ModuleStack, PlacedEntity, QualityName, RenderCatalog } from "@factoriotools/engine";
 import { mountEntityPreview, type ResolvedVisual } from "@factoriotools/renderer";
 import { icon } from "./legacy-view/icons.js";
 import { buildCircuitSection, buildCircuitStatus, buildConnectionBar, hasCircuitGui, isCircuitFirst, type CircuitCallbacks } from "./edit-circuit.js";
@@ -38,6 +38,10 @@ export interface PropertiesCallbacks {
   /** One of the Spoiled first / Fresh first radios picked, or neither
    *  (clearing back to "no preference") — undefined clears it. */
   onSetSpoilPriority(priority: "spoiled-first" | "fresh-first" | undefined): void;
+  /** A splitter's input or output priority set to a side, or cleared
+   *  (undefined) by its checkbox. Its filter slot goes through
+   *  onFilterSlotClick/onClearFilterSlot with slot 0. */
+  onSetSplitterPriority(which: "input" | "output", side: BpSplitterSide | undefined): void;
   /** Circuit settings: shown for combinators, display panels, lamps and
    *  anything with a red or green wire. */
   circuit?: CircuitCallbacks;
@@ -55,6 +59,7 @@ export function localisedNameOf(data: GameData, catalog: RenderCatalog, name: st
     data.beacons[name]?.localised ??
     data.belts[name]?.localised ??
     data.inserters[name]?.localised ??
+    data.splitters?.[name]?.localised ??
     catalog.entities[name]?.localised ??
     name
   );
@@ -225,12 +230,14 @@ export function buildPropertiesPanel(
   // An inserter's window follows the game's: its own settings in the main
   // column and, once a wire reaches it, a "Circuit connection" panel beside
   // them instead of everything stacked in one column.
+  // A splitter's window is laid out the same way.
   const inserter = data.inserters[entity.name];
+  const splitter = data.splitters?.[entity.name];
   let main = container;
   let side: HTMLElement | undefined;
-  if (inserter) {
+  if (inserter || splitter) {
     const layout = document.createElement("div");
-    layout.className = "inserter-gui";
+    layout.className = splitter ? "inserter-gui splitter-gui" : "inserter-gui";
     main = document.createElement("div");
     main.className = "inserter-gui-main";
     layout.appendChild(main);
@@ -256,6 +263,13 @@ export function buildPropertiesPanel(
   const beacon = data.beacons[entity.name];
   const moduleSlots = machine?.moduleSlots ?? beacon?.moduleSlots ?? 0;
 
+  if (splitter) {
+    const statusRow = document.createElement("div");
+    statusRow.className = "entity-gui-status status-ok";
+    statusRow.innerHTML = `<span class="status-dot"></span>Working`;
+    main.appendChild(statusRow);
+  }
+
   // Preview pane — a real rendered sprite of the entity, checkered
   // transparent background, matching the game's own machine-GUI thumbnail.
   const previewWrap = document.createElement("div");
@@ -276,8 +290,9 @@ export function buildPropertiesPanel(
   nameEl.className = "entity-gui-name";
   nameEl.textContent = localised;
   header.appendChild(nameEl);
-  // The window's title already names it in a circuit GUI, and an inserter's.
-  if (!circuitFirst && !inserter) container.appendChild(header);
+  // The window's title already names it in a circuit GUI, an inserter's and
+  // a splitter's.
+  if (!circuitFirst && !inserter && !splitter) container.appendChild(header);
 
   if (machine) {
     const bottleneck = findBottleneck(entity.entityNumber, bottlenecks);
@@ -506,6 +521,76 @@ export function buildPropertiesPanel(
     spoilBody.appendChild(makeSpoilRadio("spoiled-first", "Spoiled first"));
     spoilBody.appendChild(makeSpoilRadio("fresh-first", "Fresh first"));
     spoil.row.appendChild(spoilBody);
+  }
+
+  // Splitter settings, after the game's: one row per priority — a checkbox
+  // and a Left/Right switch, greyed out while the checkbox is off — with the
+  // filter slot at the end of the output row, since a filtered item leaves
+  // on the output priority side.
+  if (splitter) {
+    const priorityRow = (which: "input" | "output", text: string, current: BpSplitterSide | undefined, locked: boolean): HTMLDivElement => {
+      const row = document.createElement("div");
+      row.className = "inserter-gui-row splitter-gui-row";
+      const label = document.createElement("label");
+      label.className = "entity-gui-checkbox-row";
+      const box = document.createElement("input");
+      box.type = "checkbox";
+      box.checked = current !== undefined;
+      box.disabled = locked;
+      if (locked) label.title = "A filter needs an output side — clear the filter first";
+      box.addEventListener("change", () => callbacks.onSetSplitterPriority(which, box.checked ? "left" : undefined));
+      label.append(box, document.createTextNode(` ${text}`));
+
+      const sideRow = document.createElement("div");
+      sideRow.className = "entity-gui-filter-mode-row splitter-side-row";
+      sideRow.classList.toggle("is-off", current === undefined);
+      const sideLabel = (side: BpSplitterSide, sideText: string) => {
+        const span = document.createElement("span");
+        span.className = "splitter-side-label";
+        span.classList.toggle("is-active", current === side);
+        span.textContent = sideText;
+        // Clicking a label sets that side, turning the priority on if needed.
+        if (!locked || current !== undefined) span.addEventListener("click", () => current !== side && callbacks.onSetSplitterPriority(which, side));
+        return span;
+      };
+      const toggle = document.createElement("button");
+      toggle.type = "button";
+      toggle.className = "filter-mode-switch splitter-side-switch";
+      toggle.classList.toggle("is-blacklist", current === "right");
+      toggle.classList.toggle("is-neutral", current === undefined);
+      toggle.setAttribute("role", "switch");
+      toggle.setAttribute("aria-checked", String(current === "right"));
+      toggle.title = `${text}: left or right`;
+      toggle.disabled = current === undefined;
+      toggle.addEventListener("click", () => callbacks.onSetSplitterPriority(which, current === "right" ? "left" : "right"));
+      sideRow.append(sideLabel("left", "Left"), toggle, sideLabel("right", "Right"));
+
+      row.append(label, sideRow);
+      main.appendChild(row);
+      return row;
+    };
+
+    priorityRow("input", "Input priority", entity.splitterInputPriority, false);
+    const filterItem = entity.splitterFilter;
+    const outputRow = priorityRow("output", "Output priority", entity.splitterOutputPriority, filterItem !== undefined);
+
+    const filterWrap = document.createElement("div");
+    filterWrap.className = "splitter-filter";
+    const filterLabel = document.createElement("span");
+    filterLabel.textContent = "Filter";
+    const filterButton = document.createElement("button");
+    filterButton.type = "button";
+    filterButton.className = "filter-slot-button";
+    const localisedItem = filterItem ? (catalog.itemNames[filterItem] ?? filterItem) : undefined;
+    filterButton.title = localisedItem ? `${localisedItem} — right-click to remove` : "Empty filter slot";
+    if (filterItem) filterButton.appendChild(icon(filterItem, localisedItem ?? filterItem, 28));
+    filterButton.addEventListener("click", () => callbacks.onFilterSlotClick(0));
+    filterButton.addEventListener("contextmenu", (event) => {
+      event.preventDefault();
+      if (filterItem) callbacks.onClearFilterSlot(0);
+    });
+    filterWrap.append(filterLabel, filterButton);
+    outputRow.appendChild(filterWrap);
   }
 
   if (circuit && hasCircuitGui(entity, circuit.wired)) refreshers.push(buildCircuitSection(side ?? container, entity, data, catalog, circuit, { bare: side !== undefined }));

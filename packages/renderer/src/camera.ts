@@ -16,11 +16,11 @@ export interface CameraLimits {
 }
 
 const DEFAULT_LIMITS: CameraLimits = {
-  // ~6px/tile shows a couple hundred tiles across a normal viewport (a large
-  // base); ~256px/tile is a tight per-entity close-up before pixel-art
+  // ~2px/tile shows the better part of a thousand tiles across a normal
+  // viewport (a whole megabase); ~256px/tile is a tight per-entity close-up before pixel-art
   // sprites would need upscaling blur, which is undesirable for crisp
   // Factorio-style art.
-  minPixelsPerTile: 6,
+  minPixelsPerTile: 2,
   maxPixelsPerTile: 256,
 };
 

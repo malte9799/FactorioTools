@@ -39,7 +39,7 @@ import type {
   UndergroundBeltProto,
 } from "@factoriotools/engine";
 import { loadLocale, localisedRecipeName, type LocaleTables } from "./locale.js";
-import { animationListGraphics, beltGraphics, directionColumnGraphics, pipeConnectionsOf, pipeCoversLayers, sheetsOf, toSprite, unwrap, unwrapAll } from "./sprite-shapes.js";
+import { animationListGraphics, beltGraphics, directionColumnGraphics, fluidEnablersOf, pipeConnectionsOf, pipeCoversLayers, pipePictureLayers, sheetsOf, toSprite, unwrap, unwrapAll, type FluidEnabler } from "./sprite-shapes.js";
 import { buildRenderCatalog } from "./render-catalog.js";
 import type { RenderCatalog } from "@factoriotools/engine";
 
@@ -215,26 +215,6 @@ const PIECE_SHADOW_FILENAME = /-pipe-connections-shadow\.[^/]+$/;
 
 const DIR4 = ["north", "east", "south", "west"] as const;
 
-/** Some machines build their body from working_visualisations entries that
- *  are always on screen, rather than one main sprite: an "idle" state entry
- *  for electromagnetic-plant-likes, or several `always_draw` pieces for Space
- *  Age mining drills. Many of Space Age's mining-drill pieces (wheels,
- *  support, output chute, ...) declare a separate {north,east,south,west}
- *  _animation each, not one shared `animation` — reading only
- *  `north_animation` (as this used to) freezes those pieces to their
- *  north-facing art regardless of the entity's own direction, which reads as
- *  "the drill doesn't rotate" since these pieces are the visually dominant
- *  chassis. Returned as `per: "dir4"` when a piece is actually direction-
- *  split, or a plain sprite when it isn't (so a single-direction piece still
- *  renders — better than dropping it for lack of the other 3 facings).
- *
- *  `baseSheets` is every sheet the entity's own main body already draws (one
- *  per facing when the body is direction-split, e.g. big-mining-drill) — a
- *  working_visualisations entry naming one of those same sheets at the same
- *  shift is Factorio re-declaring the base pose for its own tracking
- *  purposes, not new art, and would otherwise draw as an exact duplicate on
- *  top of the real body (confirmed by spike: big-mining-drill's own
- *  {dir}-still.png is both the body AND one such entry). */
 /** Per-entity, per-filename-pattern paint tier overrides — the renderer's
  *  own paint order is layer tier first, then each sprite's own y-shift, and
  *  only THEN array declaration order (compareDrawCommands in
@@ -265,7 +245,30 @@ const TIER_OVERRIDES: { entity: string; pattern: RegExp; layer: Layer; ySortBias
   { entity: "big-mining-drill", pattern: /-top\.[^/]+$/, layer: Layer.AboveObject },
 ];
 
-function alwaysDrawnPieces(entityName: string, workingVisualisations: any[] | undefined, baseSheets: Set<string>): GraphicsLayer[] {
+/** Some machines build their body from working_visualisations entries that
+ *  are always on screen, rather than one main sprite: an "idle" state entry
+ *  for electromagnetic-plant-likes, or several `always_draw` pieces for Space
+ *  Age mining drills. Many of Space Age's mining-drill pieces (wheels,
+ *  support, output chute, ...) declare a separate {north,east,south,west}
+ *  _animation each, not one shared `animation` — reading only
+ *  `north_animation` (as this used to) freezes those pieces to their
+ *  north-facing art regardless of the entity's own direction, which reads as
+ *  "the drill doesn't rotate" since these pieces are the visually dominant
+ *  chassis. Returned as `per: "dir4"` when a piece is actually direction-
+ *  split, or a plain sprite when it isn't (so a single-direction piece still
+ *  renders — better than dropping it for lack of the other 3 facings).
+ *
+ *  `baseSheets` is every sheet the entity's own main body already draws (one
+ *  per facing when the body is direction-split, e.g. big-mining-drill) — a
+ *  working_visualisations entry naming one of those same sheets at the same
+ *  shift is Factorio re-declaring the base pose for its own tracking
+ *  purposes, not new art, and would otherwise draw as an exact duplicate on
+ *  top of the real body (confirmed by spike: big-mining-drill's own
+ *  {dir}-still.png is both the body AND one such entry).
+ *
+ *  `enablers` (see fluidEnablersOf) gates an `enabled_by_name` piece on the
+ *  fluid points that switch it on; one nothing names is left out. */
+function alwaysDrawnPieces(entityName: string, workingVisualisations: any[] | undefined, baseSheets: Set<string>, enablers: Map<string, FluidEnabler>): GraphicsLayer[] {
   const full: GraphicsLayer[] = [];
   const partial: GraphicsLayer[] = [];
   const top: GraphicsLayer[] = [];
@@ -301,6 +304,12 @@ function alwaysDrawnPieces(entityName: string, workingVisualisations: any[] | un
     // A wet drill's fluid windows are white masks tinted by whatever fluid
     // is in the drill; a blueprint has none, so the window stays empty.
     if (typeof entry.apply_tint === "string" && entry.apply_tint.startsWith("input-fluid")) continue;
+    // An `enabled_by_name` piece is off until something names it — a
+    // foundry's pipework, switched on by whichever fluid boxes its recipe
+    // uses. One nothing names never shows.
+    const enabledBy = entry.enabled_by_name ? enablers.get(entry.name) : undefined;
+    if (entry.enabled_by_name && !enabledBy) continue;
+    const gate = enabledBy ? { enabledBy } : {};
 
     if (DIR4.some((d) => entry[`${d}_animation`])) {
       // A direction's own `{dir}_animation` can hold more than one non-
@@ -329,9 +338,9 @@ function alwaysDrawnPieces(entityName: string, workingVisualisations: any[] | un
       const isFull = DIR4.every((d) => slots[0]?.[d]);
       for (const sprites of slots) {
         const override = tierOverride(sprites);
-        if (override) (override.layer === Layer.AboveObject ? top : override.layer === Layer.LowerObject ? bottom : partial).push({ layer: override.layer, sprites, per: "dir4", ySortBias: override.ySortBias });
-        else if (isFull) full.push({ layer: Layer.Object, sprites, per: "dir4" });
-        else partial.push({ layer: Layer.Object, sprites, per: "dir4" });
+        if (override) (override.layer === Layer.AboveObject ? top : override.layer === Layer.LowerObject ? bottom : partial).push({ layer: override.layer, sprites, per: "dir4", ySortBias: override.ySortBias, ...gate });
+        else if (isFull) full.push({ layer: Layer.Object, sprites, per: "dir4", ...gate });
+        else partial.push({ layer: Layer.Object, sprites, per: "dir4", ...gate });
       }
       // Shadows of these pieces are otherwise dropped; the wet pipework's
       // own is the one that visibly goes missing.
@@ -340,15 +349,15 @@ function alwaysDrawnPieces(entityName: string, workingVisualisations: any[] | un
         const shadow = unwrapAll(entry[`${d}_animation`] ?? entry.animation).find((l) => l.shadow && PIECE_SHADOW_FILENAME.test(l.sprite.sheet));
         if (shadow) shadows[d] = shadow.sprite;
       }
-      if (Object.keys(shadows).length > 0) bottom.unshift({ layer: Layer.Shadow, sprites: shadows, per: "dir4" });
+      if (Object.keys(shadows).length > 0) bottom.unshift({ layer: Layer.Shadow, sprites: shadows, per: "dir4", ...gate });
       continue;
     }
 
     const { main } = unwrap(entry.north_animation ?? entry.animation);
     if (!main || baseSheets.has(main.sheet) || TRANSIENT_EFFECT_FILENAME.test(main.sheet)) continue;
     const override = tierOverride(main);
-    if (override) (override.layer === Layer.AboveObject ? top : override.layer === Layer.LowerObject ? bottom : partial).push({ layer: override.layer, sprites: main, ySortBias: override.ySortBias });
-    else partial.push({ layer: Layer.Object, sprites: main });
+    if (override) (override.layer === Layer.AboveObject ? top : override.layer === Layer.LowerObject ? bottom : partial).push({ layer: override.layer, sprites: main, ySortBias: override.ySortBias, ...gate });
+    else partial.push({ layer: Layer.Object, sprites: main, ...gate });
   }
   return [...bottom, ...partial, ...full, ...top];
 }
@@ -429,6 +438,9 @@ function graphicsForMachine(proto: any): EntityGraphics | undefined {
   return { ...dry, layers };
 }
 
+/** One graphics_set's layers: the body from its animation, pumpjack's
+ *  baseplate under it, then every working_visualisations piece that shows
+ *  on an idle machine (see alwaysDrawnPieces). */
 function graphicsForGraphicsSet(proto: any): EntityGraphics | undefined {
   const graphics = directionColumnGraphics(machineAnimation(proto));
   if (!graphics) return undefined;
@@ -452,7 +464,7 @@ function graphicsForGraphicsSet(proto: any): EntityGraphics | undefined {
   const bodyOverride = BODY_TIER_OVERRIDES[proto.name];
   if (bodyOverride !== undefined && body.layer === Layer.Object) body.layer = bodyOverride;
   graphics.layers.unshift(...pumpjackBaseGraphics(proto));
-  graphics.layers.push(...alwaysDrawnPieces(proto.name, proto.graphics_set?.working_visualisations, baseSheets));
+  graphics.layers.push(...alwaysDrawnPieces(proto.name, proto.graphics_set?.working_visualisations, baseSheets, fluidEnablersOf(proto)));
   return graphics;
 }
 
@@ -652,6 +664,17 @@ function mapRecipes(
   return recipes;
 }
 
+/** The lowest tier an entity's own body paints on, shadows aside — where a
+ *  pipe stub that tucks in behind the body has to go to end up under all of
+ *  it (an electromagnetic plant's base plate sits a tier below the rest). */
+function lowestBodyTier(graphics: EntityGraphics | undefined): Layer {
+  const tiers = (graphics?.layers ?? []).map((l) => l.layer).filter((l) => l !== Layer.Shadow);
+  return tiers.length > 0 ? Math.min(...tiers) : Layer.Object;
+}
+
+/** Every prototype in MACHINE_TABLES as a MachineProto: its rates and
+ *  footprint, its graphics with the fluid boxes' pipe stubs and covers
+ *  appended, and its fluid connection points. */
 function mapMachines(raw: Raw, locale: LocaleTables): Record<string, MachineProto> {
   const machines: Record<string, MachineProto> = {};
 
@@ -663,9 +686,10 @@ function mapMachines(raw: Raw, locale: LocaleTables): Record<string, MachineProt
         proto.crafting_categories ?? proto.resource_categories ?? (kind === "lab" ? ["lab"] : []);
 
       let graphics = table === "rocket-silo" ? graphicsForRocketSilo(proto) : graphicsForMachine(proto);
-      const coverLayers = pipeCoversLayers(proto);
-      if (coverLayers.length > 0) {
-        graphics = { ...(graphics ?? { layers: [] }), layers: [...(graphics?.layers ?? []), ...coverLayers] };
+      // Stubs before covers, so a cover still caps the stub it sits on.
+      const fluidLayers = [...pipePictureLayers(proto, lowestBodyTier(graphics)), ...pipeCoversLayers(proto)];
+      if (fluidLayers.length > 0) {
+        graphics = { ...(graphics ?? { layers: [] }), layers: [...(graphics?.layers ?? []), ...fluidLayers] };
       }
       const pipeConnections = pipeConnectionsOf(proto);
 

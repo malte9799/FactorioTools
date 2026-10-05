@@ -1,4 +1,4 @@
-import { Layer, type GraphicsLayer, type InserterGraphics, type PlacedEntity, type Sprite } from "@factoriotools/engine";
+import { Layer, type FluidPointRef, type GraphicsLayer, type InserterGraphics, type PlacedEntity, type Sprite } from "@factoriotools/engine";
 import type { ResolvedVisual } from "../entityLookup.js";
 import { dir4Name, dir8Name, toCardinal, opposite, splitterLaneCells, step, Dir, type Cardinal, type NeighbourGrid } from "../neighbours/grid.js";
 import { classifyPipe } from "../neighbours/pipe.js";
@@ -85,7 +85,9 @@ interface EntityFrame {
   /** True when this entity has live fluid ports — what a `plumbed` layer
    *  is matched against. */
   plumbed: boolean;
-  fluidPoints: { local: { x: number; y: number; direction: number }; state: FluidPointState }[];
+  /** `offsetX`/`offsetY`/`direction` place the point itself, rotated with
+   *  the entity — what a `pipe-pictures` stub is drawn from. */
+  fluidPoints: { local: { x: number; y: number; direction: number }; state: FluidPointState; offsetX: number; offsetY: number; direction: Cardinal }[];
   /** Every heat-network connection point this entity has that the real
    *  heat network graph found NO neighbour for — same "unconnected only"
    *  rule as unconnectedPipeCovers (confirmed against the reference
@@ -120,6 +122,9 @@ interface EntityFrame {
   slotModules: string[];
 }
 
+/** Builds `entity`'s EntityFrame: its facing, the connection shape its
+ *  neighbours give it, and what each of its fluid and heat ports is
+ *  plugged into — read once here, ahead of collectEntity's layer loop. */
 function resolveFrame(entity: PlacedEntity, visual: ResolvedVisual, ctx: CollectContext): EntityFrame {
   const x = Math.round(entity.x);
   const y = Math.round(entity.y);
@@ -168,7 +173,13 @@ function resolveFrame(entity: PlacedEntity, visual: ResolvedVisual, ctx: Collect
     // cover above.
     fluidPoints: ctx.fluidNetwork
       .pointsFor(entity.entityNumber)
-      .map((p) => ({ local: p.local, state: entity.entityNumber === -1 ? ("open" as const) : ctx.fluidNetwork.stateOf(p) })),
+      .map((p) => ({
+        local: p.local,
+        state: entity.entityNumber === -1 ? ("open" as const) : ctx.fluidNetwork.stateOf(p),
+        offsetX: p.offsetX,
+        offsetY: p.offsetY,
+        direction: p.direction,
+      })),
     // Fixed [0, 1.5] offset rotated by the ENTITY's own placement direction
     // (not the connection point's facing), and sprite picked by
     // entityDirection+8 — both taken verbatim from the reference renderer's
@@ -505,9 +516,21 @@ export function collectEntity(
   const isSplitter = entity.name.includes("splitter");
   let laneIndex = 0;
 
+  const first = out.length;
+  const isStub = (l: GraphicsLayer | undefined) => l !== undefined && "per" in l && l.per === "pipe-pictures";
+  const pointsOf = (refs: FluidPointRef[]) =>
+    frame.fluidPoints.filter((p) => refs.some((r) => r.x === p.local.x && r.y === p.local.y && r.direction === p.local.direction));
+
   graphics.layers.forEach((layer, order) => {
     // A drill's dry-only and wet-only art: draw whichever matches.
     if (layer.plumbed !== undefined && layer.plumbed !== frame.plumbed) return;
+    // Art a fluid box switches on: one of its points has to be live, or —
+    // for a thruster's elbows — carrying an actual connection.
+    if (layer.enabledBy) {
+      const live = pointsOf(layer.enabledBy.points);
+      const on = layer.enabledBy.connected ? live.some((p) => p.state === "connected" || p.state === "sibling") : live.length > 0;
+      if (!on) return;
+    }
     // A cargo bay's planet-only and platform-only art: draw whichever matches.
     if (layer.onSpacePlatform !== undefined && layer.onSpacePlatform !== frame.onSpacePlatform) return;
     // A cargo hub/bay draws several connection pieces at once, each at its
@@ -531,6 +554,29 @@ export function collectEntity(
       for (const point of frame.unconnectedPipeCovers) {
         const sprite = layer.sprites[dir4Name(point.direction)];
         if (sprite) push(out, sprite, 0, 0, entity, layer.layer, order, alpha, point.offsetX, point.offsetY);
+      }
+      return;
+    }
+
+    // A pipe stub draws at every live point of its fluid box, anchored on
+    // the tile the socket opens onto like a cover is. Factorio stacks a
+    // machine's own sprites by draw order alone, where this renderer sorts
+    // by where each one lands — which would put a side-facing stub beneath
+    // the body it plugs into. So a stub borrows the sort key of the body
+    // pieces already collected for this entity: level with the last of them
+    // to go over the body (later in the layer list, it wins the tie), just
+    // ahead of the first to go under.
+    if ("per" in layer && layer.per === "pipe-pictures") {
+      const body = out.slice(first).filter((c) => c.layer === layer.layer && !isStub(graphics.layers[c.order])).map((c) => c.y);
+      for (const point of pointsOf(layer.points)) {
+        const sprite = layer.sprites[dir4Name(point.direction)];
+        if (!sprite) continue;
+        const { dx, dy } = step(point.direction);
+        const offsetX = point.offsetX + dx;
+        const offsetY = point.offsetY + dy;
+        const own = entity.y + offsetY + (sprite.shift?.[1] ?? 0);
+        const wanted = body.length === 0 ? own : layer.under ? Math.min(own, Math.min(...body) - CAP_PRIORITY_EPSILON) : Math.max(own, Math.max(...body));
+        push(out, sprite, 0, 0, entity, layer.layer, order, alpha, offsetX, offsetY, false, undefined, 0, wanted - own);
       }
       return;
     }
