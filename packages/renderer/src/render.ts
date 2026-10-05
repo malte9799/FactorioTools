@@ -1578,7 +1578,9 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
       }
       for (const m of blocks.markers) drawRailBlockMarker(ctx, m.x, m.y - (m.elevated ? RAIL_DECK_HEIGHT : 0), m.dir, m.kind, RAIL_BLOCK_COLORS[blocks.colors[m.block]!]!);
       for (const slot of signalSlotsNear(index, ghostWorldPos.x, ghostWorldPos.y)) {
-        drawSignalHandle(ctx, slot.elevated ? { ...slot, y: slot.y - RAIL_DECK_HEIGHT } : slot);
+        // Up on the deck the slot's joint is lifted with it, or the stem
+        // would reach back down to the ground.
+        drawSignalHandle(ctx, slot.elevated ? { ...slot, y: slot.y - RAIL_DECK_HEIGHT, ey: slot.ey === undefined ? undefined : slot.ey - RAIL_DECK_HEIGHT } : slot);
       }
     }
     if (mode.kind === "place" && ghostWorldPos && mode.entityName === "train-stop") {
