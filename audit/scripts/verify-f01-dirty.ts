@@ -5,7 +5,8 @@
  *  mountRenderer hier mit einem minimalen DOM-Stub betrieben, rAF selbst
  *  kontrolliert getaktet und gezählt, wie oft draw() tatsächlich läuft. */
 import { readFileSync } from "node:fs";
-import { decodeBlueprintString, collectBlueprints, normaliseEntities, DEBUG_BLUEPRINT } from "../../packages/engine/src/index.js";
+import { decodeBlueprintString, collectBlueprints, normaliseEntities } from "../../packages/engine/src/index.js";
+import { DEBUG_BLUEPRINT } from "../../packages/engine/src/data/debug-lab.js";
 import type { GameData, RenderCatalog } from "../../packages/engine/src/index.js";
 
 const data: GameData = JSON.parse(readFileSync("apps/site/public/data/game-data.json", "utf8"));

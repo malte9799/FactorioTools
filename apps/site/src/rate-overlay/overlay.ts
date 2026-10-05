@@ -27,8 +27,9 @@ export interface OverlayFrame {
   issues: Issue[];
   hover: HoverTarget | undefined;
   icons: IconAtlas;
-  /** Draw port tabs (the layer, or while the Ports window is open). */
-  showPorts: boolean;
+  /** Draw port tabs: all of them (the layer, or while the Ports window is
+   *  open), only the enabled ones (alt mode's Ports toggle), or none. */
+  showPorts: "all" | "enabled" | "none";
   /** Draw the display panels set to show in alt mode. */
   altDisplays?: boolean;
   /** A port to ring, for the row the cursor is on in the Ports window. */
@@ -374,8 +375,9 @@ export function drawOverlay(fr: OverlayFrame): PortTabRect[] {
 
   /* ---------- ports ---------- */
   const tabs: PortTabRect[] = [];
-  if (fr.showPorts) {
+  if (fr.showPorts !== "none") {
     for (const port of f.ports()) {
+      if (fr.showPorts === "enabled" && !port.enabled) continue;
       if (!visible(port.x, port.y, 3)) continue;
       // A belt port's tab sits just past the belt's open end; an arm port's
       // on the open tile the arm reaches into.

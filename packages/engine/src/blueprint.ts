@@ -305,16 +305,27 @@ function readSplitterFilter(filter: BpEntity["filter"]): string | undefined {
 
 /* ---------- PlacedEntity[] -> Blueprint (the inverse of normaliseEntities) ---------- */
 
+/** The `defines.inventory` id of an entity's module slots, as the example
+ *  blueprints use them: a beacon's are inventory 1, a mining drill's 2, a
+ *  lab's 3, and every crafting machine's and furnace's 4. readModules never
+ *  looks at it, but the game does when the blueprint is built. */
+function moduleInventory(entityName: string): number {
+  if (entityName.includes("beacon")) return 1;
+  if (entityName.endsWith("mining-drill") || entityName === "pumpjack") return 2;
+  if (entityName === "lab" || entityName === "biolab") return 3;
+  return 4;
+}
+
 /** Exact inverse of readModules()'s 2.0-array branch: one in_inventory entry
  *  per module instance (readModules only sums `count ?? 1` per entry, so one
- *  entry per instance round-trips exactly without needing to match the
- *  game's own real inventory-slot numbering — `inventory: 4` is the module
- *  inventory id the existing test fixtures already use). */
-function writeModules(modules: ModuleStack[]): BpItemRequest[] {
+ *  entry per instance round-trips exactly), in the entity's own module
+ *  inventory. */
+function writeModules(modules: ModuleStack[], entityName: string): BpItemRequest[] {
+  const inventory = moduleInventory(entityName);
   return modules.map((stack) => ({
     id: { name: stack.name, quality: stack.quality === "normal" ? undefined : stack.quality },
     items: {
-      in_inventory: Array.from({ length: stack.count }, (_, slot) => ({ inventory: 4, stack: slot })),
+      in_inventory: Array.from({ length: stack.count }, (_, slot) => ({ inventory, stack: slot })),
     },
   }));
 }
@@ -360,7 +371,7 @@ export function denormaliseEntities(entities: PlacedEntity[]): BpEntity[] {
     if (e.direction !== 0) bp.direction = e.direction;
     if (e.quality !== "normal") bp.quality = e.quality;
     if (e.recipe) bp.recipe = e.recipe;
-    if (e.modules.length) bp.items = writeModules(e.modules);
+    if (e.modules.length) bp.items = writeModules(e.modules, e.name);
     if (e.undergroundType) bp.type = e.undergroundType;
     if (e.useFilters !== undefined) {
       bp.filters = writeFilterSlots(e.filterItems);
