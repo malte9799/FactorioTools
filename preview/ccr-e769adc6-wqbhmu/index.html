@@ -42,14 +42,26 @@
       name="description"
       content="Blueprint editor for Factorio built around rate calculation, simulation and analysis — paste a blueprint string, find the bottleneck, fix it and export. No mods needed."
     />
+    <link rel="icon" href="./favicon.svg" type="image/svg+xml" />
+    <link rel="apple-touch-icon" href="./apple-touch-icon.png" />
+    <!-- Link previews. og:image has to be an absolute URL, so it names the
+         production site rather than going through Vite's relative base. -->
+    <meta property="og:type" content="website" />
+    <meta property="og:title" content="FactorioTools" />
+    <meta
+      property="og:description"
+      content="Paste a blueprint. Find the bottleneck. Fix it. Export. A browser-based Factorio blueprint editor with rate calculation and belt simulation."
+    />
+    <meta property="og:image" content="https://malte9799.github.io/FactorioTools/banner.png" />
+    <meta name="twitter:card" content="summary_large_image" />
     <!-- Fonts are self-hosted (see the @font-face block at the top of
          style.css). Preloading the two faces the first paint actually needs
          — the body sans and the display face used by headings — so they are
          in flight alongside the CSS instead of after it. -->
     <link rel="preload" href="./fonts/ibm-plex-sans-400.woff2" as="font" type="font/woff2" crossorigin />
     <link rel="preload" href="./fonts/chakra-petch-600.woff2" as="font" type="font/woff2" crossorigin />
-    <script type="module" crossorigin src="./assets/index-D-gkNppS.js"></script>
-    <link rel="stylesheet" crossorigin href="./assets/index-Hv32qAn8.css">
+    <script type="module" crossorigin src="./assets/index-vc-VL3b_.js"></script>
+    <link rel="stylesheet" crossorigin href="./assets/index-DSlzuYcQ.css">
   </head>
   <body>
     <div id="nav-root"></div>
