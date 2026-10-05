@@ -1,6 +1,6 @@
 /** Reading Factorio's sprite declarations, which come in a handful of
  *  historically-grown shapes, into this project's flat Sprite type. */
-import { Layer, type Dir4Name, type EntityGraphics, type GraphicsLayer, type HeatConnectionPoint, type PipeConnectionPoint, type Sprite, type WireAttachPoint, type WireAttachPoints } from "@factoriotools/engine";
+import { Layer, type Dir4Name, type EntityGraphics, type FluidPointRef, type GraphicsLayer, type HeatConnectionPoint, type PipeConnectionPoint, type Sprite, type WireAttachPoint, type WireAttachPoints } from "@factoriotools/engine";
 
 /** A leaf sprite declaration: {filename,width,height,...}. Some use a single
  *  square `size` instead of width/height, some split a long frame strip over
@@ -321,15 +321,20 @@ export function layerOf(renderLayer: string | undefined, fallback = Layer.Object
  *  render_layer. A `fadeout` entry is a transient running-state effect
  *  (steam, exhaust) with no `always_draw` of its own — skipped along with
  *  any entry explicitly marked always_draw: false, since a blueprint shows
- *  entities idle. */
-export function animationListGraphics(list: any[] | undefined): EntityGraphics | undefined {
+ *  entities idle. An `enabled_by_name` entry is only on while something
+ *  names it: `enablers` (see fluidEnablersOf) gates it on its fluid points,
+ *  and an entry nothing names never draws. */
+export function animationListGraphics(list: any[] | undefined, enablers?: Map<string, FluidEnabler>): EntityGraphics | undefined {
   const layers: GraphicsLayer[] = [];
   for (const entry of list ?? []) {
     if (entry.always_draw === false || entry.fadeout) continue;
+    const enabledBy = entry.enabled_by_name ? enablers?.get(entry.name) : undefined;
+    if (entry.enabled_by_name && !enabledBy) continue;
+    const gate = enabledBy ? { enabledBy } : {};
     const { main, shadow } = unwrap(entry.animation ?? entry);
     if (!main) continue;
-    if (shadow) layers.push({ layer: Layer.Shadow, sprites: shadow });
-    layers.push({ layer: layerOf(entry.render_layer), sprites: main });
+    if (shadow) layers.push({ layer: Layer.Shadow, sprites: shadow, ...gate });
+    layers.push({ layer: layerOf(entry.render_layer), sprites: main, ...gate });
   }
   return layers.length > 0 ? { layers } : undefined;
 }
@@ -379,7 +384,55 @@ function fluidBoxesOf(proto: any): any[] {
   // silently dropped, leaving its pipe-cover patch permanently undrawn.
   if (proto.input_fluid_box) boxes.push(proto.input_fluid_box);
   if (proto.output_fluid_box) boxes.push(proto.output_fluid_box);
+  // A thruster names its two after what they carry.
+  if (proto.fuel_fluid_box) boxes.push(proto.fuel_fluid_box);
+  if (proto.oxidizer_fluid_box) boxes.push(proto.oxidizer_fluid_box);
   return boxes;
+}
+
+/** A box's ordinary surface sockets. A pipe-to-ground's second entry is its
+ *  underground link to the paired piece, not a socket anything on the
+ *  surface can meet — matches the reference renderer's own filter (only
+ *  undefined/'normal' connection_type counts). */
+function surfaceConnectionsOf(box: any): any[] {
+  return (box.pipe_connections ?? []).filter(
+    (c: any) => (c.connection_type === undefined || c.connection_type === "normal") && DIR4_BY_VALUE[c.direction ?? 0] !== undefined,
+  );
+}
+
+/** The point a pipe connection is recorded as — see pipeConnectionsOf, which
+ *  writes the same x/y/direction. */
+function pointRefOf(c: any): FluidPointRef | undefined {
+  const position = Array.isArray(c.positions) && c.positions.length === 4 ? c.positions[0] : c.position;
+  if (!Array.isArray(position)) return undefined;
+  return { x: position[0], y: position[1], direction: c.direction ?? 0 };
+}
+
+export type FluidEnabler = NonNullable<GraphicsLayer["enabledBy"]>;
+
+/** Which fluid points switch each `enabled_by_name` working visualisation
+ *  on, keyed by the visualisation's name. A whole fluid box can name one
+ *  (a foundry's "input-pipe": on while either input box is in use) or a
+ *  single pipe connection can (a thruster's "pipe-1"); with the box's
+ *  `draw_only_when_connected` the point has to actually be plugged in. */
+export function fluidEnablersOf(proto: any): Map<string, FluidEnabler> {
+  const out = new Map<string, FluidEnabler>();
+  const add = (names: unknown, points: FluidPointRef[], connected: boolean) => {
+    for (const name of Array.isArray(names) ? names : []) {
+      const enabler = out.get(name) ?? { points: [] };
+      enabler.points.push(...points);
+      if (connected) enabler.connected = true;
+      out.set(name, enabler);
+    }
+  };
+  for (const box of fluidBoxesOf(proto)) {
+    const connected = box.draw_only_when_connected === true;
+    const connections = surfaceConnectionsOf(box);
+    const refs = (list: any[]) => list.map(pointRefOf).filter((p): p is FluidPointRef => p !== undefined);
+    add(box.enable_working_visualisations, refs(connections), connected);
+    for (const c of connections) add(c.enable_working_visualisations, refs([c]), connected);
+  }
+  return out;
 }
 
 /** Every fluid-box connection point a prototype declares, in its own
@@ -395,6 +448,7 @@ export function pipeConnectionsOf(proto: any): PipeConnectionPoint[] {
   const multiBox = boxes.length > 1;
   const boxesOffWhenNoFluidRecipe = proto.fluid_boxes_off_when_no_fluid_recipe === true;
   const anyCovers = boxes.some((b) => b.pipe_covers);
+  const fixed = Array.isArray(proto.flags) && proto.flags.includes("not-rotatable") ? true : undefined;
   boxes.forEach((box, boxIndex) => {
     // Only set where it changes anything, so every other prototype's points
     // stay exactly as they were.
@@ -402,31 +456,26 @@ export function pipeConnectionsOf(proto: any): PipeConnectionPoint[] {
     // A drill's fluid input is optional (only some resources need it), so
     // its ports hide until used. Not pumpjack's output_fluid_box.
     const onlyWhenConnected = proto.type === "mining-drill" && box === proto.input_fluid_box ? true : undefined;
-    for (const c of box.pipe_connections ?? []) {
+    // Only the surface sockets: an underground link has no world-space
+    // neighbour to ever connect to and no cover art of its own, so counting
+    // it here would leave it permanently "unconnected" for no visual reason.
+    for (const c of surfaceConnectionsOf(box)) {
       const connectionCategory: string[] | undefined =
         c.connection_category === undefined ? undefined : [c.connection_category].flat();
-      // A pipe-to-ground's second entry is its underground link to the
-      // paired piece, not a normal surface socket — it has no matching
-      // world-space neighbour to ever connect to and no cover art of its
-      // own, so counting it here would leave it permanently "unconnected"
-      // for no visual reason. Matches the reference renderer's own filter
-      // (only undefined/'normal' connection_type counts).
-      if (c.connection_type !== undefined && c.connection_type !== "normal") continue;
-      const direction = DIR4_BY_VALUE[c.direction ?? 0];
-      if (!direction) continue;
       const fluidboxIndex = multiBox ? boxIndex : undefined;
       const flowDirection = box.production_type;
+      const filter: string | undefined = typeof box.filter === "string" ? box.filter : undefined;
       // Pumpjack's own output socket declares `positions` (plural, one
       // [x,y] per placement direction) instead of a single `position` —
       // see PipeConnectionPoint's own doc comment for why. x/y here are
       // meaningless in that case (no single north-frame point exists) and
       // ignored downstream whenever positionsByDirection is present.
       if (Array.isArray(c.positions) && c.positions.length === 4) {
-        out.push({ x: c.positions[0][0], y: c.positions[0][1], direction: c.direction, positionsByDirection: c.positions, fluidboxIndex, flowDirection, boxesOffWhenNoFluidRecipe, connectionCategory, noCover, onlyWhenConnected });
+        out.push({ x: c.positions[0][0], y: c.positions[0][1], direction: c.direction, positionsByDirection: c.positions, fluidboxIndex, flowDirection, boxesOffWhenNoFluidRecipe, connectionCategory, filter, fixed, noCover, onlyWhenConnected });
         continue;
       }
       if (!Array.isArray(c.position)) continue;
-      out.push({ x: c.position[0], y: c.position[1], direction: c.direction, fluidboxIndex, flowDirection, boxesOffWhenNoFluidRecipe, connectionCategory, noCover, onlyWhenConnected });
+      out.push({ x: c.position[0], y: c.position[1], direction: c.direction, fluidboxIndex, flowDirection, boxesOffWhenNoFluidRecipe, connectionCategory, filter, fixed, noCover, onlyWhenConnected });
     }
   });
   return out;
@@ -470,6 +519,54 @@ export function pipeCoversLayers(proto: any): GraphicsLayer[] {
   const layers: GraphicsLayer[] = [];
   if (Object.keys(shadowSprites).length > 0) layers.push({ layer: Layer.Shadow, sprites: shadowSprites, per: "pipe-covers" });
   if (Object.keys(sprites).length > 0) layers.push({ layer: Layer.Object, sprites, per: "pipe-covers" });
+  return layers;
+}
+
+/** `per: "pipe-pictures"` layers from each fluid box's own `pipe_picture` —
+ *  the stub of pipework between a machine's body and the socket on its edge.
+ *  Boxes sharing one picture set share its layers (a biochamber alternates
+ *  two sets between its four boxes; a cryogenic plant hangs one whole-machine
+ *  overlay on just its middle input and output box). Each facing's stub goes
+ *  over the body unless the box's own secondary draw order for that facing
+ *  is negative (an assembling machine's north stub tucks in behind it) —
+ *  those go to a separate `under` layer on `underTier`, the lowest tier the
+ *  body itself paints on. */
+export function pipePictureLayers(proto: any, underTier: Layer = Layer.Object): GraphicsLayer[] {
+  const groups = new Map<string, { box: any; points: FluidPointRef[] }>();
+  for (const box of fluidBoxesOf(proto)) {
+    const picture = box.pipe_picture;
+    if (!picture || !DIR4.some((d) => picture[d])) continue;
+    const key = JSON.stringify([picture, box.secondary_draw_order, box.secondary_draw_orders]);
+    const group = groups.get(key) ?? { box, points: [] };
+    for (const c of surfaceConnectionsOf(box)) {
+      const point = pointRefOf(c);
+      if (point) group.points.push(point);
+    }
+    groups.set(key, group);
+  }
+
+  const layers: GraphicsLayer[] = [];
+  for (const { box, points } of groups.values()) {
+    if (points.length === 0) continue;
+    // Zipped by role, then by position within it, like directionColumnGraphics.
+    const slots = new Map<string, Partial<Record<Dir4Name, Sprite>>>();
+    for (const dir of DIR4) {
+      const under = (box.secondary_draw_orders?.[dir] ?? box.secondary_draw_order ?? 1) < 0;
+      let shadowI = 0;
+      let objectI = 0;
+      for (const l of unwrapAll(box.pipe_picture[dir])) {
+        const slot = l.shadow ? `shadow:${shadowI++}` : `${under ? "under" : "over"}:${objectI++}`;
+        const sprites = slots.get(slot) ?? {};
+        sprites[dir] = l.sprite;
+        slots.set(slot, sprites);
+      }
+    }
+    for (const [slot, sprites] of slots) {
+      if (slot.startsWith("shadow")) layers.push({ layer: Layer.Shadow, sprites, per: "pipe-pictures", points });
+      else if (slot.startsWith("under")) layers.push({ layer: underTier, sprites, per: "pipe-pictures", points, under: true });
+      else layers.push({ layer: Layer.Object, sprites, per: "pipe-pictures", points });
+    }
+  }
   return layers;
 }
 

@@ -240,6 +240,14 @@ export type GraphicsLayer = {
    *  Absent on everything both looks share. The renderer treats a drill as
    *  plumbed whenever its fluid ports are showing. */
   plumbed?: boolean;
+  /** Art a fluid box switches on — Factorio's `enabled_by_name` working
+   *  visualisations, named in a fluid box's or a pipe connection's own
+   *  `enable_working_visualisations`. Drawn only while one of `points` is
+   *  live: its fluid box in use by the recipe (a foundry's input/output
+   *  pipework). With `connected`, only while one is actually plugged into
+   *  something (a thruster's pipe elbows). `points` name fluid-box
+   *  connection points the way a `fluid-point` layer's own `point` does. */
+  enabledBy?: { points: FluidPointRef[]; connected?: boolean };
   /** Set on a layer that only draws in one of a cargo bay's two looks:
    *  `true` for the art it wears on a space platform, `false` for the art
    *  it wears on a planet. Absent on everything both looks share. */
@@ -293,9 +301,18 @@ export type GraphicsLayer = {
   | {
       sprites: Partial<Record<Dir4Name, Sprite>>;
       per: "fluid-point";
-      point: { x: number; y: number; direction: 0 | 4 | 8 | 12 };
+      point: FluidPointRef;
       columns: { open?: number; connected?: number; sibling?: number; siblingMixed?: number };
     }
+  /** A fluid box's own `pipe_picture` — the stub of pipework joining a
+   *  machine's body to the socket on its edge (an assembling machine's, an
+   *  electromagnetic plant's). One sprite per cardinal facing of the
+   *  connection, drawn at every live point in `points` whether or not
+   *  anything is attached, anchored like pipe-covers on the tile the socket
+   *  opens onto. Factorio stacks a machine's own sprites by
+   *  secondary_draw_order alone: `under` marks the facings whose stub goes
+   *  beneath the body (a negative order), the rest go over it. */
+  | { sprites: Partial<Record<Dir4Name, Sprite>>; per: "pipe-pictures"; points: FluidPointRef[]; under?: boolean }
   /** One small pipe-stub cap per `heat_buffer.connections` entry, drawn at
    *  every point — unlike pipe-covers (drawn only when unconnected), a
    *  reactor's 12 heat-connection points always show one of two full sprite
@@ -329,6 +346,16 @@ export type GraphicsLayer = {
    *  channel — `primary` for the box, `secondary` for the lights. */
   | { slots: { empty: Sprite; filled: ModuleSlotPiece[] }[]; per: "module-slot" }
 );
+
+/** Names one fluid-box connection point by its own unrotated local position
+ *  and direction — the same values its `pipeConnections` entry carries, not
+ *  a list index, which would silently address another point once a recipe
+ *  filters some out. */
+export interface FluidPointRef {
+  x: number;
+  y: number;
+  direction: 0 | 4 | 8 | 12;
+}
 
 /** One tintable overlay of a filled beacon module slot. */
 export interface ModuleSlotPiece {
@@ -563,6 +590,15 @@ export interface PipeConnectionPoint {
    *  fusion plasma ports carry `["fusion-plasma"]`, so a plain pipe laid
    *  against one neither connects nor hides its cap. */
   connectionCategory?: string[];
+  /** The fluid box's own `filter` — the one fluid it takes. Two points that
+   *  each name a different fluid never join: a thruster's fuel port facing
+   *  the oxidizer port of the thruster beside it stays closed. Absent takes
+   *  anything, so a plain pipe joins either. */
+  filter?: string;
+  /** True when the entity can't be turned at all — Factorio's
+   *  `not-rotatable` flag, a thruster. Its art never turns, so its ports
+   *  stay put too, whatever direction the placed entity happens to carry. */
+  fixed?: boolean;
   /** True when this point's own fluid box ships no `pipe_covers` while
    *  another box of the same prototype does (fusion-generator's plasma box
    *  next to its fluoroketone box) — the generic round cover must not be

@@ -349,6 +349,8 @@ function facings(name: string): number[] {
   // power chapter shows in every direction instead.
   if (isPoleLike(name)) return [N];
   if (isTwoDirectionOnly(name)) return [N, E];
+  // A thruster can't be turned at all: its ports are pinned in place.
+  if (visual(name).pipeConnections?.some((p) => p.fixed)) return [N];
   const step = rotationStep(name);
   if (step < 4) return Array.from({ length: 16 / step }, (_, i) => i * step);
   return turns(name) ? DIRECTIONS : [N];
@@ -912,9 +914,10 @@ function connectorShapes(name: string): Sheet {
 /** A connection point turned to the entity's facing, the way the renderer's
  *  fluid and heat networks turn it. */
 function worldPoint(
-  p: { x: number; y: number; direction: number; positionsByDirection?: [number, number][] },
+  p: { x: number; y: number; direction: number; positionsByDirection?: [number, number][]; fixed?: boolean },
   dir: number,
 ): { x: number; y: number; direction: number } {
+  if (p.fixed) dir = N;
   const steps = Math.round(dir / 4) % 4;
   const direction = (p.direction + steps * 4) % 16;
   if (p.positionsByDirection) {
@@ -1435,8 +1438,9 @@ function platformSection(): Sheet {
   for (let y = -4; y < 26; y++) for (let x = -2; x < 30; x++) sheet.tile("space-platform-foundation", x, y);
   sheet.add({ name: "space-platform-hub", x: 4, y: 4 });
   for (const [x, y] of [[10, 2], [14, 2], [10, 6], [2, 10], [6, 10], [10, 10]] as const) sheet.add({ name: "cargo-bay", x, y });
-  sheet.add({ name: "thruster", x: 4, y: 20 });
-  sheet.add({ name: "thruster", x: 10, y: 20 });
+  // Five tiles tall, so centred on a half tile.
+  sheet.add({ name: "thruster", x: 4, y: 20.5 });
+  sheet.add({ name: "thruster", x: 10, y: 20.5 });
   for (const [x, dir] of [[1.5, N], [5.5, N], [22.5, N]] as const) sheet.add({ name: "asteroid-collector", x, y: -2.5, direction: dir });
   sheet.add({ name: "asteroid-collector", x: 27.5, y: 5.5, direction: E });
   sheet.add({ name: "crusher", x: 21, y: 2.5 });
