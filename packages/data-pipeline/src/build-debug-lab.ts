@@ -334,7 +334,9 @@ function turns(name: string): boolean {
   if (v.inserterGraphics || v.rotatesFootprint || name in data.belts) return true;
   for (const layer of v.graphics?.layers ?? []) {
     if ("per" in layer && (layer.per === "dir4" || layer.per === "dir8")) return true;
-    if (layer.column?.by === "direction" || layer.row?.by === "direction") return true;
+    // Any facing-driven frame axis: "direction", or the artillery turret's
+    // cannon picking one of 256 poses from its placement facing.
+    if (/^direction/.test(layer.column?.by ?? "") || /^direction/.test(layer.row?.by ?? "")) return true;
   }
   if (v.pipeConnections?.length && !quarterSymmetric(v.pipeConnections)) return true;
   if (v.heatConnections?.length && !quarterSymmetric(v.heatConnections)) return true;
@@ -430,15 +432,21 @@ function facingStrip(name: string, extra: Partial<Ent> = {}): Sheet {
   const types: ("input" | "output" | undefined)[] = isUndergroundLike(name) ? ["input", "output"] : [undefined];
   const [w, h] = visual(name).tileFootprint;
   const cell = Math.max(Math.ceil(Math.max(w, h)), Math.ceil(2 * artReach(name)) - 2);
+  const pitch = cell + 1;
+  // Blank cells between the entrances and the exits, enough that the east
+  // entrance can't reach the east exit and pair with it: each is meant to
+  // stand alone.
+  const reach = data.undergroundBelts?.[name]?.maxDistance ?? 0;
+  const gap = Math.max(1, Math.floor(reach / pitch) - dirs.length + 1);
   let i = 0;
   for (const undergroundType of types) {
     for (const direction of dirs) {
       const [sx, sy] = footprintOf({ name, direction });
-      const cx = i * (cell + 1) + cell / 2;
+      const cx = i * pitch + cell / 2;
       sheet.add({ name, x: snap(cx, sx), y: snap(cell / 2, sy), direction, undergroundType, ...extra });
       i++;
     }
-    i++; // a blank cell between entrances and exits
+    i += gap;
   }
   return sheet;
 }
@@ -749,7 +757,7 @@ function beltStates(): BeltState[] {
         // curve's own end draws no cap once something continues past it.
         at(specs, cx, cy, 0, 1, N, dir);
         at(specs, cx, cy, 1, 1, W, dir);
-        at(specs, cx, cy, 0, -1, N, dir);
+        at(specs, cx, cy, 0, 0, N, dir);
       },
     },
     {
@@ -1016,7 +1024,7 @@ function wallSection(): Sheet {
   for (let x = 0; x < 9; x++) gates.add({ name: x === 3 || x === 4 ? "gate" : "stone-wall", x: x + 0.5, y: 0.5, direction: E });
   for (let y = 0; y < 9; y++) gates.add({ name: y === 3 || y === 4 ? "gate" : "stone-wall", x: 12.5, y: y + 2.5, direction: N });
   // Gates straight off a wall corner and a T.
-  for (const [x, y, n] of [[0, 3, "stone-wall"], [0, 4, "stone-wall"], [1, 4, "gate"], [2, 4, "gate"], [3, 4, "stone-wall"], [3, 5, "stone-wall"]] as const) {
+  for (const [x, y, n] of [[0, 3, "stone-wall"], [0, 4, "stone-wall"], [1, 4, "gate"], [2, 4, "gate"], [3, 3, "stone-wall"], [3, 4, "stone-wall"], [3, 5, "stone-wall"]] as const) {
     gates.add({ name: n, x: x + 0.5, y: y + 0.5, direction: n === "gate" ? E : N });
   }
   blocks.push({ title: "[item=gate] gates in walls", sheet: gates });
@@ -1088,15 +1096,18 @@ function poleFacingSection(): Sheet {
 function poleMixSection(): Sheet {
   const blocks: Block[] = [];
   const chain = new Sheet();
+  // small-medium, medium-big, big-small, small-substation, substation-medium,
+  // (medium-big again,) big-substation: all six pairs, each within the
+  // shorter pole's reach.
   const refs = [
     chain.add({ name: "small-electric-pole", x: 0.5, y: 0.5 }),
     chain.add({ name: "medium-electric-pole", x: 6.5, y: 0.5 }),
     chain.add({ name: "big-electric-pole", x: 14, y: 1 }),
-    chain.add({ name: "substation", x: 28, y: 1 }),
-    chain.add({ name: "small-electric-pole", x: 34.5, y: 0.5 }),
-    chain.add({ name: "substation", x: 40, y: 1 }),
-    chain.add({ name: "medium-electric-pole", x: 46.5, y: 0.5 }),
-    chain.add({ name: "big-electric-pole", x: 54, y: 1 }),
+    chain.add({ name: "small-electric-pole", x: 20.5, y: 0.5 }),
+    chain.add({ name: "substation", x: 26, y: 1 }),
+    chain.add({ name: "medium-electric-pole", x: 32.5, y: 0.5 }),
+    chain.add({ name: "big-electric-pole", x: 40, y: 1 }),
+    chain.add({ name: "substation", x: 54, y: 1 }),
   ];
   chain.chain(["copper", "red", "green"], refs);
   blocks.push({ title: "every tier to every tier", sheet: chain });
@@ -1167,38 +1178,44 @@ function combinatorSection(): Sheet {
   return stack(rows, 1);
 }
 
-/** Every kind of building that takes a circuit wire, daisy-chained red and
- *  green from a pole. */
+/** Every building that takes a circuit wire, in build-menu order: red and
+ *  green from a pole, then on from building to building while the next one
+ *  is in a circuit wire's reach; a new pole starts the next run. Poles,
+ *  combinators and the power switch have sections of their own. */
 function circuitBuildingsSection(): Sheet {
-  const names = [
-    "wooden-chest", "storage-tank", "transport-belt", "splitter", "inserter", "long-handed-inserter", "loader",
-    "small-lamp", "programmable-speaker", "display-panel", "pump", "offshore-pump", "electric-mining-drill",
-    "pumpjack", "accumulator", "roboport", "gate", "gun-turret", "laser-turret", "assembling-machine-2",
-    "electric-furnace", "agricultural-tower", "asteroid-collector", "nuclear-reactor",
-  ].filter((n) => lookup.has(n) && canWire(visual(n), "red"));
+  const ownSection = /electric-pole|substation|combinator|power-switch/;
+  const names = catalogueEntries()
+    .map((e) => e.name)
+    .filter((n) => !ownSection.test(n) && canWire(visual(n), "red"));
+  // Factorio's default circuit wire reach, centre to centre, with a margin.
+  const REACH = 8.5;
   const blocks: Block[] = [];
   let group = new Sheet();
   let refs: number[] = [];
   let x = 0;
   const flush = () => {
-    group.chain(["red", "green"], refs);
-    blocks.push({ sheet: group });
+    if (refs.length) {
+      group.chain(["red", "green"], refs);
+      blocks.push({ sheet: group });
+    }
     group = new Sheet();
     refs = [];
     x = 0;
   };
   for (const name of names) {
-    if (refs.length === 0) {
+    const [w, h] = visual(name).tileFootprint;
+    const at = () => ({ x: snap(x + w / 2, w), y: snap(h / 2, h) });
+    const prev = refs.length ? group.ents[refs[refs.length - 1]!]! : undefined;
+    if (prev && (x > 30 || Math.hypot(at().x - prev.x, at().y - prev.y) > REACH)) flush();
+    if (!refs.length) {
       refs.push(group.add({ name: "medium-electric-pole", x: 0.5, y: 0.5 }));
       x = 2;
     }
-    const [w, h] = visual(name).tileFootprint;
     const undergroundType = isUndergroundLike(name) ? "input" : undefined;
-    refs.push(group.add({ name, x: snap(x + w / 2, w), y: snap(h / 2, h), undergroundType }));
+    refs.push(group.add({ name, ...at(), undergroundType }));
     x += Math.ceil(w) + 2;
-    if (x > 30) flush();
   }
-  if (refs.length) flush();
+  flush();
   return flow(blocks, 120, 4, 3);
 }
 
@@ -1209,7 +1226,7 @@ function powerChapter(): Chapter {
       { title: "[item=small-electric-pole] Pole facings: poles turn to face their wires", sheet: poleFacingSection() },
       { title: "[item=big-electric-pole] Mixed tiers & the power switch", sheet: poleMixSection() },
       { title: "[item=decider-combinator] Combinators — N E S W", sheet: combinatorSection() },
-      { title: "[item=red-wire] Circuit wires to every wireable kind", sheet: circuitBuildingsSection() },
+      { title: "[item=red-wire] Circuit wires to every wireable building", sheet: circuitBuildingsSection() },
     ],
   };
 }
@@ -1327,7 +1344,7 @@ function trackPieceSection(): Sheet {
   }
   rows.push({ title: "rail-ramp", sheet: pieceRow("rail-ramp", [0, 4, 8, 12]) });
   const supports = new Sheet();
-  four.forEach((direction, i) => {
+  facings("rail-support").forEach((direction, i) => {
     const j = joints.get(direction)!;
     supports.add({ name: "rail-support", x: j.x - floorEven(j.x) + i * 6 + 2, y: j.y - floorEven(j.y) + 2, direction });
   });
@@ -1417,7 +1434,7 @@ function platformSection(): Sheet {
   const sheet = new Sheet();
   for (let y = -4; y < 26; y++) for (let x = -2; x < 30; x++) sheet.tile("space-platform-foundation", x, y);
   sheet.add({ name: "space-platform-hub", x: 4, y: 4 });
-  for (const [x, y] of [[10, 2], [14, 2], [10, 6], [2, 10], [6, 10], [18, 10]] as const) sheet.add({ name: "cargo-bay", x, y });
+  for (const [x, y] of [[10, 2], [14, 2], [10, 6], [2, 10], [6, 10], [10, 10]] as const) sheet.add({ name: "cargo-bay", x, y });
   sheet.add({ name: "thruster", x: 4, y: 20 });
   sheet.add({ name: "thruster", x: 10, y: 20 });
   for (const [x, dir] of [[1.5, N], [5.5, N], [22.5, N]] as const) sheet.add({ name: "asteroid-collector", x, y: -2.5, direction: dir });
@@ -1453,32 +1470,42 @@ function recipeFor(name: string): string | undefined {
   return undefined;
 }
 
+/** A furnace (or the recycler, a furnace too) picks its recipe from what
+ *  goes in, so a blueprint never names one. */
+const isFurnace = (categories: string[]) => categories.some((c) => c === "smelting" || c.startsWith("recycling"));
+
 function moduleSection(): Sheet {
   const rows: Block[] = [];
-  const modules = Object.keys(data.modules);
+  const modules = Object.values(data.modules);
   const am = new Sheet();
-  const beacons = new Sheet();
   modules.forEach((m, i) => {
-    am.add({ name: "assembling-machine-3", x: i * 4 + 1.5, y: 1.5, recipe: "electronic-circuit", modules: [{ name: m, quality: "normal", count: 4 }] });
-    beacons.add({ name: "beacon", x: i * 4 + 1.5, y: 1.5, modules: [{ name: m, quality: "normal", count: 2 }] });
+    am.add({ name: "assembling-machine-3", x: i * 4 + 1.5, y: 1.5, recipe: "electronic-circuit", modules: [{ name: m.name, quality: "normal", count: 4 }] });
   });
   rows.push({ title: "[item=assembling-machine-3] every module, four to a machine", sheet: am });
-  rows.push({ title: "[item=beacon] every module in a beacon (tinted)", sheet: beacons });
+  // A beacon passes on speed, consumption and pollution only: productivity
+  // and quality modules can't go in one.
+  const beacons = new Sheet();
+  modules
+    .filter((m) => !((m.effects.productivity ?? 0) > 0 || (m.effects.quality ?? 0) > 0))
+    .forEach((m, i) => beacons.add({ name: "beacon", x: i * 4 + 1.5, y: 1.5, modules: [{ name: m.name, quality: "normal", count: 2 }] }));
+  rows.push({ title: "[item=beacon] every module a beacon takes (tinted)", sheet: beacons });
   const machines = new Sheet();
   let x = 0;
   for (const m of Object.values(data.machines)) {
-    if (m.moduleSlots === 0 && !recipeFor(m.name)) continue;
+    const recipe = m.kind === "crafting" && !isFurnace(m.categories) ? (fluidRecipeFor(m.name) ?? recipeFor(m.name)) : undefined;
+    const takesSpeed = m.moduleSlots > 0 && (!m.allowedEffects || m.allowedEffects.includes("speed"));
+    if (!recipe && !takesSpeed) continue;
     const [w, h] = m.tileFootprint ?? m.size;
     machines.add({
       name: m.name,
       x: snap(x + w / 2, w),
       y: snap(h / 2, h),
-      recipe: m.kind === "crafting" ? (fluidRecipeFor(m.name) ?? recipeFor(m.name)) : undefined,
-      modules: m.moduleSlots ? [{ name: "speed-module-3", quality: "normal", count: m.moduleSlots }] : [],
+      recipe,
+      modules: takesSpeed ? [{ name: "speed-module-3", quality: "normal", count: m.moduleSlots }] : [],
     });
     x += Math.ceil(w) + 1;
   }
-  rows.push({ title: "[item=assembling-machine-2] every machine with a recipe and modules", sheet: machines });
+  rows.push({ title: "[item=assembling-machine-2] every machine with modules, and a recipe where blueprints carry one", sheet: machines });
   return stack(rows, 1);
 }
 

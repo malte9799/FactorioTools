@@ -58,6 +58,24 @@ test("idempotent normalise -> denormalise -> normalise for a fully-populated ent
   assert.deepEqual(after!.modules, original!.modules);
 });
 
+test("modules are written to each kind's own module inventory", () => {
+  const modules = [{ name: "speed-module", quality: "normal" as const, count: 2 }];
+  const at = (name: string): PlacedEntity => ({ entityNumber: 1, name, x: 0, y: 0, direction: 0, quality: "normal", modules, filterItems: [] });
+  const inventoryOf = (name: string) => {
+    const [bpEntity] = denormaliseEntities([at(name)]);
+    const requests = bpEntity!.items as { items: { in_inventory: { inventory: number; stack: number }[] } }[];
+    return [...new Set(requests.flatMap((r) => r.items.in_inventory.map((slot) => slot.inventory)))];
+  };
+  assert.deepEqual(inventoryOf("beacon"), [1]);
+  assert.deepEqual(inventoryOf("electric-mining-drill"), [2]);
+  assert.deepEqual(inventoryOf("big-mining-drill"), [2]);
+  assert.deepEqual(inventoryOf("pumpjack"), [2]);
+  assert.deepEqual(inventoryOf("lab"), [3]);
+  assert.deepEqual(inventoryOf("biolab"), [3]);
+  assert.deepEqual(inventoryOf("assembling-machine-3"), [4]);
+  assert.deepEqual(inventoryOf("electric-furnace"), [4]);
+});
+
 test("defaults (direction 0, quality normal, no recipe, no modules) omit their fields", () => {
   const entities: PlacedEntity[] = [
     { entityNumber: 1, name: "transport-belt", x: 0, y: 0, direction: 0, quality: "normal", modules: [], filterItems: [] },

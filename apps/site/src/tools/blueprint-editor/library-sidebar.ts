@@ -604,9 +604,24 @@ export function buildLibrarySidebar(container: HTMLElement, callbacks: LibraryCa
             key,
             iconName: entry.icon,
             onClick: () => {
-              builtinString(entry).then(
-                (bpString) => callbacks.onLoad(bpString),
-                () => callbacks.notify(`Couldn't load ${entry.label}.`, "error"),
+              if (typeof entry.bpString === "string") {
+                callbacks.onLoad(entry.bpString);
+                return;
+              }
+              // Fetched on first use: by the time it arrives the user may
+              // have opened something else, which it must not replace.
+              entry.bpString().then(
+                (bpString) => {
+                  if (activeKey === key) callbacks.onLoad(bpString);
+                },
+                (err: unknown) => {
+                  console.error(err);
+                  if (activeKey === key) {
+                    activeKey = null;
+                    refresh();
+                  }
+                  callbacks.notify(`Couldn't load ${entry.label}.`, "error");
+                },
               );
             },
             // A built-in can't be deleted, but duplicating one is how it
