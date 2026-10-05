@@ -18,15 +18,20 @@ import { opposite, toCardinal, type Cardinal } from "./grid.js";
  *  steps — so `entity.direction` is first collapsed to its nearest
  *  cardinal the same way collect.ts's own `frame.direction` is. */
 /** Two points only join when their `connection_category` lists overlap —
- *  absent means Factorio's own default category. */
+ *  absent means Factorio's own default category — and they don't each
+ *  insist on a different fluid: a fluid box's `filter` names the one fluid
+ *  it takes, so a thruster's fuel port never joins the oxidizer port of the
+ *  thruster beside it. */
 const DEFAULT_CATEGORY = ["default"];
 function sharesCategory(a: WorldPipeConnection, b: WorldPipeConnection): boolean {
+  if (a.filter !== undefined && b.filter !== undefined && a.filter !== b.filter) return false;
   const other = b.categories ?? DEFAULT_CATEGORY;
   return (a.categories ?? DEFAULT_CATEGORY).some((c) => other.includes(c));
 }
 
 function rotatePoint(point: PipeConnectionPoint, entityDirection: number): { x: number; y: number; direction: Cardinal } {
-  const cardinal = toCardinal(entityDirection);
+  // An entity that can't be turned keeps its ports where its art has them.
+  const cardinal = point.fixed ? 0 : toCardinal(entityDirection);
   const steps = Math.round(cardinal / 4) % 4;
   const direction = ((point.direction + steps * 4) % 16) as Cardinal;
   // Pumpjack's own output socket: no single base point rotates correctly
@@ -46,9 +51,10 @@ export type FluidPointState = "open" | "connected" | "sibling" | "siblingMixed";
 export interface WorldPipeConnection {
   entityNumber: number;
   entityName: string;
-  /** The point's own `connectionCategory`/`noCover`, carried through
-   *  unchanged from its PipeConnectionPoint. */
+  /** The point's own `connectionCategory`/`filter`/`noCover`, carried
+   *  through unchanged from its PipeConnectionPoint. */
   categories?: string[];
+  filter?: string;
   noCover?: boolean;
   onlyWhenConnected?: boolean;
   /** The unrotated local point this was built from — what a `fluid-point`
@@ -90,6 +96,7 @@ export class FluidNetwork {
         entityNumber: entity.entityNumber,
         entityName: entity.name,
         categories: c.connectionCategory,
+        filter: c.filter,
         noCover: c.noCover,
         onlyWhenConnected: c.onlyWhenConnected,
         local: { x: c.x, y: c.y, direction: c.direction },

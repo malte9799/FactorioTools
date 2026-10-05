@@ -39,7 +39,7 @@ import type {
   UndergroundBeltProto,
 } from "@factoriotools/engine";
 import { loadLocale, localisedRecipeName, type LocaleTables } from "./locale.js";
-import { animationListGraphics, beltGraphics, directionColumnGraphics, pipeConnectionsOf, pipeCoversLayers, sheetsOf, toSprite, unwrap, unwrapAll } from "./sprite-shapes.js";
+import { animationListGraphics, beltGraphics, directionColumnGraphics, fluidEnablersOf, pipeConnectionsOf, pipeCoversLayers, pipePictureLayers, sheetsOf, toSprite, unwrap, unwrapAll, type FluidEnabler } from "./sprite-shapes.js";
 import { buildRenderCatalog } from "./render-catalog.js";
 import type { RenderCatalog } from "@factoriotools/engine";
 
@@ -265,7 +265,7 @@ const TIER_OVERRIDES: { entity: string; pattern: RegExp; layer: Layer; ySortBias
   { entity: "big-mining-drill", pattern: /-top\.[^/]+$/, layer: Layer.AboveObject },
 ];
 
-function alwaysDrawnPieces(entityName: string, workingVisualisations: any[] | undefined, baseSheets: Set<string>): GraphicsLayer[] {
+function alwaysDrawnPieces(entityName: string, workingVisualisations: any[] | undefined, baseSheets: Set<string>, enablers: Map<string, FluidEnabler>): GraphicsLayer[] {
   const full: GraphicsLayer[] = [];
   const partial: GraphicsLayer[] = [];
   const top: GraphicsLayer[] = [];
@@ -301,6 +301,12 @@ function alwaysDrawnPieces(entityName: string, workingVisualisations: any[] | un
     // A wet drill's fluid windows are white masks tinted by whatever fluid
     // is in the drill; a blueprint has none, so the window stays empty.
     if (typeof entry.apply_tint === "string" && entry.apply_tint.startsWith("input-fluid")) continue;
+    // An `enabled_by_name` piece is off until something names it — a
+    // foundry's pipework, switched on by whichever fluid boxes its recipe
+    // uses. One nothing names never shows.
+    const enabledBy = entry.enabled_by_name ? enablers.get(entry.name) : undefined;
+    if (entry.enabled_by_name && !enabledBy) continue;
+    const gate = enabledBy ? { enabledBy } : {};
 
     if (DIR4.some((d) => entry[`${d}_animation`])) {
       // A direction's own `{dir}_animation` can hold more than one non-
@@ -329,9 +335,9 @@ function alwaysDrawnPieces(entityName: string, workingVisualisations: any[] | un
       const isFull = DIR4.every((d) => slots[0]?.[d]);
       for (const sprites of slots) {
         const override = tierOverride(sprites);
-        if (override) (override.layer === Layer.AboveObject ? top : override.layer === Layer.LowerObject ? bottom : partial).push({ layer: override.layer, sprites, per: "dir4", ySortBias: override.ySortBias });
-        else if (isFull) full.push({ layer: Layer.Object, sprites, per: "dir4" });
-        else partial.push({ layer: Layer.Object, sprites, per: "dir4" });
+        if (override) (override.layer === Layer.AboveObject ? top : override.layer === Layer.LowerObject ? bottom : partial).push({ layer: override.layer, sprites, per: "dir4", ySortBias: override.ySortBias, ...gate });
+        else if (isFull) full.push({ layer: Layer.Object, sprites, per: "dir4", ...gate });
+        else partial.push({ layer: Layer.Object, sprites, per: "dir4", ...gate });
       }
       // Shadows of these pieces are otherwise dropped; the wet pipework's
       // own is the one that visibly goes missing.
@@ -340,15 +346,15 @@ function alwaysDrawnPieces(entityName: string, workingVisualisations: any[] | un
         const shadow = unwrapAll(entry[`${d}_animation`] ?? entry.animation).find((l) => l.shadow && PIECE_SHADOW_FILENAME.test(l.sprite.sheet));
         if (shadow) shadows[d] = shadow.sprite;
       }
-      if (Object.keys(shadows).length > 0) bottom.unshift({ layer: Layer.Shadow, sprites: shadows, per: "dir4" });
+      if (Object.keys(shadows).length > 0) bottom.unshift({ layer: Layer.Shadow, sprites: shadows, per: "dir4", ...gate });
       continue;
     }
 
     const { main } = unwrap(entry.north_animation ?? entry.animation);
     if (!main || baseSheets.has(main.sheet) || TRANSIENT_EFFECT_FILENAME.test(main.sheet)) continue;
     const override = tierOverride(main);
-    if (override) (override.layer === Layer.AboveObject ? top : override.layer === Layer.LowerObject ? bottom : partial).push({ layer: override.layer, sprites: main, ySortBias: override.ySortBias });
-    else partial.push({ layer: Layer.Object, sprites: main });
+    if (override) (override.layer === Layer.AboveObject ? top : override.layer === Layer.LowerObject ? bottom : partial).push({ layer: override.layer, sprites: main, ySortBias: override.ySortBias, ...gate });
+    else partial.push({ layer: Layer.Object, sprites: main, ...gate });
   }
   return [...bottom, ...partial, ...full, ...top];
 }
@@ -452,7 +458,7 @@ function graphicsForGraphicsSet(proto: any): EntityGraphics | undefined {
   const bodyOverride = BODY_TIER_OVERRIDES[proto.name];
   if (bodyOverride !== undefined && body.layer === Layer.Object) body.layer = bodyOverride;
   graphics.layers.unshift(...pumpjackBaseGraphics(proto));
-  graphics.layers.push(...alwaysDrawnPieces(proto.name, proto.graphics_set?.working_visualisations, baseSheets));
+  graphics.layers.push(...alwaysDrawnPieces(proto.name, proto.graphics_set?.working_visualisations, baseSheets, fluidEnablersOf(proto)));
   return graphics;
 }
 
@@ -652,6 +658,14 @@ function mapRecipes(
   return recipes;
 }
 
+/** The lowest tier an entity's own body paints on, shadows aside — where a
+ *  pipe stub that tucks in behind the body has to go to end up under all of
+ *  it (an electromagnetic plant's base plate sits a tier below the rest). */
+function lowestBodyTier(graphics: EntityGraphics | undefined): Layer {
+  const tiers = (graphics?.layers ?? []).map((l) => l.layer).filter((l) => l !== Layer.Shadow);
+  return tiers.length > 0 ? Math.min(...tiers) : Layer.Object;
+}
+
 function mapMachines(raw: Raw, locale: LocaleTables): Record<string, MachineProto> {
   const machines: Record<string, MachineProto> = {};
 
@@ -663,9 +677,10 @@ function mapMachines(raw: Raw, locale: LocaleTables): Record<string, MachineProt
         proto.crafting_categories ?? proto.resource_categories ?? (kind === "lab" ? ["lab"] : []);
 
       let graphics = table === "rocket-silo" ? graphicsForRocketSilo(proto) : graphicsForMachine(proto);
-      const coverLayers = pipeCoversLayers(proto);
-      if (coverLayers.length > 0) {
-        graphics = { ...(graphics ?? { layers: [] }), layers: [...(graphics?.layers ?? []), ...coverLayers] };
+      // Stubs before covers, so a cover still caps the stub it sits on.
+      const fluidLayers = [...pipePictureLayers(proto, lowestBodyTier(graphics)), ...pipeCoversLayers(proto)];
+      if (fluidLayers.length > 0) {
+        graphics = { ...(graphics ?? { layers: [] }), layers: [...(graphics?.layers ?? []), ...fluidLayers] };
       }
       const pipeConnections = pipeConnectionsOf(proto);
 

@@ -9,6 +9,7 @@ import {
   beltAnimationAxis,
   combinatorDisplayLayer,
   directionColumnGraphics,
+  fluidEnablersOf,
   heatConnectionPatchLayers,
   heatConnectionsOf,
   heatCoversOf,
@@ -16,6 +17,7 @@ import {
   perDirection,
   pipeConnectionsOf,
   pipeCoversLayers,
+  pipePictureLayers,
   outputWireConnectionsOf,
   stackSources,
   staticGraphics,
@@ -35,6 +37,16 @@ function box(collisionBox: [[number, number], [number, number]] | undefined, fal
 
 function footprintOf(proto: any): [number, number] {
   return box(proto.selection_box, [1, 1]);
+}
+
+/** A thruster's selection box runs on down over its exhaust nozzle, well
+ *  past the tiles it stands on, and so isn't centred on the entity. Its
+ *  collision box is the real footprint (4x5) — and what decides whether it
+ *  sits on whole or half tiles, which its pipe sockets have to agree with
+ *  to land on a tile at all. */
+function collisionFootprint(proto: any): [number, number] {
+  const [[x1, y1], [x2, y2]] = proto.collision_box as [[number, number], [number, number]];
+  return [Math.ceil(x2 - x1), Math.ceil(y2 - y1)];
 }
 
 const DIR4 = ["north", "east", "south", "west"] as const;
@@ -264,10 +276,13 @@ function roboportGraphics(proto: any): EntityGraphics | undefined {
   return layers.length > 0 ? { layers } : undefined;
 }
 
-/** A thruster's body is graphics_set.animation; its four pipe-connection
- *  pieces are always-visible working_visualisations entries (the fifth, a
- *  `fadeout` exhaust-flame effect, only shows while running and is skipped
- *  for the same reason animationListGraphics skips !always_draw entries). */
+/** A thruster's body is graphics_set.animation; its four pipe elbows are
+ *  working_visualisations entries each switched on by one of its fuel/
+ *  oxidizer pipe connections, and only while that connection is plugged in
+ *  (the boxes' `draw_only_when_connected`) — a bare thruster shows none.
+ *  The fifth entry, a `fadeout` exhaust-flame effect, only shows while
+ *  running and is skipped for the same reason animationListGraphics skips
+ *  !always_draw entries. */
 function thrusterGraphics(proto: any): EntityGraphics | undefined {
   const gs = proto.graphics_set;
   const { main, shadow } = unwrap(gs?.animation);
@@ -275,7 +290,7 @@ function thrusterGraphics(proto: any): EntityGraphics | undefined {
   const layers: GraphicsLayer[] = [];
   if (shadow) layers.push({ layer: Layer.Shadow, sprites: shadow });
   layers.push({ layer: Layer.Object, sprites: main });
-  const pipes = animationListGraphics(gs?.working_visualisations);
+  const pipes = animationListGraphics(gs?.working_visualisations, fluidEnablersOf(proto));
   if (pipes) layers.push(...pipes.layers);
   return { layers };
 }
@@ -1216,11 +1231,12 @@ export function buildRenderCatalog(raw: Raw, locale: LocaleTables, version: stri
   const add = (proto: any, graphics: EntityGraphics | undefined, footprintOverride?: [number, number]) => {
     if (entities[proto.name] || NOT_PLACEABLE.test(proto.name)) return;
     const pipeConnections = pipeConnectionsOf(proto);
+    const pictureLayers = pipePictureLayers(proto);
     const coverLayers = pipeCoversLayers(proto);
     const heatConnections = heatConnectionsOf(proto);
     const heatPatchLayers = heatConnectionPatchLayers(proto);
     const heatCoverLayers = heatCoversOf(proto);
-    const extraLayers = [...coverLayers, ...heatPatchLayers, ...heatCoverLayers];
+    const extraLayers = [...pictureLayers, ...coverLayers, ...heatPatchLayers, ...heatCoverLayers];
     if (extraLayers.length > 0) {
       graphics = { ...(graphics ?? { layers: [] }), layers: [...(graphics?.layers ?? []), ...extraLayers] };
     }
@@ -1308,7 +1324,7 @@ export function buildRenderCatalog(raw: Raw, locale: LocaleTables, version: stri
     add(proto, artilleryTurretGraphics(proto));
   }
   for (const proto of Object.values(raw.thruster ?? {})) {
-    add(proto, thrusterGraphics(proto));
+    add(proto, thrusterGraphics(proto), collisionFootprint(proto));
   }
   for (const proto of Object.values(raw["agricultural-tower"] ?? {})) {
     add(proto, agriculturalTowerGraphics(proto));
