@@ -16,6 +16,7 @@ import { buildVisualLookup, makeConnectorPredicates, activeFluidConnections } fr
 import { buildGrid } from "../../packages/renderer/src/neighbours/grid.js";
 import { buildFluidNetwork } from "../../packages/renderer/src/neighbours/fluid.js";
 import { buildHeatNetwork } from "../../packages/renderer/src/neighbours/heat.js";
+import { buildCargoBayGrid } from "../../packages/renderer/src/neighbours/cargoBay.js";
 import { collectEntity } from "../../packages/renderer/src/draw/collect.js";
 import type { DrawCommand } from "../../packages/renderer/src/draw/commands.js";
 
@@ -55,7 +56,7 @@ for (let dir = 0; dir < 16; dir++) {
         return p && activeFluidConnections(p, e.recipe, data);
       }),
       heatNetwork: buildHeatNetwork(all, (n) => lookup.get(n)?.heatConnections),
-      ...connectors, platformBoxes: [], animationFrame: frame,
+      ...connectors, cargoBays: buildCargoBayGrid(all, connectors.cargoBayShapeOf), animationFrame: frame,
     };
     const cmds: DrawCommand[] = [];
     collectEntity(cmds, self, visual, ctx, 1);

@@ -12,6 +12,7 @@ import { buildVisualLookup, makeConnectorPredicates, activeFluidConnections } fr
 import { buildGrid } from "../../packages/renderer/src/neighbours/grid.js";
 import { buildFluidNetwork } from "../../packages/renderer/src/neighbours/fluid.js";
 import { buildHeatNetwork } from "../../packages/renderer/src/neighbours/heat.js";
+import { buildCargoBayGrid } from "../../packages/renderer/src/neighbours/cargoBay.js";
 import { collectEntity } from "../../packages/renderer/src/draw/collect.js";
 import type { DrawCommand } from "../../packages/renderer/src/draw/commands.js";
 
@@ -63,8 +64,8 @@ function collectFor(self: PlacedEntity, others: PlacedEntity[], frame: number): 
     return p && activeFluidConnections(p, e.recipe, data);
   });
   const heatNetwork = buildHeatNetwork(all, (n) => lookup.get(n)?.heatConnections);
-  const platformBoxes = all.map((e) => ({ entityNumber: e.entityNumber, left: e.x - 1, top: e.y - 1, right: e.x + 1, bottom: e.y + 1 }));
-  const ctx: any = { grid, fluidNetwork, heatNetwork, ...connectors, platformBoxes, animationFrame: frame };
+  const cargoBays = buildCargoBayGrid(all, connectors.cargoBayShapeOf);
+  const ctx: any = { grid, fluidNetwork, heatNetwork, ...connectors, cargoBays, animationFrame: frame };
   const out: DrawCommand[] = [];
   const v = lookup.get(self.name);
   if (!v?.graphics) return out;

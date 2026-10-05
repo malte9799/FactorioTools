@@ -10,6 +10,7 @@ import { buildVisualLookup, makeConnectorPredicates, activeFluidConnections } fr
 import { buildGrid } from "../../packages/renderer/src/neighbours/grid.js";
 import { buildFluidNetwork } from "../../packages/renderer/src/neighbours/fluid.js";
 import { buildHeatNetwork } from "../../packages/renderer/src/neighbours/heat.js";
+import { buildCargoBayGrid } from "../../packages/renderer/src/neighbours/cargoBay.js";
 import { collectEntity } from "../../packages/renderer/src/draw/collect.js";
 import type { DrawCommand } from "../../packages/renderer/src/draw/commands.js";
 
@@ -29,7 +30,7 @@ function collectAll(entities: PlacedEntity[], frame: number): DrawCommand[] {
     return points && activeFluidConnections(points, e.recipe, data);
   });
   const heatNetwork = buildHeatNetwork(entities, (name) => visualFor(name)?.heatConnections);
-  const ctx: any = { grid, fluidNetwork, heatNetwork, ...connectors, platformBoxes: [], animationFrame: frame };
+  const ctx: any = { grid, fluidNetwork, heatNetwork, ...connectors, cargoBays: buildCargoBayGrid(entities, connectors.cargoBayShapeOf), animationFrame: frame };
   const cmds: DrawCommand[] = [];
   for (const e of entities) {
     const v = visualFor(e.name);

@@ -7,7 +7,7 @@ import { ALL_ALT_MODE_LAYERS, drawAltModeOverlay, drawQualityBadge, type AltMode
 import { buildGrid, NeighbourGrid, step, toCardinal } from "./neighbours/grid.js";
 import { buildFluidNetwork, FluidNetwork } from "./neighbours/fluid.js";
 import { buildHeatNetwork, HeatNetwork } from "./neighbours/heat.js";
-import type { PlatformBox } from "./neighbours/platform.js";
+import { buildCargoBayGrid, CargoBayGrid } from "./neighbours/cargoBay.js";
 import { buildWireNetwork, resolveWires, terminalFor, terminalSideAt, type ResolvedWire, type WireNetwork } from "./neighbours/wires.js";
 import { drawSupplyAreas, drawWires, type SupplyArea } from "./draw/wireDraw.js";
 import { collectEntity, collectInserterPlatform, type CollectContext } from "./draw/collect.js";
@@ -459,6 +459,10 @@ function gcd(a: number, b: number): number {
   return a;
 }
 
+/** The floor a space platform is built from; nothing else can be laid in
+ *  space, so one such tile places the whole blueprint there. */
+const SPACE_PLATFORM_TILE = "space-platform-foundation";
+
 /** Placement-ghost valid/invalid tint — matches the real game's own
  *  green-means-go, red-means-blocked cursor-item convention. */
 const GHOST_VALID_TINT = "#4caf50";
@@ -544,7 +548,10 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
   let fluidNetwork = new FluidNetwork();
   let heatNetwork = new HeatNetwork();
   let spatialIndex = new SpatialIndex([]);
-  let platformBoxes: PlatformBox[] = [];
+  let cargoBays = new CargoBayGrid();
+  /** Whether the loaded blueprint's floor is space platform — the one hint
+   *  of where cargo bays stand when their hub is not in the blueprint. */
+  let floorInSpace = false;
   let tileScene: TileScene = { commands: [], bounds: null };
   let highlight: HighlightRole | null = null;
   /** The entity under the cursor right now, tracked independently of
@@ -1296,7 +1303,7 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
         else rebuildReasonThisFrame = "visibility";
       }
       sceneCache = buildSceneCache(sceneKey, visibleEntities, {
-        grid, fluidNetwork, heatNetwork, ...connectors, platformBoxes, animationFrame: 0,
+        grid, fluidNetwork, heatNetwork, ...connectors, cargoBays, animationFrame: 0,
       });
       sceneRebuiltThisFrame = true;
       sceneRebuildCount++;
@@ -1561,7 +1568,7 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
           drawInserter(ctx, atlas, ghost, visual.inserterGraphics, ghostTint, tintedRes);
         } else if (visual.graphics) {
           const ghostCommands: DrawCommand[] = [];
-          collectEntity(ghostCommands, ghost, withoutRailPatch(visual), { grid: previewGrid, fluidNetwork: previewFluidNetwork, heatNetwork: previewHeatNetwork, ...connectors, platformBoxes, animationFrame }, 1);
+          collectEntity(ghostCommands, ghost, withoutRailPatch(visual), { grid: previewGrid, fluidNetwork: previewFluidNetwork, heatNetwork: previewHeatNetwork, ...connectors, cargoBays, animationFrame }, 1);
           for (const c of ghostCommands) c.tint = ghostTint;
           paint(ctx, atlas, ghostCommands, tintedRes);
         }
@@ -1581,7 +1588,7 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
         drawInserter(ctx, atlas, pg, visual.inserterGraphics, ghostTint, tintedRes);
       } else if (visual.graphics) {
         const ghostCommands: DrawCommand[] = [];
-        collectEntity(ghostCommands, pg, visual, { grid: previewGrid, fluidNetwork: previewFluidNetwork, heatNetwork: previewHeatNetwork, ...connectors, platformBoxes, animationFrame }, 1);
+        collectEntity(ghostCommands, pg, visual, { grid: previewGrid, fluidNetwork: previewFluidNetwork, heatNetwork: previewHeatNetwork, ...connectors, cargoBays, animationFrame }, 1);
         for (const c of ghostCommands) c.tint = ghostTint;
         paint(ctx, atlas, ghostCommands, tintedRes);
       }
@@ -1598,7 +1605,7 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
         if (!visual?.graphics) continue;
         const commands = byTint.get(tint) ?? byTint.set(tint, []).get(tint)!;
         const start = commands.length;
-        collectEntity(commands, entity, visual, { grid: previewGrid, fluidNetwork: previewFluidNetwork, heatNetwork: previewHeatNetwork, ...connectors, platformBoxes, animationFrame }, 1);
+        collectEntity(commands, entity, visual, { grid: previewGrid, fluidNetwork: previewFluidNetwork, heatNetwork: previewHeatNetwork, ...connectors, cargoBays, animationFrame }, 1);
         for (let i = start; i < commands.length; i++) commands[i]!.tint = tint;
       }
       for (const commands of byTint.values()) paint(ctx, atlas, commands, tintedRes);
@@ -2725,8 +2732,9 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
     });
     heatNetwork = buildHeatNetwork(entities, (name) => visualFor(name)?.heatConnections);
 
+    cargoBays = buildCargoBayGrid(entities, connectors.cargoBayShapeOf, floorInSpace);
+
     const boxes: IndexedBox[] = [];
-    platformBoxes = [];
     for (const e of entities) {
       const visual = visualFor(e.name);
       const [w, h] = visual ? effectiveFootprint(visual, e.direction) : FALLBACK_FOOTPRINT;
@@ -2742,7 +2750,6 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
         turned: rail && { cx: e.x + rail.cx, cy: e.y + rail.cy, w: rail.w, h: rail.h, angle: rail.angle },
       };
       boxes.push(box);
-      if (connectors.isPlatformLike(e.name)) platformBoxes.push(box);
     }
     spatialIndex = new SpatialIndex(boxes);
     // Any edit changes what the ghost previews against, so drop its cache.
@@ -2779,6 +2786,7 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
 
   function loadBlueprint(newEntities: PlacedEntity[], newWires: WireLink[] = [], newTiles: BpTile[] = []): void {
     tileScene = collectTiles(newTiles, catalog.tiles);
+    floorInSpace = newTiles.some((tile) => tile.name === SPACE_PLATFORM_TILE);
     for (const command of tileScene.commands) if (command.sheet) atlas.get(command.sheet);
     rebuildIndices(newEntities, newWires);
     const rect = container.getBoundingClientRect();

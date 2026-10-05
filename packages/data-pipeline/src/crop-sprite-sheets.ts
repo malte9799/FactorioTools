@@ -55,6 +55,7 @@ import {
 import { buildGrid } from "@factoriotools/renderer/src/neighbours/grid.js";
 import { buildFluidNetwork } from "@factoriotools/renderer/src/neighbours/fluid.js";
 import { buildHeatNetwork } from "@factoriotools/renderer/src/neighbours/heat.js";
+import { buildCargoBayGrid } from "@factoriotools/renderer/src/neighbours/cargoBay.js";
 import { collectEntity } from "@factoriotools/renderer/src/draw/collect.js";
 import type { DrawCommand } from "@factoriotools/renderer/src/draw/commands.js";
 
@@ -112,9 +113,10 @@ const mark = (sheet: string, sx: number, sy: number) => {
 };
 
 // Every origin declared in the data counts as used, whether or not the
-// simulation below reaches it. `per:"connection"` entities (cargo-landing-pad)
-// carry 16 precomputed cell positions that neighbour simulation only partly
-// hits; missing one would silently drop a sprite from the finished product.
+// simulation below reaches it. A cargo hub's `per:"cargo-connection"` layers
+// name one cell per shape and variant, and which of them a hub draws depends
+// on its neighbours and on where it stands; the simulation only hits a few,
+// and missing one would silently drop a sprite from the finished product.
 for (const [, visual] of lookup) {
   for (const layer of (visual as any).graphics?.layers ?? []) {
     for (const sp of spritesOfLayer(layer)) {
@@ -149,7 +151,7 @@ function collect(self: PlacedEntity, others: PlacedEntity[], frame: number): Dra
     }),
     heatNetwork: buildHeatNetwork(all, (n: string) => lookup.get(n)?.heatConnections),
     ...connectors,
-    platformBoxes: all.map((e) => ({ entityNumber: e.entityNumber, left: e.x - 1.5, top: e.y - 1.5, right: e.x + 1.5, bottom: e.y + 1.5 })),
+    cargoBays: buildCargoBayGrid(all, connectors.cargoBayShapeOf),
     animationFrame: frame,
   };
   const out: DrawCommand[] = [];
