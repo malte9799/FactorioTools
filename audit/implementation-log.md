@@ -447,7 +447,7 @@ absichtlich falsche Formel (`% 64` statt `% animPeriod`) lief durch. Die neue
 Referenz sammelt die Szene unabhängig per `collectEntity` direkt beim Zielframe;
 dieselbe Mutation schlägt jetzt in 4 von 4 Fällen an.
 
-Zwei weitere Eingriffe waren nötig, damit der Vergleich ehrlich ist:
+Drei weitere Eingriffe waren nötig, damit der Vergleich ehrlich ist:
 - `animation: false` beim Mounten, sonst backt `bakedLayersFor` die statischen
   Ebenen und der gecachte Frame malt nur noch die animierten Sprites.
 - Großer Stub-Viewport: Bei 1400×900 begrenzt der Zoom-Clamp die Sicht, und
@@ -472,3 +472,21 @@ Zwei weitere Eingriffe waren nötig, damit der Vergleich ehrlich ist:
 
 Ebenfalls im Test: `paint()` und `paintPlain()` erzeugen für eine ungetönte
 Szene dieselbe Aufruffolge (Voraussetzung für F-03).
+
+---
+## F-09 — Hosting-Kompression ✅ verifiziert
+
+Seit dem Audit liegt die Seite auf GitHub Pages. Gegenprobe vom Nutzer:
+`curl -sI -H 'Accept-Encoding: gzip' https://malte9799.github.io/FactorioTools/data/game-data.json`
+liefert `content-encoding: gzip`. Kein Handlungsbedarf.
+
+## F-14 — Teilweise zurückgekehrt, erneut behoben ✅
+
+`edit-properties.ts` baute in `buildPropertiesPanel` bei jedem Neuaufbau des
+Eigenschaften-Fensters (jede Auswahl, jede Feldänderung) ein komplettes
+`buildVisualLookup` über den ganzen Datensatz, um eine einzige Vorschau zu
+zeigen. Bekommt jetzt das Lookup des Renderers (`renderer.getVisualLookup()`)
+übergeben.
+
+Die durch `sceneCache.test.ts` ersetzten Skripte `verify-f01-cache.ts` und
+`verify-render-identical.ts` sind gelöscht.

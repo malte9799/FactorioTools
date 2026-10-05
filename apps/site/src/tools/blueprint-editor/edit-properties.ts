@@ -1,5 +1,5 @@
 import type { BottleneckSubgroup, GameData, ModuleStack, PlacedEntity, QualityName, RenderCatalog } from "@factoriotools/engine";
-import { buildVisualLookup, mountEntityPreview } from "@factoriotools/renderer";
+import { mountEntityPreview, type ResolvedVisual } from "@factoriotools/renderer";
 import { icon } from "./legacy-view/icons.js";
 import { buildCircuitSection, buildCircuitStatus, buildConnectionBar, hasCircuitGui, isCircuitFirst, type CircuitCallbacks } from "./edit-circuit.js";
 import { buildGridMenu, type GridMenuEntry, type GridMenuHandle } from "./grid-menu.js";
@@ -211,6 +211,7 @@ export function buildPropertiesPanel(
   entity: PlacedEntity,
   data: GameData,
   catalog: RenderCatalog,
+  visuals: ReadonlyMap<string, ResolvedVisual>,
   bottlenecks: BottleneckLookup,
   callbacks: PropertiesCallbacks,
 ): (() => void) | undefined {
@@ -260,8 +261,10 @@ export function buildPropertiesPanel(
   const previewWrap = document.createElement("div");
   previewWrap.className = "entity-preview";
   main.appendChild(previewWrap);
-  const visualLookup = buildVisualLookup(data, catalog);
-  const visual = visualLookup.get(entity.name);
+  // The renderer's own lookup: this panel is rebuilt on every selection and
+  // field change, and building a fresh one each time resolved every entity
+  // in the dataset to show one preview.
+  const visual = visuals.get(entity.name);
   let destroyPreview: (() => void) | undefined;
   if (visual) destroyPreview = mountEntityPreview(previewWrap, entity.name, entity.direction, visual, entity.controlBehavior);
 
