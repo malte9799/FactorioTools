@@ -43,8 +43,10 @@ function footprintOf(proto: any): [number, number] {
  *  past the tiles it stands on, and so isn't centred on the entity. Its
  *  collision box is the real footprint (4x5) — and what decides whether it
  *  sits on whole or half tiles, which its pipe sockets have to agree with
- *  to land on a tile at all. */
+ *  to land on a tile at all. A prototype that ships no collision box falls
+ *  back to footprintOf's selection box rather than stopping the build. */
 function collisionFootprint(proto: any): [number, number] {
+  if (!Array.isArray(proto.collision_box)) return footprintOf(proto);
   const [[x1, y1], [x2, y2]] = proto.collision_box as [[number, number], [number, number]];
   return [Math.ceil(x2 - x1), Math.ceil(y2 - y1)];
 }
@@ -1207,6 +1209,10 @@ function buildReplaceGroups(raw: Raw, menuPositions: Record<string, MenuPosition
   return out;
 }
 
+/** Builds the whole RenderCatalog from a raw data dump: each prototype
+ *  family goes through its own adapter above for its base graphics, and
+ *  `add` then records every entity's fluid and heat connection points and
+ *  appends the art that hangs off them. */
 export function buildRenderCatalog(raw: Raw, locale: LocaleTables, version: string): RenderCatalog {
   const entities: Record<string, RenderEntityProto> = {};
 

@@ -19,6 +19,8 @@ import { collectEntity } from "../src/draw/collect.js";
 import { compareDrawCommands, type DrawCommand } from "../src/draw/commands.js";
 
 let passed = 0;
+/** Runs one case, reporting it and failing the process without stopping the
+ *  rest. */
 function test(name: string, fn: () => void) {
   try {
     fn();
@@ -36,6 +38,7 @@ const lookup = buildVisualLookup(gameData, catalog);
 const connectors = makeConnectorPredicates(lookup);
 
 let nextNumber = 1;
+/** A placed entity with just the fields collectEntity reads. */
 function entity(name: string, x: number, y: number, direction = 0, recipe?: string): PlacedEntity {
   return { entityNumber: nextNumber++, name, x, y, direction, quality: "normal", modules: [], filterItems: [], recipe } as unknown as PlacedEntity;
 }
@@ -59,16 +62,20 @@ function collect(self: PlacedEntity, others: PlacedEntity[] = []): DrawCommand[]
   return out.sort(compareDrawCommands);
 }
 
+/** The sheet file name behind each command, in the order given. */
 const sheets = (commands: DrawCommand[]) => commands.map((c) => c.sheet.split("/").pop()!);
+/** The sheet names matching `pattern`, sorted — for asserting what drew
+ *  without caring where in the paint order it fell. */
 const matching = (commands: DrawCommand[], pattern: RegExp) => sheets(commands).filter((s) => pattern.test(s)).sort();
 
 /* ---------- thruster: an elbow per plugged-in port ---------- */
 
+/** The thruster pipe elbows among `commands`. */
 const elbows = (commands: DrawCommand[]) => matching(commands, /^thruster-pipe-connection-/);
 
-// A thruster stands on 4x5 tiles, so its centre sits on a whole x and a half
-// y. Centred at (4, 4.5) its ports open onto x = 1.5 (west) and 6.5 (east),
-// at y = 2.5 and 4.5.
+/** A thruster stands on 4x5 tiles, so its centre sits on a whole x and a
+ *  half y. Centred at (4, 4.5) its ports open onto x = 1.5 (west) and 6.5
+ *  (east), at y = 2.5 and 4.5. */
 const thruster = () => entity("thruster", 4, 4.5);
 
 test("a thruster's footprint is the 4x5 it stands on, not its selection box", () => {
@@ -119,7 +126,9 @@ test("thrusters flush side by side meet fuel to oxidizer, so neither grows an el
 
 /* ---------- foundry: pipework follows the recipe ---------- */
 
+/** The foundry's input/output pipework strips among `commands`. */
 const pipework = (commands: DrawCommand[]) => matching(commands, /^foundry-pipe-connections-/);
+/** The round pipe covers among `commands`, shadows aside. */
 const covers = (commands: DrawCommand[]) => matching(commands, /^pipe-cover-(north|east|south|west)\.png$/);
 
 test("a foundry with no recipe, or one without fluids, shows no pipework and no covers", () => {
@@ -164,6 +173,7 @@ test("a pipe on a foundry port takes its cover, not its pipework", () => {
 
 /* ---------- pipe_picture: the stub between body and socket ---------- */
 
+/** The electromagnetic plant's pipe stubs among `commands`, shadows aside. */
 const stubs = (commands: DrawCommand[]) => matching(commands, /^electromagnetic-plant-pipe-(north|east|south|west)\.png$/);
 
 test("an electromagnetic plant with no fluid recipe shows no stubs", () => {

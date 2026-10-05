@@ -10,6 +10,19 @@
 import type { PipeConnectionPoint, PlacedEntity } from "@factoriotools/engine";
 import { opposite, toCardinal, type Cardinal } from "./grid.js";
 
+const DEFAULT_CATEGORY = ["default"];
+
+/** Two points only join when their `connection_category` lists overlap —
+ *  absent means Factorio's own default category — and they don't each
+ *  insist on a different fluid: a fluid box's `filter` names the one fluid
+ *  it takes, so a thruster's fuel port never joins the oxidizer port of the
+ *  thruster beside it. */
+function sharesCategory(a: WorldPipeConnection, b: WorldPipeConnection): boolean {
+  if (a.filter !== undefined && b.filter !== undefined && a.filter !== b.filter) return false;
+  const other = b.categories ?? DEFAULT_CATEGORY;
+  return (a.categories ?? DEFAULT_CATEGORY).some((c) => other.includes(c));
+}
+
 /** Rotates a connection point declared in an entity's own unrotated
  *  (north-facing) local frame into world space, by the entity's own
  *  placement direction. Only 4-way rotation is meaningful here — every
@@ -17,18 +30,6 @@ import { opposite, toCardinal, type Cardinal } from "./grid.js";
  *  direction, and every fluid-box-bearing entity rotates in 90-degree
  *  steps — so `entity.direction` is first collapsed to its nearest
  *  cardinal the same way collect.ts's own `frame.direction` is. */
-/** Two points only join when their `connection_category` lists overlap —
- *  absent means Factorio's own default category — and they don't each
- *  insist on a different fluid: a fluid box's `filter` names the one fluid
- *  it takes, so a thruster's fuel port never joins the oxidizer port of the
- *  thruster beside it. */
-const DEFAULT_CATEGORY = ["default"];
-function sharesCategory(a: WorldPipeConnection, b: WorldPipeConnection): boolean {
-  if (a.filter !== undefined && b.filter !== undefined && a.filter !== b.filter) return false;
-  const other = b.categories ?? DEFAULT_CATEGORY;
-  return (a.categories ?? DEFAULT_CATEGORY).some((c) => other.includes(c));
-}
-
 function rotatePoint(point: PipeConnectionPoint, entityDirection: number): { x: number; y: number; direction: Cardinal } {
   // An entity that can't be turned keeps its ports where its art has them.
   const cardinal = point.fixed ? 0 : toCardinal(entityDirection);
@@ -85,6 +86,8 @@ export class FluidNetwork {
   private points: WorldPipeConnection[] = [];
   private byTile = new Map<string, WorldPipeConnection[]>();
 
+  /** Turns each of `entity`'s connection points into world space and files
+   *  it under the tile it lands on. */
   add(entity: PlacedEntity, connections: PipeConnectionPoint[]): void {
     for (const c of connections) {
       const rotated = rotatePoint(c, entity.direction);

@@ -119,6 +119,9 @@ interface EntityFrame {
   slotModules: string[];
 }
 
+/** Builds `entity`'s EntityFrame: its facing, the connection shape its
+ *  neighbours give it, and what each of its fluid and heat ports is
+ *  plugged into — read once here, ahead of collectEntity's layer loop. */
 function resolveFrame(entity: PlacedEntity, visual: ResolvedVisual, ctx: CollectContext): EntityFrame {
   const x = Math.round(entity.x);
   const y = Math.round(entity.y);
