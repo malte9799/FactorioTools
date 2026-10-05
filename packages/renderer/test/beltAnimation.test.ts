@@ -27,6 +27,7 @@ import { buildVisualLookup, makeConnectorPredicates, activeFluidConnections } fr
 import { buildGrid } from "../src/neighbours/grid.js";
 import { buildFluidNetwork } from "../src/neighbours/fluid.js";
 import { buildHeatNetwork } from "../src/neighbours/heat.js";
+import { buildCargoBayGrid } from "../src/neighbours/cargoBay.js";
 import { collectEntity } from "../src/draw/collect.js";
 import type { DrawCommand } from "../src/draw/commands.js";
 
@@ -68,7 +69,7 @@ function collect(self: PlacedEntity, others: PlacedEntity[], frame: number): Dra
     }),
     heatNetwork: buildHeatNetwork(all, (n: string) => lookup.get(n)?.heatConnections),
     ...connectors,
-    platformBoxes: all.map((e) => ({ entityNumber: e.entityNumber, left: e.x - 1.5, top: e.y - 1.5, right: e.x + 1.5, bottom: e.y + 1.5 })),
+    cargoBays: buildCargoBayGrid(all, connectors.cargoBayShapeOf),
     animationFrame: frame,
   };
   const out: DrawCommand[] = [];

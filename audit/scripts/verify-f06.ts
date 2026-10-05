@@ -11,6 +11,7 @@ import { buildVisualLookup, makeConnectorPredicates, activeFluidConnections } fr
 import { buildGrid } from "../../packages/renderer/src/neighbours/grid.js";
 import { buildFluidNetwork } from "../../packages/renderer/src/neighbours/fluid.js";
 import { buildHeatNetwork } from "../../packages/renderer/src/neighbours/heat.js";
+import { buildCargoBayGrid } from "../../packages/renderer/src/neighbours/cargoBay.js";
 import { collectEntity } from "../../packages/renderer/src/draw/collect.js";
 import type { DrawCommand } from "../../packages/renderer/src/draw/commands.js";
 
@@ -62,9 +63,9 @@ for (const name of names) {
         const p = visualFor(e.name)?.pipeConnections; return p && activeFluidConnections(p, e.recipe, data);
       });
       const heatNetwork = buildHeatNetwork(all, (n) => visualFor(n)?.heatConnections);
-      const platformBoxes = all.map(e => ({ entityNumber: e.entityNumber, left: e.x-1, top: e.y-1, right: e.x+1, bottom: e.y+1 }));
+      const cargoBays = buildCargoBayGrid(all, connectors.cargoBayShapeOf);
       for (const frame of ANIM_FRAMES) {
-        const ctx: any = { grid, fluidNetwork, heatNetwork, ...connectors, platformBoxes, animationFrame: frame };
+        const ctx: any = { grid, fluidNetwork, heatNetwork, ...connectors, cargoBays, animationFrame: frame };
         const cmds: DrawCommand[] = [];
         try { collectEntity(cmds, self, v, ctx, 1); } catch { continue; }
         record(cmds);

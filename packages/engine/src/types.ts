@@ -136,7 +136,18 @@ export enum Layer {
   RailMetal = 0.5,
   Shadow = 1,
   LowerObject = 2,
+  /** The game's three tiers between lower-object and object. Cargo hubs and
+   *  bays spread their floor plating, its overlay and the machinery under
+   *  the body across them, and the pieces of neighbouring hubs and bays
+   *  overlap freely — so each tier has to paint across every one of them
+   *  before the next starts, the way it does in the game. */
+  LowerObjectAboveShadow = 2.1,
+  LowerObjectOverlay = 2.2,
+  ObjectUnder = 2.3,
   Object = 3,
+  /** The game's cargo-hatch tier: a hatch closes over the body it is set in,
+   *  whatever their shifts say about depth. */
+  CargoHatch = 3.1,
   AboveObject = 4,
   /** Elevated rails ride above everything on the ground, with the same
    *  five-tier split as ground rails. */
@@ -237,6 +248,10 @@ export type GraphicsLayer = {
    *  something (a thruster's pipe elbows). `points` name fluid-box
    *  connection points the way a `fluid-point` layer's own `point` does. */
   enabledBy?: { points: FluidPointRef[]; connected?: boolean };
+  /** Set on a layer that only draws in one of a cargo bay's two looks:
+   *  `true` for the art it wears on a space platform, `false` for the art
+   *  it wears on a planet. Absent on everything both looks share. */
+  onSpacePlatform?: boolean;
 } & (
   | { sprites: Sprite }
   /** Partial: some Factorio entities (e.g. electric-mining-drill's small
@@ -251,6 +266,15 @@ export type GraphicsLayer = {
    *  a combinator's display symbol as `<symbol>-<facing>`, e.g.
    *  `plus-north`). */
   | { sprites: Record<string, Sprite>; per: "connection" }
+  /** The plating a cargo hub or bay lays round itself and across to its
+   *  neighbours, keyed `<shape>.<variant>` (`top_wall.2`). Unlike a pipe or
+   *  wall, which picks one shape for the whole entity, a hub draws one piece
+   *  per cell of its outline and per seam it shares, each at its own spot —
+   *  see the renderer's neighbours/cargoBay.ts. `variants` counts the
+   *  interchangeable looks each shape ships; every layer of one entity
+   *  carries the same counts, so they all settle on the same variant of a
+   *  piece even where a layer has art for only some of them. */
+  | { sprites: Record<string, Sprite>; per: "cargo-connection"; variants: Record<string, number> }
   /** One cover sprite per cardinal facing, drawn once per unconnected
    *  fluid-box connection point rather than baked into a single per-entity
    *  shift — a storage tank's own 4 corner points each need their own world
@@ -347,11 +371,15 @@ export interface EntityGraphics {
   /** Which neighbour-classification rule supplies connection indices and
    *  variant names. Absent when no layer needs one. */
   connector?: ConnectorKind;
+  /** Cargo hubs only: where this hub stands — a landing pad on a planet, a
+   *  platform hub in space. A cargo bay has art for both and wears the one
+   *  matching its blueprint's hub. */
+  cargoSurface?: "planet" | "space";
 }
 
 /** Names a neighbour-classification rule; the rules live in
  *  packages/renderer/src/neighbours. */
-export type ConnectorKind = "pipe" | "heat-pipe" | "wall" | "belt" | "platform" | "combinator";
+export type ConnectorKind = "pipe" | "heat-pipe" | "wall" | "belt" | "cargo-bay" | "combinator";
 
 
 export interface MachineProto {

@@ -5,7 +5,7 @@ import { classifyPipe } from "../neighbours/pipe.js";
 import { classifyWall } from "../neighbours/wall.js";
 import { combinatorSymbol } from "../sprites/combinatorSymbol.js";
 import { classifyBeltCell, undergroundSideLoad, type BeltCap } from "../neighbours/beltGraph.js";
-import { classifyPlatform, type PlatformBox } from "../neighbours/platform.js";
+import { cargoBayPieces, type CargoBayGrid, type CargoBayPiece } from "../neighbours/cargoBay.js";
 import type { FluidNetwork, FluidPointState } from "../neighbours/fluid.js";
 import type { HeatNetwork } from "../neighbours/heat.js";
 import { PIXELS_PER_TILE, type DrawCommand } from "./commands.js";
@@ -30,9 +30,9 @@ export interface CollectContext {
   isHeatPipeLike: (name: string) => boolean;
   isWallLike: (name: string) => boolean;
   isBeltLike: (name: string) => boolean;
-  /** Every platform-connectable entity's footprint box, for cargo hubs/bays
-   *  to find flush neighbours across their whole edge, not just one tile. */
-  platformBoxes: PlatformBox[];
+  /** The cells cargo hubs and bays occupy, for the plating they lay round
+   *  themselves and across to each other. */
+  cargoBays: CargoBayGrid;
   animationFrame: number;
 }
 
@@ -53,9 +53,12 @@ interface EntityFrame {
    *  matching splitterGraphics's lane(-1)/lane(1) layer order. Empty for
    *  every other belt-connector entity, which has just the one `caps`. */
   laneCaps: [BeltCap[], BeltCap[]];
-  /** A cargo hub/bay draws several connection pieces at once — one per edge
-   *  and corner — instead of picking a single shape like pipes and walls do. */
-  platformShapes: string[];
+  /** A cargo hub/bay draws several connection pieces at once — one per
+   *  outline cell and seam — instead of picking a single shape like pipes
+   *  and walls do. */
+  cargoPieces: CargoBayPiece[];
+  /** Which of a cargo bay's two looks to draw. */
+  onSpacePlatform: boolean;
   animation: number;
   undergroundIn: boolean;
   /** Which side (if any) a belt-like entity feeds this underground from —
@@ -132,7 +135,8 @@ function resolveFrame(entity: PlacedEntity, visual: ResolvedVisual, ctx: Collect
     connectionName: "",
     caps: [],
     laneCaps: [[], []],
-    platformShapes: [],
+    cargoPieces: [],
+    onSpacePlatform: ctx.cargoBays.spacePlatform,
     animation: ctx.animationFrame,
     undergroundIn: entity.undergroundType !== "output",
     sideLoad: { back: false, front: false },
@@ -281,11 +285,9 @@ function resolveFrame(entity: PlacedEntity, visual: ResolvedVisual, ctx: Collect
       }
       break;
     }
-    case "platform": {
-      const box = ctx.platformBoxes.find((b) => b.entityNumber === entity.entityNumber);
-      if (box) frame.platformShapes = classifyPlatform(box, ctx.platformBoxes);
+    case "cargo-bay":
+      frame.cargoPieces = cargoBayPieces(entity, visual.tileFootprint, ctx.cargoBays);
       break;
-    }
   }
 
   // An underground's exit half stores its travel direction, but its
@@ -529,13 +531,16 @@ export function collectEntity(
       const on = layer.enabledBy.connected ? live.some((p) => p.state === "connected" || p.state === "sibling") : live.length > 0;
       if (!on) return;
     }
-    // A cargo hub/bay draws several connection pieces at once — one per
-    // edge/corner, each with its own baked-in shift — instead of the single
-    // connection-name pick every other connector uses.
-    if (graphics.connector === "platform" && "per" in layer && layer.per === "connection") {
-      for (const shape of frame.platformShapes) {
-        const sprite = layer.sprites[shape];
-        if (sprite) push(out, sprite, 0, 0, entity, layer.layer, order, alpha);
+    // A cargo bay's planet-only and platform-only art: draw whichever matches.
+    if (layer.onSpacePlatform !== undefined && layer.onSpacePlatform !== frame.onSpacePlatform) return;
+    // A cargo hub/bay draws several connection pieces at once, each at its
+    // own spot on the outline. A piece sorts by that spot rather than by
+    // its sprite's shift, so the pieces of one tier overlap front to back
+    // the same way whichever sheet they are cut from.
+    if ("per" in layer && layer.per === "cargo-connection") {
+      for (const piece of frame.cargoPieces) {
+        const sprite = layer.sprites[`${piece.shape}.${piece.seed % (layer.variants[piece.shape] ?? 1)}`];
+        if (sprite) push(out, sprite, 0, 0, entity, layer.layer, order, alpha, piece.x, piece.y, false, undefined, 0, -(sprite.shift?.[1] ?? 0));
       }
       return;
     }

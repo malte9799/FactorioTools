@@ -9,6 +9,7 @@ import { buildVisualLookup, makeConnectorPredicates, activeFluidConnections } fr
 import { buildGrid } from "../../packages/renderer/src/neighbours/grid.js";
 import { buildFluidNetwork } from "../../packages/renderer/src/neighbours/fluid.js";
 import { buildHeatNetwork } from "../../packages/renderer/src/neighbours/heat.js";
+import { CargoBayGrid } from "../../packages/renderer/src/neighbours/cargoBay.js";
 import { collectEntity } from "../../packages/renderer/src/draw/collect.js";
 import type { DrawCommand } from "../../packages/renderer/src/draw/commands.js";
 
@@ -33,7 +34,7 @@ function networksFor(withGhost: PlacedEntity[]) {
 function ghostCommands(ghost: PlacedEntity, nets: ReturnType<typeof networksFor>): string {
   const visual = lookup.get(ghost.name);
   if (!visual?.graphics) return "";
-  const ctx: any = { grid: nets.grid, fluidNetwork: nets.fluid, heatNetwork: nets.heat, ...connectors, platformBoxes: [], animationFrame: 0 };
+  const ctx: any = { grid: nets.grid, fluidNetwork: nets.fluid, heatNetwork: nets.heat, ...connectors, cargoBays: new CargoBayGrid(), animationFrame: 0 };
   const cmds: DrawCommand[] = [];
   collectEntity(cmds, ghost, visual, ctx, 1);
   return cmds.map((c) => `${c.sheet}|${c.sx},${c.sy}|${c.dx.toFixed(3)},${c.dy.toFixed(3)}|${c.layer}|${c.order}`).join(";");

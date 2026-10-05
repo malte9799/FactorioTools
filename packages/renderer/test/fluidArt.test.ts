@@ -15,6 +15,7 @@ import { buildVisualLookup, makeConnectorPredicates, activeFluidConnections, eff
 import { buildGrid } from "../src/neighbours/grid.js";
 import { buildFluidNetwork } from "../src/neighbours/fluid.js";
 import { buildHeatNetwork } from "../src/neighbours/heat.js";
+import { buildCargoBayGrid } from "../src/neighbours/cargoBay.js";
 import { collectEntity } from "../src/draw/collect.js";
 import { compareDrawCommands, type DrawCommand } from "../src/draw/commands.js";
 
@@ -54,7 +55,7 @@ function collect(self: PlacedEntity, others: PlacedEntity[] = []): DrawCommand[]
     }),
     heatNetwork: buildHeatNetwork(all, (n: string) => lookup.get(n)?.heatConnections),
     ...connectors,
-    platformBoxes: [],
+    cargoBays: buildCargoBayGrid(all, connectors.cargoBayShapeOf),
     animationFrame: 0,
   };
   const out: DrawCommand[] = [];
