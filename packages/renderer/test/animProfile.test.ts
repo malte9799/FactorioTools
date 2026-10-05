@@ -103,7 +103,7 @@ function contextFor(all: PlacedEntity[]): CollectContext {
 }
 
 /** What buildSceneCache does for each entity: its type's profile, or — when
- *  this entity drew a different number of commands — its shape's. */
+ *  this entity drew different commands — its shape's. */
 function build(cache: AnimProfileCache, all: PlacedEntity[], ctx: CollectContext): { entity: PlacedEntity; profile: AnimProfile; emitted: number; byShape: boolean }[] {
   const commands: DrawCommand[] = [];
   const out: { entity: PlacedEntity; profile: AnimProfile; emitted: number; byShape: boolean }[] = [];
@@ -114,8 +114,8 @@ function build(cache: AnimProfileCache, all: PlacedEntity[], ctx: CollectContext
     collectEntity(commands, e, visual, ctx, 1);
     const emitted = commands.length - before;
     const profile = cache.forEntity(e, visual, ctx);
-    const byShape = !(profile.animated.length === 0 || profile.commandCount === emitted);
-    out.push({ entity: e, profile: byShape ? cache.forShape(e, visual, ctx, commands, before) : profile, emitted, byShape });
+    const usable = cache.forCommands(e, visual, ctx, commands, before);
+    out.push({ entity: e, profile: usable, emitted, byShape: usable !== profile });
   }
   return out;
 }

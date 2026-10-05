@@ -1862,23 +1862,18 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
         cost.drawCommands += commands.length - before;
         cost.collectMs += performance.now() - tEntity;
       }
-      const profile = animProfiles.forEntity(entity, visual, baseCtx);
       // The profile is probed on an ISOLATED copy of the entity, so its
       // command indices only line up with the real scene's when this entity
-      // emitted the same number of commands there. Neighbours decide that
-      // count: a belt or splitter surrounded by its own kind drops the end
-      // caps a lone one draws, so index `local` can land on a different
-      // sprite entirely — for a splitter, on one of the two lanes' caps,
-      // whose sx was then patched to a column its row does not have. That
-      // is the flicker: a frame addressing an empty cell of the sheet.
-      // Falling back to a per-entity probe keeps such an entity animating
-      // correctly instead of guessing; it only runs for the entities whose
-      // shape actually differs, so the memoised fast path still covers the
-      // overwhelming majority.
-      const emitted = commands.length - before;
-      const usable = profile.animated.length === 0 || profile.commandCount === emitted
-        ? profile
-        : animProfiles.forShape(entity, visual, baseCtx, commands, before);
+      // emitted the same commands there. Neighbours decide that: a belt or
+      // splitter surrounded by its own kind drops the end caps a lone one
+      // draws, so index `local` can land on a different sprite entirely —
+      // for a splitter, on one of the two lanes' caps, whose sx was then
+      // patched to a column its row does not have. That is the flicker: a
+      // frame addressing an empty cell of the sheet. forCommands falls back
+      // to a per-shape profile for exactly the entities whose commands
+      // differ, so the memoised fast path still covers the overwhelming
+      // majority.
+      const usable = animProfiles.forCommands(entity, visual, baseCtx, commands, before);
       for (let k = 0; k < usable.animated.length; k++) {
         const local = usable.animated[k]!;
         const command = commands[before + local];
