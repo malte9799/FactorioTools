@@ -14,6 +14,7 @@ import {
   getData,
   getRenderCatalog,
   loadData,
+  ROTATION_TEST_BLUEPRINT,
   loadDebugBlueprint,
   TIMESCALE_FACTOR,
   remapSelectionForPaste,
@@ -4044,6 +4045,11 @@ export function mountBlueprintEditor(root: HTMLElement): () => void {
       const pick = pool[Math.floor(Math.random() * pool.length)]!;
       input.value = pick.bp;
       load(pick.bp);
+    },
+    /** Load the built-in rotation/connection-sweep test blueprint. */
+    loadRotationTest() {
+      input.value = ROTATION_TEST_BLUEPRINT;
+      load(ROTATION_TEST_BLUEPRINT);
     },
     /** Load the built-in renderer debug lab — every entity kind, every
      *  facing, grown over time as render bugs get fixed (see
