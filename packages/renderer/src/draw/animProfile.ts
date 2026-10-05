@@ -37,9 +37,36 @@ export interface AnimProfile {
    *  compares this against what the same entity emitted in the real scene:
    *  the indices above only mean anything when the two agree. */
   commandCount: number;
+  /** The frame-0 cell of each of those commands. Two entities of one type
+   *  can emit the same NUMBER of commands made of different sprites (an
+   *  underground entrance with or without its lane's end cap, in place of
+   *  some other piece), and then the indices above point at the wrong
+   *  ones; see fits(). */
+  cells: Cell[];
 }
 
-export const NO_ANIMATION: AnimProfile = { animated: [], stride: [], period: [], phase0: [], columns: [], steps: [], origin: [], commandCount: -1 };
+/** A command's frame-0 cell: which sprite it is, before anything animates. */
+interface Cell {
+  sheet: string;
+  sx: number;
+  sy: number;
+}
+
+export const NO_ANIMATION: AnimProfile = { animated: [], stride: [], period: [], phase0: [], columns: [], steps: [], origin: [], commandCount: -1, cells: [] };
+
+const cellOf = (c: DrawCommand): Cell => ({ sheet: c.sheet, sx: c.sx, sy: c.sy });
+
+/** True when `profile` describes exactly the commands `commands[start..]`:
+ *  as many of them, drawing the same cells at frame 0. */
+function fits(profile: AnimProfile, commands: DrawCommand[], start: number): boolean {
+  if (profile.commandCount !== commands.length - start) return false;
+  for (let i = 0; i < profile.cells.length; i++) {
+    const cell = profile.cells[i]!;
+    const c = commands[start + i]!;
+    if (c.sheet !== cell.sheet || c.sx !== cell.sx || c.sy !== cell.sy) return false;
+  }
+  return true;
+}
 
 /** One sprite's animation as probe() measured it. */
 interface SpriteAnimation {
@@ -97,6 +124,15 @@ export class AnimProfileCache {
     return profile;
   }
 
+  /** The profile for the commands `commands[start..]` that `entity` just
+   *  emitted into a scene collected at frame 0: its type's, when those
+   *  commands are the ones its type's probe saw, otherwise its shape's. */
+  forCommands(entity: PlacedEntity, visual: ResolvedVisual, ctx: CollectContext, commands: DrawCommand[], start: number): AnimProfile {
+    const profile = this.forEntity(entity, visual, ctx);
+    if (profile.animated.length === 0 || fits(profile, commands, start)) return profile;
+    return this.forShape(entity, visual, ctx, commands, start);
+  }
+
   /** The profile of an entity whose shape differs from its type's — its
    *  neighbours added or removed commands, so forEntity()'s indices don't
    *  line up — for its commands `commands[start..]` in the real scene. Not
@@ -110,12 +146,16 @@ export class AnimProfileCache {
    *  plumbed machines take seconds per rebuild. */
   forShape(entity: PlacedEntity, visual: ResolvedVisual, ctx: CollectContext, commands: DrawCommand[], start: number): AnimProfile {
     const key = profileKey(entity);
-    const pieced: AnimProfile = { animated: [], stride: [], period: [], phase0: [], columns: [], steps: [], origin: [], commandCount: commands.length - start };
+    const pieced: AnimProfile = {
+      animated: [], stride: [], period: [], phase0: [], columns: [], steps: [], origin: [],
+      commandCount: commands.length - start,
+      cells: commands.slice(start).map(cellOf),
+    };
     for (let i = start; i < commands.length; i++) {
       const sprite = this.bySprite.get(spriteKey(key, commands[i]!));
       if (sprite === undefined) {
         const profile = this.probe(entity, visual, ctx);
-        return profile.commandCount === commands.length - start ? profile : NO_ANIMATION;
+        return fits(profile, commands, start) ? profile : NO_ANIMATION;
       }
       if (sprite === null) continue;
       pieced.animated.push(i - start);
@@ -199,10 +239,18 @@ function probe(entity: PlacedEntity, visual: ResolvedVisual, baseCtx: CollectCon
       }
       if (width === 0) continue;
 
-      // How many frames before the command returns to its frame-0 cell.
+      // The shortest period the sampled sx sequence repeats with. Not simply
+      // the first frame back on the frame-0 cell: a slowed sprite (a rail
+      // signal's lights, slowdown 30) holds that cell for its first frames,
+      // which made it look like a 1-frame cycle that never moves, so it
+      // was left frozen on frame 0.
+      const sxAt = (frame: number) => (frame === 0 ? base[i]! : samples[frame - 1]![i]!).sx;
       let cycle = 0;
-      for (let frame = 1; frame <= samples.length; frame++) {
-        if (samples[frame - 1]![i]!.sx === base[i]!.sx) { cycle = frame; break; }
+      for (let p = 1; p <= samples.length && cycle === 0; p++) {
+        if (sxAt(p) !== sxAt(0)) continue;
+        let repeats = true;
+        for (let frame = 0; frame + p <= samples.length && repeats; frame++) repeats = sxAt(frame + p) === sxAt(frame);
+        if (repeats) cycle = p;
       }
       if (cycle <= 0) continue;
 
@@ -260,5 +308,5 @@ function probe(entity: PlacedEntity, visual: ResolvedVisual, baseCtx: CollectCon
     }
   }
 
-  return { profile: { animated, stride, period, phase0, columns: columnCount, steps: stepCount, origin, commandCount: base.length }, structural, base };
+  return { profile: { animated, stride, period, phase0, columns: columnCount, steps: stepCount, origin, commandCount: base.length, cells: base.map(cellOf) }, structural, base };
 }

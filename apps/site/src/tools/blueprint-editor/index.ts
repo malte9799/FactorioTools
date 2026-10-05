@@ -2575,7 +2575,7 @@ export function mountBlueprintEditor(root: HTMLElement): () => void {
     const wide = circuitWindowKind(selectedEntity);
     if (wide) propertiesWindow.el.dataset.gui = wide;
     else delete propertiesWindow.el.dataset.gui;
-    panelRefresh = buildPropertiesPanel(propertiesBody, selectedEntity, getData(), getRenderCatalog(), latestBottlenecks, {
+    panelRefresh = buildPropertiesPanel(propertiesBody, selectedEntity, getData(), getRenderCatalog(), visualLookup(), latestBottlenecks, {
       onOpenRecipePicker: () => enterMenuState("recipe"),
       onModuleSlotClick(slotIndex) {
         // With a module in hand, clicking a slot stamps it straight in

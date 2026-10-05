@@ -431,3 +431,62 @@ Nutzers nachmessen** (der Browser-Pane drosselt Decoding). Die Aufnahme, die
 das Problem gefunden hat, sollte nach dieser Änderung wiederholt werden.
 
 ---
+
+---
+## N-03 + N-04 — Szenen-Cache als regulärer Test, in CI ✅ umgesetzt
+
+`packages/renderer/test/sceneCache.test.ts` ersetzt `audit/scripts/verify-f01-cache.ts`
+und `verify-render-identical.ts`. Beide Skripte liefen nicht mehr (Atlas-Stub ohne
+`getTinted`, Kontext ohne `getImageData`) — genau die Verrottung, vor der N-03 warnte.
+Der Test läuft über `npm test` und damit in der bestehenden CI (N-04).
+
+**Die alte Prüfung konnte den Fehler, den sie suchen sollte, nicht finden.**
+Ihre Referenz („Cache verwerfen, denselben Frame neu zeichnen“) baut den Cache bei
+Frame 0 neu auf und patcht dann mit *derselben* sx-Formel. Gegenprobe: eine
+absichtlich falsche Formel (`% 64` statt `% animPeriod`) lief durch. Die neue
+Referenz sammelt die Szene unabhängig per `collectEntity` direkt beim Zielframe;
+dieselbe Mutation schlägt jetzt in 4 von 4 Fällen an.
+
+Drei weitere Eingriffe waren nötig, damit der Vergleich ehrlich ist:
+- `animation: false` beim Mounten, sonst backt `bakedLayersFor` die statischen
+  Ebenen und der gecachte Frame malt nur noch die animierten Sprites.
+- Großer Stub-Viewport: Bei 1400×900 begrenzt der Zoom-Clamp die Sicht, und
+  Bioflux ist nicht vollständig im Bild.
+- Vergleich als Multimenge: Bei Gleichstand in der Tiefensortierung (Schatten
+  einer Reihe) hängt die Reihenfolge von der Spatial-Index-Reihenfolge ab.
+
+**Der Test hat zwei echte, vorbestehende Fehler im Szenen-Cache gefunden — beide behoben:**
+
+1. **Rail-Signale blieben eingefroren** (`animProfile.ts`). Die Zyklusdauer war
+   „erster Frame zurück auf der Frame-0-Zelle“. Ein verlangsamtes Sprite
+   (Signallicht, slowdown 30) bleibt 30 Frames auf dieser Zelle → Zyklus 1 →
+   als statisch eingestuft. Jetzt: kürzeste Periode, mit der sich die gesampelte
+   sx-Folge tatsächlich wiederholt (Signal: 90 Frames, 3 Spalten).
+2. **Ein Unterflur-Band-Endstück animierte nicht** (Heavy Promethium Cruiser).
+   Das Typ-Profil wurde nur über die *Anzahl* der Commands zugeordnet. Zwei
+   Instanzen desselben Typs können gleich viele, aber andere Sprites ausgeben —
+   dann zeigen die Indizes auf die falschen Commands. Jetzt vergleicht
+   `AnimProfileCache.forCommands()` zusätzlich die Frame-0-Zelle jedes Commands
+   und fällt sonst auf das Shape-Profil zurück. `render.ts` und
+   `animProfile.test.ts` nutzen dieselbe Funktion.
+
+Ebenfalls im Test: `paint()` und `paintPlain()` erzeugen für eine ungetönte
+Szene dieselbe Aufruffolge (Voraussetzung für F-03).
+
+---
+## F-09 — Hosting-Kompression ✅ verifiziert
+
+Seit dem Audit liegt die Seite auf GitHub Pages. Gegenprobe vom Nutzer:
+`curl -sI -H 'Accept-Encoding: gzip' https://malte9799.github.io/FactorioTools/data/game-data.json`
+liefert `content-encoding: gzip`. Kein Handlungsbedarf.
+
+## F-14 — Teilweise zurückgekehrt, erneut behoben ✅
+
+`edit-properties.ts` baute in `buildPropertiesPanel` bei jedem Neuaufbau des
+Eigenschaften-Fensters (jede Auswahl, jede Feldänderung) ein komplettes
+`buildVisualLookup` über den ganzen Datensatz, um eine einzige Vorschau zu
+zeigen. Bekommt jetzt das Lookup des Renderers (`renderer.getVisualLookup()`)
+übergeben.
+
+Die durch `sceneCache.test.ts` ersetzten Skripte `verify-f01-cache.ts` und
+`verify-render-identical.ts` sind gelöscht.

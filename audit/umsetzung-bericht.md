@@ -26,7 +26,7 @@
 | **F-07** | Debug-Werkzeug aus dem Bundle | ✅ umgesetzt | `98fa069` |
 | **F-19** | Schriften selbst hosten | ✅ umgesetzt | `98fa069` |
 | **F-14** | Doppeltes visualLookup | ✅ umgesetzt | `32b0f30` |
-| **F-09** | Hosting-Kompression | ⏸️ **zurückgestellt** | — |
+| **F-09** | Hosting-Kompression | ✅ **verifiziert** (GitHub Pages liefert `content-encoding: gzip`) | — |
 | **F-05** | Integer-Map-Schlüssel | ⏸️ **bewusst nicht** | — |
 | **F-06** | Sprite-Frames zuschneiden | 🔬 **vorbereitet** | Branch 2 |
 | **F-11** | Monolithen aufteilen | ⏭️ auftragsgemäß liegen gelassen | — |
@@ -233,9 +233,8 @@ Alle in `audit/scripts/`, alle reproduzierbar:
 
 ```bash
 npx tsx audit/scripts/verify-f16-after.ts        # XSS: 0 aktive Elemente
-npx tsx audit/scripts/verify-render-identical.ts # Renderpfad-Hash
 npx tsx audit/scripts/verify-f01-dirty.ts        # Dirty-Flag-Verhalten
-npx tsx audit/scripts/verify-f01-cache.ts        # Cache == frischer Collect
+npm test --workspace=@factoriotools/renderer     # u. a. sceneCache.test.ts: Cache == frischer Collect
 npx tsx audit/scripts/verify-f02-ghost.ts        # Ghost-Cache, 960 Vergleiche
 npx tsx audit/scripts/bench-f08-real.ts          # Ladezeit
 npx tsx --expose-gc audit/scripts/bench-f10-after.ts   # Undo-Speicher
