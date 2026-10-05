@@ -87,9 +87,17 @@ function parseEnvelope(text: string): BlueprintEnvelope | null {
   } catch {
     return null;
   }
-  if (!value || typeof value !== "object") return null;
-  const obj = value as Record<string, unknown>;
-  if (obj.blueprint && typeof obj.blueprint === "object") return { blueprint: obj.blueprint } as BlueprintEnvelope;
-  if (obj.blueprint_book && typeof obj.blueprint_book === "object") return { blueprint_book: obj.blueprint_book } as BlueprintEnvelope;
+  if (!isRecord(value)) return null;
+  // Only something shaped like the game's own export, so a stray
+  // {"blueprint": {}} can't load as an empty canvas over the autosave.
+  const { blueprint, blueprint_book: book } = value;
+  if (isRecord(blueprint) && typeof blueprint.item === "string") return { blueprint } as unknown as BlueprintEnvelope;
+  if (isRecord(book) && typeof book.item === "string" && Array.isArray(book.blueprints)) {
+    return { blueprint_book: book } as unknown as BlueprintEnvelope;
+  }
   return null;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
 }

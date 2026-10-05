@@ -3272,6 +3272,8 @@ export function mountBlueprintEditor(root: HTMLElement): () => void {
   async function importFromFile(file: File): Promise<void> {
     try {
       const content = await readBlueprintFile(file);
+      // The editor may have been left while the file was being read.
+      if (signal.aborted) return;
       if (content.kind === "link") await importFromLink(content.value);
       else await importText(content.value);
     } catch (err) {
