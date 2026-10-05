@@ -1,8 +1,6 @@
 <div align="center">
 
-# FactorioTools
-
-**Paste a blueprint. Find the bottleneck. Fix it. Export.**
+<img src="apps/site/public/banner.png" alt="FactorioTools — Paste a blueprint. Find the bottleneck. Fix it. Export." width="100%">
 
 A browser-based Factorio blueprint editor built for optimising production lines —
 with a rate calculator, a tick-by-tick belt simulation and the game's own art.
