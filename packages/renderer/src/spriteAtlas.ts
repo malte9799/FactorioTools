@@ -44,7 +44,17 @@ export class SpriteAtlas {
   // "every sheet ever requested this session", which loading.size alone
   // conflates (entries are never removed once settled).
   private pendingCount = 0;
-  private onPendingChange: ((pending: number) => void) | null = null;
+  private onPendingChange: ((pending: number, file: string | undefined) => void) | null = null;
+  // Basenames of the sheets fetching/decoding right now (started, not just
+  // queued), in start order — the newest one is what the loading badge
+  // names. A Set so a sheet settling out of order drops cleanly.
+  private inFlight = new Set<string>();
+
+  private notifyPending(): void {
+    let newest: string | undefined;
+    for (const file of this.inFlight) newest = file;
+    this.onPendingChange?.(this.pendingCount, newest);
+  }
   // Chrome/Firefox appear to seriously contend when many large (some
   // 10MB+) sheets start decoding in the same tick — a pan/zoom that
   // suddenly reveals dozens of never-before-seen entities at once
@@ -80,11 +90,13 @@ export class SpriteAtlas {
   }
 
   /** Subscribes to pendingCount changes — called with the new count every
-   *  time a sheet load starts or settles. Only one subscriber at a time
+   *  time a sheet load is requested, starts or settles, along with the
+   *  basename of the sheet most recently started and still in flight
+   *  (undefined when none is). Only one subscriber at a time
    *  (render.ts's own small loading badge); a second call replaces the
    *  first, matching every other single-callback setter in this
    *  codebase (onHover, onPlace, etc). */
-  setOnPendingChange(callback: ((pending: number) => void) | null): void {
+  setOnPendingChange(callback: ((pending: number, file: string | undefined) => void) | null): void {
     this.onPendingChange = callback;
   }
 
@@ -104,15 +116,19 @@ export class SpriteAtlas {
     if (existing) return existing;
     if (!this.loading.has(modPath)) {
       const url = sheetUrl(modPath);
+      const file = url.slice(ENTITY_SPRITE_BASE.length);
       this.pendingCount++;
-      this.onPendingChange?.(this.pendingCount);
+      this.notifyPending();
       const settle = () => {
         this.pendingCount--;
-        this.onPendingChange?.(this.pendingCount);
+        this.inFlight.delete(file);
+        this.notifyPending();
         this.decodeSettled();
       };
       const promise = new Promise<SpriteSurface>((resolve, reject) => {
         this.runOrQueueDecode(() => {
+          this.inFlight.add(file);
+          this.notifyPending();
           // fetch + createImageBitmap rather than <img>: this decodes once,
           // on a worker thread, and yields a surface drawImage can sample
           // without decoding again. The <img> fallback below covers browsers
