@@ -12,6 +12,7 @@ import { buildVisualLookup, effectiveFootprint, makeConnectorPredicates, activeF
 import { buildGrid } from "../../packages/renderer/src/neighbours/grid.js";
 import { buildFluidNetwork } from "../../packages/renderer/src/neighbours/fluid.js";
 import { buildHeatNetwork } from "../../packages/renderer/src/neighbours/heat.js";
+import { buildCargoBayGrid } from "../../packages/renderer/src/neighbours/cargoBay.js";
 import { SpatialIndex } from "../../packages/renderer/src/spatialIndex.js";
 import { collectEntity } from "../../packages/renderer/src/draw/collect.js";
 import { compareDrawCommands, type DrawCommand } from "../../packages/renderer/src/draw/commands.js";
@@ -91,7 +92,7 @@ for (const ex of targets) {
     return points && activeFluidConnections(points, e.recipe, data);
   });
   const heatNetwork = buildHeatNetwork(entities, (name) => visualFor(name)?.heatConnections);
-  const collectCtx: any = { grid, fluidNetwork, heatNetwork, ...connectors, platformBoxes: [], animationFrame: 0 };
+  const collectCtx: any = { grid, fluidNetwork, heatNetwork, ...connectors, cargoBays: buildCargoBayGrid(entities, connectors.cargoBayShapeOf), animationFrame: 0 };
 
   const visibleIds = spatialIndex.queryRect(bb.minX - 4, bb.minY - 4, bb.maxX + 4, bb.maxY + 4);
   const visible: PlacedEntity[] = [];

@@ -7,6 +7,7 @@ import { drawInserter, LONG_HANDED_RATIO, REACH } from "./sprites/inserter.js";
 import { NeighbourGrid } from "./neighbours/grid.js";
 import { FluidNetwork } from "./neighbours/fluid.js";
 import { HeatNetwork } from "./neighbours/heat.js";
+import { CargoBayGrid } from "./neighbours/cargoBay.js";
 import type { DrawCommand } from "./draw/commands.js";
 
 /** A centered fit box in world tiles: what computeFitBox measures the
@@ -160,7 +161,7 @@ export function mountEntityPreview(
         commands,
         entity,
         visual,
-        { grid: new NeighbourGrid(), fluidNetwork: new FluidNetwork(), heatNetwork: new HeatNetwork(), isPipeLike: never, isHeatPipeLike: never, isWallLike: never, isBeltLike: never, platformBoxes: [], animationFrame: 0 },
+        { grid: new NeighbourGrid(), fluidNetwork: new FluidNetwork(), heatNetwork: new HeatNetwork(), isPipeLike: never, isHeatPipeLike: never, isWallLike: never, isBeltLike: never, cargoBays: new CargoBayGrid(), animationFrame: 0 },
         1,
       );
     }
