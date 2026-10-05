@@ -479,6 +479,11 @@ export interface RenderQuality {
   maxFps: number;
 }
 
+/** Below this zoom (screen pixels per tile) animated sprites hold still:
+ *  they are too small on screen for the motion to read, and a view that
+ *  doesn't animate is never redrawn while the camera rests. */
+export const ANIMATION_MIN_PIXELS_PER_TILE = 10;
+
 export const FULL_QUALITY: RenderQuality = { maxPixelRatio: Infinity, animation: true, shadows: true, maxFps: 60 };
 
 export function mountRenderer(container: HTMLElement, data: GameData, catalog: RenderCatalog, initialQuality: RenderQuality = FULL_QUALITY): BlueprintRenderer {
@@ -570,6 +575,9 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
    *  clock. Zero means advancing that clock cannot change anything on screen,
    *  so the loop leaves it alone and stops redrawing entirely. */
   let animatedVisibleCount = 0;
+  /** Whether animated sprites move at all right now — the quality setting,
+   *  and the camera being close enough for the motion to be visible. */
+  const animationActive = () => quality.animation && camera.state.pixelsPerTile >= ANIMATION_MIN_PIXELS_PER_TILE;
 
   /* ---------- profiling (see startFrameRecording / getDebugStats) ---------- */
 
@@ -1780,7 +1788,7 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
     const settled = scene === prevScene && viewKey === prevViewKey;
     prevScene = scene;
     prevViewKey = viewKey;
-    if (scene.animated.length === 0 || !quality.animation || !settled) return null;
+    if (scene.animated.length === 0 || !animationActive() || !settled) return null;
 
     const plan = (scene.bakePlan ??= planBake(scene.commands, scene.animated));
     if (plan.bakedCount === 0) return null;
@@ -1995,7 +2003,7 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
     // few, so coming back from idle doesn't jump), so belts keep their speed
     // at 30 fps and just move in bigger steps.
     const mayDraw = now - lastDrawAt >= 1000 / quality.maxFps - 2;
-    if (mayDraw && quality.animation && !animationFrozen && animatedVisibleCount > 0) {
+    if (mayDraw && animationActive() && !animationFrozen && animatedVisibleCount > 0) {
       const steps = lastDrawAt === 0 ? 1 : Math.min(4, Math.max(1, Math.round((now - lastDrawAt) / (1000 / 60))));
       animationFrame = (animationFrame + steps) % 1_000_000;
       needsRedraw = true;
