@@ -91,4 +91,27 @@ test("a switch just past a signal is one block, both branches", () => {
   assert.equal(blocks.markers.length, 2);
 });
 
+test("a block runs up a ramp onto elevated track, and only a signal on that layer cuts it", () => {
+  // Ground track north to the ramp's foot (1,0), the ramp up to (1,-16),
+  // then two elevated straights.
+  const rails: RailPiece[] = [
+    { name: "straight-rail", x: 1, y: 1, direction: 0 },
+    { name: "rail-ramp", x: 1, y: -8, direction: 0 },
+    { name: "elevated-straight-rail", x: 1, y: -17, direction: 0 },
+    { name: "elevated-straight-rail", x: 1, y: -19, direction: 0 },
+    // Ground track passing under the deck, crossing nothing.
+    { name: "straight-rail", x: 1, y: -19, direction: 4 },
+  ];
+  const whole = computeRailBlocks(rails, () => false);
+  assert.equal(whole.pieces.length, 5);
+  const [ground, ramp, deckA, deckB, under] = whole.pieces.map((p) => p.block);
+  assert.ok(ground === ramp && ramp === deckA && deckA === deckB, "one block from the ground to the deck");
+  assert.notEqual(under, deckB, "track under the deck is its own block");
+  // A ground signal at the same spot as the deck joint (1,-18) cuts nothing up there.
+  assert.equal(new Set(computeRailBlocks(rails, (x, y, _dir, elevated) => !elevated && x === 1 && y === -18).pieces.slice(0, 4).map((p) => p.block)).size, 1);
+  const cut = computeRailBlocks(rails, (x, y, dir, elevated) => elevated && x === 1 && y === -18 && dir === 8);
+  assert.notEqual(cut.pieces[2]!.block, cut.pieces[3]!.block);
+  assert.ok(cut.markers.length === 2 && cut.markers.every((m) => m.elevated));
+});
+
 console.log(`${passed} passed`);

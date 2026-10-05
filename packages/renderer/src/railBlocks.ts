@@ -60,6 +60,8 @@ export interface RailBlockMarker {
   y: number;
   /** Outward 16-way direction of the piece end the marker sits on. */
   dir: number;
+  /** True for a joint of elevated track, drawn up on the deck. */
+  elevated: boolean;
   block: number;
   kind: "exit" | "entry" | "diamond";
 }
@@ -74,10 +76,12 @@ export interface RailBlocks {
 /** Line colours for blocks, as the game cycles them. */
 export const RAIL_BLOCK_COLORS = ["#3ee8ff", "#ff3df2", "#ffe23d", "#3d5bff", "#4cff4c", "#ff9a3d", "#ff4c4c", "#a54cff"];
 
-/** `signalled(x, y, dir)` is true when a signal at the joint (x, y) faces
- *  `dir` (its 16-way direction); see railPlacement's takenSignalGroups. */
-export function computeRailBlocks(rails: RailPiece[], signalled: (x: number, y: number, dir: number) => boolean): RailBlocks {
-  const ground = rails.filter((r) => !isElevatedRail(r.name) && r.name !== "rail-ramp");
+/** `signalled(x, y, dir, elevated)` is true when a signal at the joint
+ *  (x, y) on that layer faces `dir` (its 16-way direction); see
+ *  railPlacement's takenSignalGroups. Blocks run across both layers: a ramp
+ *  joins the ground block at its foot to the elevated one at its top. */
+export function computeRailBlocks(rails: RailPiece[], signalled: (x: number, y: number, dir: number, elevated: boolean) => boolean): RailBlocks {
+  const ground = rails;
   const parent = ground.map((_, i) => i);
   const find = (i: number): number => {
     while (parent[i] !== i) {
@@ -93,13 +97,13 @@ export function computeRailBlocks(rails: RailPiece[], signalled: (x: number, y: 
   };
 
   // A joint is cut when a signal there faces either way along it.
-  const jointCut = (end: RailEnd) => signalled(end.x, end.y, end.dir) || signalled(end.x, end.y, (end.dir + 8) % 16);
+  const jointCut = (end: RailEnd) => signalled(end.x, end.y, end.dir, end.elevated) || signalled(end.x, end.y, (end.dir + 8) % 16, end.elevated);
 
   const ends = ground.map((r) => railEndsAt(r));
   const byJoint = new Map<string, { index: number; end: RailEnd }[]>();
   ends.forEach((list, index) => {
     for (const end of list) {
-      const key = `${end.x},${end.y},${end.dir % 8}`;
+      const key = `${end.x},${end.y},${end.dir % 8},${end.elevated ? 1 : 0}`;
       (byJoint.get(key) ?? byJoint.set(key, []).get(key)!).push({ index, end });
     }
   });
@@ -122,8 +126,11 @@ export function computeRailBlocks(rails: RailPiece[], signalled: (x: number, y: 
   const byTile = new Map<string, number[]>();
   const tested = new Set<string>();
   ground.forEach((r, index) => {
+    // Track only crosses track on its own layer, and nothing crosses a ramp.
+    if (r.name === "rail-ramp") return;
+    const layer = isElevatedRail(r.name) ? 1 : 0;
     for (const [tx, ty] of railTiles(r)) {
-      const key = `${tx},${ty}`;
+      const key = `${tx},${ty},${layer}`;
       const here = byTile.get(key) ?? byTile.set(key, []).get(key)!;
       for (const other of here) {
         const pair = `${other},${index}`;
@@ -153,13 +160,13 @@ export function computeRailBlocks(rails: RailPiece[], signalled: (x: number, y: 
       const block = pieces[index]!.block;
       // A signal faces against the traffic it governs: one facing back along
       // this end lets trains leave through it, one facing out lets them in.
-      const exit = signalled(end.x, end.y, (end.dir + 8) % 16);
-      const entry = signalled(end.x, end.y, end.dir);
+      const exit = signalled(end.x, end.y, (end.dir + 8) % 16, end.elevated);
+      const entry = signalled(end.x, end.y, end.dir, end.elevated);
       // Branches of a switch share their block and so their marker.
-      const key = `${end.x},${end.y},${end.dir},${block}`;
+      const key = `${end.x},${end.y},${end.dir},${end.elevated ? 1 : 0},${block}`;
       if (!markerAt.has(key)) {
         markerAt.add(key);
-        markers.push({ x: end.x, y: end.y, dir: end.dir, block, kind: exit && entry ? "diamond" : exit ? "exit" : "entry" });
+        markers.push({ x: end.x, y: end.y, dir: end.dir, elevated: end.elevated, block, kind: exit && entry ? "diamond" : exit ? "exit" : "entry" });
       }
       for (const other of group) {
         const otherBlock = pieces[other.index]!.block;

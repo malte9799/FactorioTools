@@ -97,7 +97,6 @@ mod paths.
 - Signals on elevated track draw with their ground art, lifted onto the deck.
   The prototypes carry `elevated_picture_set`, a 25-direction sheet with its
   own frame alignment table, which isn't extracted yet.
-- The rail blocks shown for a held signal cover ground track only.
 - Guard rails (`fence_pictures`) run the full length of both sides of every
   elevated piece and ramp. The game leaves them off where track branches and
   caps them with end pieces; neither is done.

@@ -755,11 +755,22 @@ function railFenceLayers<D extends string>(
         const raw = own && Object.keys(own).length > 0 ? own : set[mirror(dir)];
         if (!raw) continue;
         const stack: any[] = Array.isArray(raw.layers) ? raw.layers : [raw];
-        stack.forEach((piece, i) => {
+        let slot = 0;
+        for (const piece of stack) {
           const sprite = toSprite(piece);
-          // line_length counts the sheet's facings, not animation frames.
-          if (sprite) (slots[i] ??= { shadow: !!piece.draw_as_shadow, sprites: {} }).sprites[dir] = { ...sprite, columns: undefined };
-        });
+          // A curve's or half-diagonal's fence is cut into variations, side
+          // by side in the sheet, each holding part of its length: all of
+          // them together are the whole fence.
+          for (let v = 0; v < (piece.variation_count || 1); v++, slot++) {
+            if (!sprite) continue;
+            // line_length counts the sheet's facings, not animation frames.
+            (slots[slot] ??= { shadow: !!piece.draw_as_shadow, sprites: {} }).sprites[dir] = {
+              ...sprite,
+              columns: undefined,
+              x: (sprite.x ?? 0) + v * sprite.frameWidth || undefined,
+            };
+          }
+        }
       }
       for (const slot of slots) {
         if (Object.keys(slot.sprites).length !== dirs.length) continue;

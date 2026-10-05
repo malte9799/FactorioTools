@@ -100,8 +100,19 @@ test("elevated track and ramps carry their guard rails on both sides, in every f
       .sort();
   const deck = ["A-shadow", "A-upper", "A", "B-shadow", "B-upper", "B"].map((part) => `elevated-rail-fence-${part}.png`).sort();
   for (const name of ["elevated-straight-rail", "elevated-half-diagonal-rail", "elevated-curved-rail-a", "elevated-curved-rail-b"]) {
-    for (let direction = 0; direction < 16; direction += 2) assert.deepEqual(fences(name, direction), deck, `${name} facing ${direction}`);
+    for (let direction = 0; direction < 16; direction += 2) assert.deepEqual([...new Set(fences(name, direction))], deck, `${name} facing ${direction}`);
   }
+  // A straight's fence is one frame; a curve's or half-diagonal's is cut
+  // into two, side by side in the sheet, and both are drawn.
+  const frames = (name: string) =>
+    collect(entity(name, 0, 0, 0))
+      .filter((c) => c.sheet.endsWith("elevated-rail-fence-A.png"))
+      .map((c) => c.sx)
+      .sort((a, b) => a - b);
+  assert.deepEqual(frames("elevated-straight-rail"), [0]);
+  assert.deepEqual(frames("elevated-half-diagonal-rail"), [0, 768]);
+  assert.deepEqual(frames("elevated-curved-rail-a"), [1536, 2304]);
+  assert.deepEqual(frames("elevated-curved-rail-b"), [3072, 3840]);
   for (const direction of [0, 4, 8, 12]) {
     assert.deepEqual(fences("rail-ramp", direction), ["elevated-rail-ramp-fence-A.png", "elevated-rail-ramp-fence-B.png"]);
   }

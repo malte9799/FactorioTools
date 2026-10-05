@@ -79,7 +79,7 @@ export interface RailIndex {
   /** Joint sides (slotGroup) that already hold a signal. */
   takenSignalGroups: Set<string>;
   hasRails: boolean;
-  /** The blocks signals divide ground track into, worked out on first use. */
+  /** The blocks signals divide track into, worked out on first use. */
   blocks(): RailBlocks;
 }
 
@@ -237,8 +237,7 @@ export function buildRailIndex(entities: PlacedEntity[], footprintOf: (e: Placed
     railsideTaken,
     takenSignalGroups,
     hasRails: rails.length > 0,
-    // Only ground signals divide the ground blocks drawn for a held signal.
-    blocks: () => (blocks ??= computeRailBlocks(rails, (x, y, dir) => takenSignalGroups.has(`${x},${y},${dir}`))),
+    blocks: () => (blocks ??= computeRailBlocks(rails, (x, y, dir, elevated) => takenSignalGroups.has(slotGroup({ x, y, ex: x, ey: y, direction: dir, elevated })))),
   };
 }
 

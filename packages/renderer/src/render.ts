@@ -1566,10 +1566,17 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
       const blocks = index.blocks();
       for (const { piece, block, cut } of blocks.pieces) {
         const color = RAIL_BLOCK_COLORS[blocks.colors[block]!]!;
-        const line = railCentreline(piece.name, piece.direction, 12).map(([x, y]): [number, number] => [piece.x + x, piece.y + y]);
+        // Drawn where the track is: up on the deck for elevated track, and
+        // climbing from the foot (the first end) to the deck along a ramp.
+        const ramp = piece.name === "rail-ramp";
+        const deck = isElevatedRail(piece.name) ? RAIL_DECK_HEIGHT : 0;
+        const line = railCentreline(piece.name, piece.direction, 12).map(([x, y], i, all): [number, number] => [
+          piece.x + x,
+          piece.y + y - (ramp ? (RAIL_DECK_HEIGHT * i) / (all.length - 1) : deck),
+        ]);
         drawRailBlockLine(ctx, trimPolyline(line, cut[0] ? RAIL_BLOCK_MARKER_INSET : 0, cut[1] ? RAIL_BLOCK_MARKER_INSET : 0), color);
       }
-      for (const m of blocks.markers) drawRailBlockMarker(ctx, m.x, m.y, m.dir, m.kind, RAIL_BLOCK_COLORS[blocks.colors[m.block]!]!);
+      for (const m of blocks.markers) drawRailBlockMarker(ctx, m.x, m.y - (m.elevated ? RAIL_DECK_HEIGHT : 0), m.dir, m.kind, RAIL_BLOCK_COLORS[blocks.colors[m.block]!]!);
       for (const slot of signalSlotsNear(index, ghostWorldPos.x, ghostWorldPos.y)) {
         drawSignalHandle(ctx, slot.elevated ? { ...slot, y: slot.y - RAIL_DECK_HEIGHT } : slot);
       }
