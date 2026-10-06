@@ -9,12 +9,16 @@
  *  blue when only some are open. A signal that guards no track shows
  *  nothing ("none").
  *
+ *  Blocks run across both layers, up ramps and along the deck, and signals
+ *  on elevated track work like any other. Only ground track detects
+ *  trains.
+ *
  *  Trains in a blueprint stand still, so no block is ever reserved and no
  *  signal turns yellow. */
 
 import type { SignalColor } from "@factoriotools/engine";
 import type { RailBlocks } from "./railBlocks.js";
-import { railCentreline, railEndsAt, type RailEnd } from "./railGeometry.js";
+import { isElevatedRail, railCentreline, railEndsAt, type RailEnd } from "./railGeometry.js";
 
 /** A signal standing on track: the rail joint it belongs to and the way it
  *  faces (16-way). It faces the trains it stops, so they pass it heading
@@ -25,6 +29,8 @@ export interface TrackSignal {
   x: number;
   y: number;
   dir: number;
+  /** True for a signal on elevated track. */
+  elevated: boolean;
 }
 
 /** A locomotive or wagon: its centre, heading (a fraction of a turn,
@@ -53,7 +59,9 @@ export function occupiedBlocks(blocks: RailBlocks, stock: StockBox[]): Set<numbe
   const out = new Set<number>();
   if (stock.length === 0) return out;
   for (const { piece, block } of blocks.pieces) {
-    if (out.has(block)) continue;
+    // A blueprint doesn't say which layer stock stands on; it is taken to
+    // be on the ground, so a train under a bridge leaves the deck free.
+    if (out.has(block) || isElevatedRail(piece.name) || piece.name === "rail-ramp") continue;
     const line = railCentreline(piece.name, piece.direction, 8);
     hit: for (const s of stock) {
       // No rail piece reaches further than this from its own position.
@@ -77,7 +85,7 @@ export function occupiedBlocks(blocks: RailBlocks, stock: StockBox[]): Set<numbe
   return out;
 }
 
-const jointKey = (x: number, y: number, dir: number) => `${x},${y},${dir}`;
+const jointKey = (x: number, y: number, dir: number, elevated: boolean) => `${x},${y},${dir},${elevated ? 1 : 0}`;
 
 export function computeSignalStates(blocks: RailBlocks, signals: TrackSignal[], occupied: ReadonlySet<number>): Map<number, SignalColor> {
   const ends = blocks.pieces.map((p) => railEndsAt(p.piece));
@@ -87,11 +95,11 @@ export function computeSignalStates(blocks: RailBlocks, signals: TrackSignal[], 
   const endsAt = new Map<string, { index: number; other: RailEnd | undefined }[]>();
   ends.forEach((list, index) => {
     list.forEach((end, i) => {
-      const key = jointKey(end.x, end.y, end.dir);
+      const key = jointKey(end.x, end.y, end.dir, end.elevated);
       (endsAt.get(key) ?? endsAt.set(key, []).get(key)!).push({ index, other: list[1 - i] });
     });
   });
-  const signalAt = new Map(signals.map((s) => [jointKey(s.x, s.y, s.dir), s]));
+  const signalAt = new Map(signals.map((s) => [jointKey(s.x, s.y, s.dir, s.elevated), s]));
 
   const states = new Map<number, SignalColor>();
   const resolving = new Set<number>();
@@ -112,7 +120,7 @@ export function computeSignalStates(blocks: RailBlocks, signals: TrackSignal[], 
   const resolve = (signal: TrackSignal): SignalColor => {
     // Trains pass the signal heading away from its face, onto the pieces
     // whose end at the joint points the way the signal does.
-    const first = endsAt.get(jointKey(signal.x, signal.y, signal.dir)) ?? [];
+    const first = endsAt.get(jointKey(signal.x, signal.y, signal.dir, signal.elevated)) ?? [];
     if (first.length === 0) return "none";
     if (first.some(({ index }) => occupied.has(blocks.pieces[index]!.block))) return "red";
     if (!signal.chain) return "green";
@@ -130,14 +138,14 @@ export function computeSignalStates(blocks: RailBlocks, signals: TrackSignal[], 
       seen.add(visit);
       // At the far end the train heads other.dir; a signal there for its
       // direction faces back at it.
-      const exit = signalAt.get(jointKey(other.x, other.y, (other.dir + 8) % 16));
+      const exit = signalAt.get(jointKey(other.x, other.y, (other.dir + 8) % 16, other.elevated));
       if (exit) {
         exits.push(stateOf(exit));
         continue;
       }
       // A signal for the other direction only: no way through from here.
-      if (signalAt.has(jointKey(other.x, other.y, other.dir))) continue;
-      queue.push(...(endsAt.get(jointKey(other.x, other.y, (other.dir + 8) % 16)) ?? []));
+      if (signalAt.has(jointKey(other.x, other.y, other.dir, other.elevated))) continue;
+      queue.push(...(endsAt.get(jointKey(other.x, other.y, (other.dir + 8) % 16, other.elevated)) ?? []));
     }
     const open = exits.filter((s) => s === "green").length;
     const closed = exits.filter((s) => s === "red" || s === "none" || s === "yellow").length;

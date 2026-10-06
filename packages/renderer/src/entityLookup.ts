@@ -370,18 +370,19 @@ export function rotateAroundCenter(e: PlacedEntity, center: { x: number; y: numb
     rx = nx;
     ry = ny;
   }
-  return { ...e, x: center.x + rx, y: center.y + ry, direction: (e.direction + steps * 4 + 16 * 4) % 16 };
+  return { ...e, x: center.x + rx, y: center.y + ry, direction: (e.direction + steps * 4 + 16 * 4) % rotationCount(e.name) };
 }
 
 /** Entities that rotate in 22.5° increments (step 1 of the 16-way scheme)
  *  instead of the usual 90° (step 4) — rail-signal/rail-chain-signal have
  *  a genuine 16-row direction sheet (data-pipeline's railSignalGraphics),
- *  one real sprite per step. */
-const FINE_ROTATION = new Set(["rail-signal", "rail-chain-signal"]);
+ *  one real sprite per step, and a rail support turns with the track it
+ *  carries. */
+const FINE_ROTATION = new Set(["rail-signal", "rail-chain-signal", "rail-support"]);
 
 /** Entities that rotate in 45° increments (step 2 of 16) — 8-way, matching
- *  their own 8 real facing sprites (dir8) — railgun-turret only, so far. */
-const EIGHT_WAY_ROTATION = new Set(["railgun-turret", "straight-rail", "elevated-straight-rail", "rail-support"]);
+ *  their own 8 real facing sprites (dir8). */
+const EIGHT_WAY_ROTATION = new Set(["railgun-turret", "straight-rail", "elevated-straight-rail"]);
 
 /** The R/Shift+R rotation step, in the 16-way scheme this renderer
  *  produces for every direction value (see rotateGhost's own doc comment).
@@ -393,6 +394,13 @@ export function rotationStep(name: string): number {
   if (isRollingStock(name)) return 8;
   if (EIGHT_WAY_ROTATION.has(name)) return 2;
   return 4;
+}
+
+/** How many direction values an entity's facing wraps round: 16, except a
+ *  rail support, which looks the same from both sides and so only has the
+ *  first 8. */
+export function rotationCount(name: string): number {
+  return name === "rail-support" ? 8 : 16;
 }
 
 /** True for every `two_direction_only` entity (only fusion-reactor today)

@@ -749,7 +749,68 @@ function railGraphics(proto: any): EntityGraphics | undefined {
       layers.push({ layer: slot.shadow ? Layer.Shadow : tier, sprites: slot.sprites, per: "dir8" });
     }
   }
+  layers.push(...railFenceLayers(proto, DIR8, "dir8", Layer.ElevatedRailMetal, (dir) => RAIL_MIRROR[dir]));
+  // The end cap where track stops (rail_endings): 16 frames in a row, one
+  // per direction an end points out along. On the ground the buffer and
+  // its gravel go under the rails and the rail tips over them; an elevated
+  // cap is one piece over the deck, with its shadow on the ground.
+  const endings: any[] = pics?.rail_endings?.sheets ?? [];
+  endings.forEach((sheet, i) => {
+    const sprite = toSprite(sheet);
+    if (!sprite) return;
+    const tier = sheet.draw_as_shadow ? Layer.Shadow : elevated ? Layer.ElevatedRailMetal : i === 0 ? Layer.RailScrew : Layer.RailMetal;
+    layers.push({ layer: tier, sprites: { ...sprite, columns: 16 }, per: "rail-ending" });
+  });
   return layers.length > 0 ? { layers } : undefined;
+}
+
+/** The guard rails along both sides of elevated track and ramps
+ *  (fence_pictures): per side, the fence itself with its ground shadow, and
+ *  on elevated track an upper part the game draws over passing trains. Both
+ *  go over the track here. The separate end pieces, and leaving the fence
+ *  off where track branches, aren't drawn. */
+function railFenceLayers<D extends string>(
+  proto: any,
+  dirs: readonly D[],
+  per: "dir4" | "dir8",
+  tier: Layer,
+  mirror: (dir: D) => D,
+): GraphicsLayer[] {
+  const layers: GraphicsLayer[] = [];
+  for (const side of ["side_A", "side_B"]) {
+    for (const part of ["fence", "fence_upper"]) {
+      const set = proto.fence_pictures?.[side]?.[part];
+      if (!set) continue;
+      const slots: { shadow: boolean; sprites: Partial<Record<D, Sprite>> }[] = [];
+      for (const dir of dirs) {
+        const own = set[dir];
+        const raw = own && Object.keys(own).length > 0 ? own : set[mirror(dir)];
+        if (!raw) continue;
+        const stack: any[] = Array.isArray(raw.layers) ? raw.layers : [raw];
+        let slot = 0;
+        for (const piece of stack) {
+          const sprite = toSprite(piece);
+          // A curve's or half-diagonal's fence is cut into variations, side
+          // by side in the sheet, each holding part of its length: all of
+          // them together are the whole fence.
+          for (let v = 0; v < (piece.variation_count || 1); v++, slot++) {
+            if (!sprite) continue;
+            // line_length counts the sheet's facings, not animation frames.
+            (slots[slot] ??= { shadow: !!piece.draw_as_shadow, sprites: {} }).sprites[dir] = {
+              ...sprite,
+              columns: undefined,
+              x: (sprite.x ?? 0) + v * sprite.frameWidth || undefined,
+            };
+          }
+        }
+      }
+      for (const slot of slots) {
+        if (Object.keys(slot.sprites).length !== dirs.length) continue;
+        layers.push({ layer: slot.shadow ? Layer.Shadow : tier, sprites: slot.sprites, per } as GraphicsLayer);
+      }
+    }
+  }
+  return layers;
 }
 
 /** A rail ramp ships one frame per cardinal facing: the ground shadow, the
@@ -769,12 +830,14 @@ function railRampGraphics(proto: any): EntityGraphics | undefined {
     }
     layers.push({ layer: pics?.north?.[piece]?.draw_as_shadow ? Layer.Shadow : Layer.Object, sprites, per: "dir4" });
   }
+  layers.push(...railFenceLayers(proto, DIR4, "dir4", Layer.Object, (dir) => dir));
   return { layers };
 }
 
 /** A rail support's pylon packs its 8 facings into one grid (line_length
- *  columns per row); each facing gets its own frame rectangle here so the
- *  renderer's plain dir8 lookup finds it. */
+ *  columns per row). It looks the same from both sides (back_equals_front),
+ *  so those 8 are the first half of the 16-way facings, in 22.5° steps: the
+ *  facing, wrapped round the 8, picks the frame. */
 function railSupportGraphics(proto: any): EntityGraphics | undefined {
   const layers: GraphicsLayer[] = [];
   const structure = proto.graphics_set?.structure;
@@ -783,18 +846,15 @@ function railSupportGraphics(proto: any): EntityGraphics | undefined {
   for (const part of parts) {
     const base = toSprite(part);
     if (!base) continue;
+    const count = part.direction_count || 8;
     // No (or a zero) line_length means all facings sit in one row.
-    const perRow = part.line_length || part.direction_count || DIR8.length;
-    const sprites = {} as Record<(typeof DIR8)[number], Sprite>;
-    DIR8.forEach((dir, i) => {
-      sprites[dir] = {
-        ...base,
-        columns: undefined,
-        x: (part.x ?? 0) + (i % perRow) * base.frameWidth || undefined,
-        y: (part.y ?? 0) + Math.floor(i / perRow) * base.frameHeight || undefined,
-      };
+    const lineLength = part.line_length || count;
+    layers.push({
+      layer: part.draw_as_shadow ? Layer.Shadow : Layer.Object,
+      sprites: { ...base, columns: lineLength },
+      column: { by: "direction16Grid", axis: "column", lineLength, count },
+      row: { by: "direction16Grid", axis: "row", lineLength, count },
     });
-    layers.push({ layer: part.draw_as_shadow ? Layer.Shadow : Layer.Object, sprites, per: "dir8" });
   }
   return layers.length > 0 ? { layers } : undefined;
 }
@@ -1456,7 +1516,9 @@ export function buildRenderCatalog(raw: Raw, locale: LocaleTables, version: stri
     add(proto, railRampGraphics(proto), [4, 16]);
   }
   for (const proto of Object.values(raw["rail-support"] ?? {})) {
-    add(proto, railSupportGraphics(proto));
+    // Its 2.78 collision box sits on a rail joint (a tile corner), so it
+    // reaches into a 4×4 block of tiles.
+    add(proto, railSupportGraphics(proto), [4, 4]);
   }
   for (const proto of Object.values(raw["cargo-landing-pad"] ?? {})) {
     add(proto, cargoBayGraphics(proto, "planet"));

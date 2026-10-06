@@ -1,5 +1,6 @@
 import { Layer, stockOrientation, type FluidPointRef, type GraphicsLayer, type InserterGraphics, type PlacedEntity, type SignalColor, type Sprite } from "@factoriotools/engine";
 import type { ResolvedVisual } from "../entityLookup.js";
+import { openEnds, RAIL_DECK_HEIGHT, railEnds } from "../railGeometry.js";
 import { dir4Name, dir8Name, toCardinal, opposite, splitterLaneCells, step, Dir, type Cardinal, type NeighbourGrid } from "../neighbours/grid.js";
 import { classifyPipe } from "../neighbours/pipe.js";
 import { classifyWall } from "../neighbours/wall.js";
@@ -37,6 +38,9 @@ export interface CollectContext {
   /** What a placed rail signal shows (railSignals.ts). Left out, or
    *  returning undefined, for a signal still in hand, which shows green. */
   signalState?: (entity: PlacedEntity) => SignalColor | undefined;
+  /** Every rail end in the scene (railGeometry's railJoints), so track
+   *  knows which of its ends stop in an end cap. Left out, every end does. */
+  railJoints?: ReadonlySet<string>;
 }
 
 /** Everything a layer's frame axes need, resolved once per entity. */
@@ -343,7 +347,8 @@ function axisIndex(axis: GraphicsLayer["column"], frame: EntityFrame): number {
       return axis.axis === "column" ? index % axis.lineLength : Math.floor(index / axis.lineLength);
     }
     case "direction16Grid": {
-      const index = ((frame.rawDirection % 16) + 16) % 16;
+      const count = axis.count ?? 16;
+      const index = ((frame.rawDirection % count) + count) % count;
       return axis.axis === "column" ? index % axis.lineLength : Math.floor(index / axis.lineLength);
     }
   }
@@ -629,6 +634,17 @@ export function collectEntity(
       return;
     }
 
+    // A rail's end cap, at each end no other track carries on from: the
+    // frame is the direction that end points out along.
+    if ("per" in layer && layer.per === "rail-ending") {
+      const piece = { name: entity.name, x: entity.x, y: entity.y, direction: entity.direction };
+      const open = openEnds(piece, ctx.railJoints);
+      railEnds(entity.name, entity.direction).forEach((end, i) => {
+        if (open[i]) push(out, layer.sprites, end.dir, 0, entity, layer.layer, order, alpha, end.dx, end.dy);
+      });
+      return;
+    }
+
     // A reactor's heat-connection-patch draws once per heat_buffer
     // connection point — always exactly one sprite per point (either its
     // connected or disconnected variant), unlike pipe-covers which only adds
@@ -725,4 +741,15 @@ export function collectEntity(
       }
     }
   });
+
+  // A signal on elevated track is drawn with its ground art up on the deck,
+  // over the track it stands beside; its shadow stays on the ground.
+  if (entity.railLayer === "elevated") {
+    for (let i = first; i < out.length; i++) {
+      const c = out[i]!;
+      if (c.layer === Layer.Shadow) continue;
+      c.dy -= RAIL_DECK_HEIGHT;
+      c.layer = Layer.ElevatedRailMetal;
+    }
+  }
 }

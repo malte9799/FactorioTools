@@ -2,7 +2,7 @@ import type { BpTile, GameData, PlacedEntity, QualityName, RenderCatalog, WireCo
 import { Camera } from "./camera.js";
 import { getSharedSpriteAtlas } from "./spriteAtlas.js";
 import { getSharedIconAtlas } from "./iconAtlas.js";
-import { activeFluidConnections, buildVisualLookup, canBuildOver, effectiveFootprint, hasAnimatedLayer, isPoleLike, isTwoDirectionOnly, isUndergroundLike, makeConnectorPredicates, rotateAroundCenter, rotationStep, undergroundForPlacement, undergroundPartner, type ResolvedVisual } from "./entityLookup.js";
+import { activeFluidConnections, buildVisualLookup, canBuildOver, effectiveFootprint, hasAnimatedLayer, isPoleLike, isTwoDirectionOnly, isUndergroundLike, makeConnectorPredicates, rotateAroundCenter, rotationCount, rotationStep, undergroundForPlacement, undergroundPartner, type ResolvedVisual } from "./entityLookup.js";
 import { ALL_ALT_MODE_LAYERS, drawAltModeOverlay, drawQualityBadge, type AltModeLayers } from "./entityDraw.js";
 import { buildGrid, NeighbourGrid, step, toCardinal } from "./neighbours/grid.js";
 import { buildFluidNetwork, FluidNetwork } from "./neighbours/fluid.js";
@@ -21,12 +21,14 @@ import { drawInserter } from "./sprites/inserter.js";
 import { SpatialIndex, type IndexedBox } from "./spatialIndex.js";
 import { boxHitsEntity, entitiesCollide } from "./collision.js";
 import { RAIL_BLOCK_COLORS } from "./railBlocks.js";
-import { isRail, railCentreline, railHighlightBox, type RailEnd, type RailPiece, type RailSlot } from "./railGeometry.js";
+import { isElevatedRail, isRail, openEnds, RAIL_DECK_HEIGHT, RAIL_END_CAP, railCentreline, railHighlightBox, railJoints, type RailEnd, type RailPiece, type RailSlot } from "./railGeometry.js";
 import {
   buildRailIndex,
   isRailPlannerItem,
   isRailSnapped,
+  railPieceBlocked,
   railStartAt,
+  supportSpotNear,
   signalSlotsNear,
   stopSlotsNear,
   plannerTargetsElevated,
@@ -304,7 +306,7 @@ export interface BlueprintRenderer {
   /** Fires on a left-click in 'place' mode, with the (already
    *  grid-snapped-by-caller — see index.ts) world position and the ghost's
    *  current facing (see rotateGhost) at the moment of the click. */
-  onPlace(callback: (worldX: number, worldY: number, direction: number) => void): void;
+  onPlace(callback: (worldX: number, worldY: number, direction: number, railLayer?: "elevated") => void): void;
   /** Fires when the rail planner lays track: the pieces in order from the
    *  start (some may already exist — the app keeps those as they are) and
    *  the supports that carry any elevated part. */
@@ -548,6 +550,8 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
   let heatNetwork = new HeatNetwork();
   let spatialIndex = new SpatialIndex([]);
   let cargoBays = new CargoBayGrid();
+  // Every placed rail end, so track draws an end cap where it stops.
+  let railJointSet: ReadonlySet<string> = new Set();
   /** Whether the loaded blueprint's floor is space platform — the one hint
    *  of where cargo bays stand when their hub is not in the blueprint. */
   let floorInSpace = false;
@@ -820,6 +824,9 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
   // piece first), then moved to the end of each placement so track can be
   // laid on in stages, like the game's own rail item.
   let railAnchor: RailEnd | null = null;
+  // The layer the plan heads for, fixed when it starts: the rail item stays
+  // on the layer it leaves from, the ramp item crosses to the other one.
+  let railTargetElevated = false;
   let railIndex: RailIndex | null = null;
   let railIndexVersion = -1;
   let railPreviewKey = "";
@@ -851,12 +858,15 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
   /** The track the planner would lay from the anchor to the cursor. */
   function currentRailPreview(): RailPreview | null {
     if (mode.kind !== "place" || !railAnchor || !ghostWorldPos) return null;
-    const target = { x: Math.round(ghostWorldPos.x), y: Math.round(ghostWorldPos.y) };
-    const elevated = plannerTargetsElevated(mode.entityName);
-    const key = `${entitiesVersion}|${railAnchor.x},${railAnchor.y},${railAnchor.dir},${railAnchor.elevated}|${target.x},${target.y}|${elevated}|${shiftHeld}`;
+    // Elevated track is drawn up on the deck, so that is where the cursor
+    // points when the plan is headed there.
+    const lift = railTargetElevated ? RAIL_DECK_HEIGHT : 0;
+    const target = { x: Math.round(ghostWorldPos.x), y: Math.round(ghostWorldPos.y + lift) };
+    const lead = railPendingPiece;
+    const key = `${entitiesVersion}|${railAnchor.x},${railAnchor.y},${railAnchor.dir},${railAnchor.elevated}|${target.x},${target.y}|${railTargetElevated}|${shiftHeld}|${lead?.name},${lead?.x},${lead?.y},${lead?.direction}`;
     if (key !== railPreviewKey) {
       railPreviewKey = key;
-      railPreviewCache = previewRail(currentRailIndex(), railAnchor, target, elevated, shiftHeld);
+      railPreviewCache = previewRail(currentRailIndex(), railAnchor, target, railTargetElevated, shiftHeld, lead ?? undefined);
     }
     return railPreviewCache;
   }
@@ -883,18 +893,22 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
       return;
     }
     railPressAnchored = false;
-    const start = railStartAt(currentRailIndex(), ghostWorldPos.x, ghostWorldPos.y);
+    const index = currentRailIndex();
+    const start = railStartAt(index, ghostWorldPos.x, ghostWorldPos.y);
     if (start) {
       railAnchor = start.end;
+      railTargetElevated = plannerTargetsElevated(mode.entityName, start.end.elevated);
     } else {
-      // Nothing to continue: the held straight piece is the start. It's laid
-      // on release, not now, so a cancelled press leaves nothing behind; a
-      // drag plans on from its end facing the held direction, a click lays
-      // just the piece.
-      const elevated = plannerTargetsElevated(mode.entityName) && mode.entityName !== "rail-ramp";
-      const { piece, end } = startPiece(ghostWorldPos.x, ghostWorldPos.y, ghostDirection, elevated);
+      // Nothing to continue: the held piece (a straight, or a ramp for the
+      // ramp item) is the start. It's laid on release, not now, so a
+      // cancelled press leaves nothing behind; a drag plans on from its end
+      // facing the held direction (a ramp's top), a click lays just the piece.
+      const { piece, end } = startPiece(ghostWorldPos.x, ghostWorldPos.y, ghostDirection, false, mode.entityName === "rail-ramp");
+      // Nothing starts where the held piece can't stand.
+      if (railPieceBlocked(index, piece)) return;
       railPendingPiece = piece;
       railAnchor = end;
+      railTargetElevated = end.elevated;
       railPressOnGround = true;
     }
     invalidate();
@@ -1052,14 +1066,14 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
       } else {
         // No plan yet: on a placed rail an arrow shows where a press would
         // start building — toward the end on the cursor's half of it; over
-        // open ground just the held straight piece, which R turns 8 ways.
+        // open ground just the held piece, which R turns (a straight 8
+        // ways, a ramp 4), red where it can't stand.
         const start = railStartAt(index, ghostWorldPos.x, ghostWorldPos.y);
         if (start) {
-          railArrow = { x: start.piece.x, y: start.piece.y, dir: start.end.dir };
+          railArrow = { x: start.arrow.x, y: start.arrow.y, dir: start.end.dir };
         } else {
-          const elevated = plannerTargetsElevated(mode.entityName) && mode.entityName !== "rail-ramp";
-          const { piece } = startPiece(ghostWorldPos.x, ghostWorldPos.y, ghostDirection, elevated);
-          railGhosts.push({ entity: asGhost(piece), tint: GHOST_VALID_TINT });
+          const { piece } = startPiece(ghostWorldPos.x, ghostWorldPos.y, ghostDirection, false, mode.entityName === "rail-ramp");
+          railGhosts.push({ entity: asGhost(piece), tint: railPieceBlocked(index, piece) ? GHOST_INVALID_TINT : GHOST_VALID_TINT });
         }
       }
     } else if (mode.kind === "place" && ghostWorldPos) {
@@ -1071,15 +1085,17 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
         const slot = isRailSnapped(mode.entityName)
           ? railsideSlot(currentRailIndex(), mode.entityName, ghostWorldPos.x, ghostWorldPos.y, ghostDirection)
           : undefined;
+        // A rail support slips under the nearest bare joint of elevated
+        // track, turned to carry it.
+        const spot = mode.entityName === "rail-support" ? supportSpotNear(currentRailIndex(), ghostWorldPos.x, ghostWorldPos.y) : undefined;
         // Locomotives and wagons snap onto the track itself, heading along it.
         const onTrack = ghostVisual.rollingStock ? rollingStockSnap(currentRailIndex(), ghostWorldPos.x, ghostWorldPos.y, ghostDirection) : undefined;
-        const snapped = onTrack
-          ? { x: onTrack.x, y: onTrack.y }
-          : slot
-            ? { x: slot.x, y: slot.y }
-            : ghostVisual.rollingStock
-              ? { x: ghostWorldPos.x, y: ghostWorldPos.y }
-              : { x: snapAxis(ghostWorldPos.x, gfw), y: snapAxis(ghostWorldPos.y, gfh) };
+        const fixed = onTrack ?? slot ?? spot;
+        const snapped = fixed
+          ? { x: fixed.x, y: fixed.y }
+          : ghostVisual.rollingStock
+            ? { x: ghostWorldPos.x, y: ghostWorldPos.y }
+            : { x: snapAxis(ghostWorldPos.x, gfw), y: snapAxis(ghostWorldPos.y, gfh) };
         const previewKey = `${entitiesVersion}|${mode.entityName}|${snapped.x},${snapped.y}|${ghostDirection}`;
         const previewStale = previewKey !== ghostPreviewKey;
         // Valid iff nothing else's footprint overlaps the ghost's own —
@@ -1111,7 +1127,8 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
           name: mode.entityName,
           x: snapped.x,
           y: snapped.y,
-          direction: onTrack?.direction ?? slot?.direction ?? ghostDirection,
+          direction: fixed?.direction ?? ghostDirection,
+          railLayer: slot?.elevated ? "elevated" : undefined,
           quality: "normal",
           modules: [],
           filterItems: [],
@@ -1157,7 +1174,8 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
           y: snapped.y,
           // A paired exit is stored with its travel direction, the
           // reverse of how it's held (see autoUnderground).
-          direction: onTrack?.direction ?? slot?.direction ?? ghostUnderground?.direction ?? ghostDirection,
+          direction: fixed?.direction ?? ghostUnderground?.direction ?? ghostDirection,
+          railLayer: slot?.elevated ? "elevated" : undefined,
           quality: mode.quality ?? "normal",
           modules: [],
           filterItems: [],
@@ -1317,7 +1335,7 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
         else rebuildReasonThisFrame = "visibility";
       }
       sceneCache = buildSceneCache(sceneKey, visibleEntities, {
-        grid, fluidNetwork, heatNetwork, ...connectors, cargoBays, animationFrame: 0,
+        grid, fluidNetwork, heatNetwork, ...connectors, cargoBays, railJoints: railJointSet, animationFrame: 0,
         // A signal standing on no slot guards nothing and shows no colour.
         signalState: (e) => currentRailIndex().signalStates().get(e.entityNumber) ?? "none",
       });
@@ -1460,12 +1478,13 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
     // Track gets its brackets turned to lie along the rail, as in the game.
     const highlightEntity = (entity: PlacedEntity, visual: ResolvedVisual, sheet: HTMLImageElement) => {
       if (isRail(entity.name)) {
-        const box = railHighlightBox(entity.name, entity.direction);
+        const box = railHighlightBox(entity.name, entity.direction, openEnds(entity, railJointSet));
         drawHoverHighlight(ctx, sheet, entity.x + box.cx, entity.y + box.cy, box.w, box.h, "regular", box.angle, Math.min(box.w, box.h));
         return;
       }
-      const [fw, fh] = effectiveFootprint(visual, entity.direction);
-      drawHoverHighlight(ctx, sheet, entity.x, entity.y, fw, fh);
+      // A support is picked by its 3×3 base, not the wider box it blocks.
+      const [fw, fh] = entity.name === "rail-support" ? [3, 3] : effectiveFootprint(visual, entity.direction);
+      drawHoverHighlight(ctx, sheet, entity.x, entity.y - (entity.railLayer === "elevated" ? RAIL_DECK_HEIGHT : 0), fw, fh);
     };
 
     const corner = getHoverHighlightSprite();
@@ -1562,12 +1581,21 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
       const blocks = index.blocks();
       for (const { piece, block, cut } of blocks.pieces) {
         const color = RAIL_BLOCK_COLORS[blocks.colors[block]!]!;
-        const line = railCentreline(piece.name, piece.direction, 12).map(([x, y]): [number, number] => [piece.x + x, piece.y + y]);
+        // Drawn where the track is: up on the deck for elevated track, and
+        // climbing from the foot (the first end) to the deck along a ramp.
+        const ramp = piece.name === "rail-ramp";
+        const deck = isElevatedRail(piece.name) ? RAIL_DECK_HEIGHT : 0;
+        const line = railCentreline(piece.name, piece.direction, 12).map(([x, y], i, all): [number, number] => [
+          piece.x + x,
+          piece.y + y - (ramp ? (RAIL_DECK_HEIGHT * i) / (all.length - 1) : deck),
+        ]);
         drawRailBlockLine(ctx, trimPolyline(line, cut[0] ? RAIL_BLOCK_MARKER_INSET : 0, cut[1] ? RAIL_BLOCK_MARKER_INSET : 0), color);
       }
-      for (const m of blocks.markers) drawRailBlockMarker(ctx, m.x, m.y, m.dir, m.kind, RAIL_BLOCK_COLORS[blocks.colors[m.block]!]!);
+      for (const m of blocks.markers) drawRailBlockMarker(ctx, m.x, m.y - (m.elevated ? RAIL_DECK_HEIGHT : 0), m.dir, m.kind, RAIL_BLOCK_COLORS[blocks.colors[m.block]!]!);
       for (const slot of signalSlotsNear(index, ghostWorldPos.x, ghostWorldPos.y)) {
-        drawSignalHandle(ctx, slot);
+        // Up on the deck the slot's joint is lifted with it, or the stem
+        // would reach back down to the ground.
+        drawSignalHandle(ctx, slot.elevated ? { ...slot, y: slot.y - RAIL_DECK_HEIGHT, ey: slot.ey === undefined ? undefined : slot.ey - RAIL_DECK_HEIGHT } : slot);
       }
     }
     if (mode.kind === "place" && ghostWorldPos && mode.entityName === "train-stop") {
@@ -1584,7 +1612,7 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
           drawInserter(ctx, atlas, ghost, visual.inserterGraphics, ghostTint, tintedRes);
         } else if (visual.graphics) {
           const ghostCommands: DrawCommand[] = [];
-          collectEntity(ghostCommands, ghost, withoutRailPatch(visual), { grid: previewGrid, fluidNetwork: previewFluidNetwork, heatNetwork: previewHeatNetwork, ...connectors, cargoBays, animationFrame }, 1);
+          collectEntity(ghostCommands, ghost, isRailSnapped(ghost.name) ? withoutRailPatch(visual) : visual, { grid: previewGrid, fluidNetwork: previewFluidNetwork, heatNetwork: previewHeatNetwork, ...connectors, cargoBays, railJoints: railJointSet, animationFrame }, 1);
           for (const c of ghostCommands) c.tint = ghostTint;
           paint(ctx, atlas, ghostCommands, tintedRes);
         }
@@ -1616,12 +1644,16 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
       // sorts under every piece's rails, same as placed track (a tinted
       // batch is washed in a single colour, so tints can't share one).
       const byTint = new Map<string, DrawCommand[]>();
+      // The plan's pieces join each other and the placed track: caps only
+      // where the planned track would really stop.
+      const planJoints = new Set(railJointSet);
+      for (const key of railJoints(railGhosts.map((g) => g.entity).filter((e) => isRail(e.name)))) planJoints.add(key);
       for (const { entity, tint } of railGhosts) {
         const visual = visualFor(entity.name);
         if (!visual?.graphics) continue;
         const commands = byTint.get(tint) ?? byTint.set(tint, []).get(tint)!;
         const start = commands.length;
-        collectEntity(commands, entity, visual, { grid: previewGrid, fluidNetwork: previewFluidNetwork, heatNetwork: previewHeatNetwork, ...connectors, cargoBays, animationFrame }, 1);
+        collectEntity(commands, entity, visual, { grid: previewGrid, fluidNetwork: previewFluidNetwork, heatNetwork: previewHeatNetwork, ...connectors, cargoBays, railJoints: planJoints, animationFrame }, 1);
         for (let i = start; i < commands.length; i++) commands[i]!.tint = tint;
       }
       for (const commands of byTint.values()) paint(ctx, atlas, commands, tintedRes);
@@ -2068,10 +2100,12 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
     if (!slot) return false;
     const index = currentRailIndex();
     if (railsideSlotTaken(index, slot)) return false;
+    // Up on the deck nothing on the ground is in the way.
+    if (slot.elevated) return true;
     const hits = overlapping ?? spatialIndex.queryRect(slot.x - 0.49, slot.y - 0.49, slot.x + 0.49, slot.y + 0.49);
     for (const id of hits) {
       const e = entityById.get(id);
-      if (e && !isRailPlannerItem(e.name)) {
+      if (e && !isRailPlannerItem(e.name) && e.railLayer !== "elevated") {
         // A footprint that only brushes the slot from a neighbouring tile
         // (track, or a signal next door) doesn't block it.
         if (Math.abs(e.x - slot.x) < 0.5 && Math.abs(e.y - slot.y) < 0.5) return false;
@@ -2115,8 +2149,18 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
       // otherwise drop another on each slot it passes.
       if (placedThisGesture.size > 0) return;
       placedThisGesture.add(key);
-      placeCallback?.(slot.x, slot.y, slot.direction);
+      placeCallback?.(slot.x, slot.y, slot.direction, slot.elevated ? "elevated" : undefined);
       return;
+    }
+    if (mode.entityName === "rail-support") {
+      const spot = supportSpotNear(currentRailIndex(), ghostWorldPos.x, ghostWorldPos.y);
+      if (spot) {
+        const key = `${spot.x},${spot.y}`;
+        if (placedThisGesture.has(key)) return;
+        placedThisGesture.add(key);
+        placeCallback?.(spot.x, spot.y, spot.direction);
+        return;
+      }
     }
     const visual = visualFor(mode.entityName);
     if (visual?.rollingStock) {
@@ -2453,7 +2497,7 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
   }
 
   let hoverCallback: ((entityNumber: number | undefined, e: PointerEvent) => void) | null = null;
-  let placeCallback: ((worldX: number, worldY: number, direction: number) => void) | null = null;
+  let placeCallback: ((worldX: number, worldY: number, direction: number, railLayer?: "elevated") => void) | null = null;
   let railPlaceCallback: ((pieces: RailPiece[], supports: RailPiece[]) => void) | null = null;
   let selectCallback: ((entityNumber: number) => void) | null = null;
   let eraseCallback: ((entityNumber: number) => void) | null = null;
@@ -2580,18 +2624,25 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
     heatNetwork = buildHeatNetwork(entities, (name) => visualFor(name)?.heatConnections);
 
     cargoBays = buildCargoBayGrid(entities, connectors.cargoBayShapeOf, floorInSpace);
+    railJointSet = railJoints(entities.filter((e) => isRail(e.name)));
 
     const boxes: IndexedBox[] = [];
     for (const e of entities) {
       const visual = visualFor(e.name);
       const [w, h] = visual ? effectiveFootprint(visual, e.direction) : FALLBACK_FOOTPRINT;
-      const rail = isRail(e.name) ? railHighlightBox(e.name, e.direction) : undefined;
+      const rail = isRail(e.name) ? railHighlightBox(e.name, e.direction, openEnds(e, railJointSet)) : undefined;
+      // Elevated track and the signals on it are drawn, and so hovered, up
+      // on the deck; track still covers its ground tiles for the culling
+      // and collision queries, a signal up there covers none.
+      const lift = isElevatedRail(e.name) || e.railLayer === "elevated" ? RAIL_DECK_HEIGHT : 0;
+      // Room for the end cap a rail's turned box takes in past its tiles.
+      const pad = rail ? RAIL_END_CAP : 0;
       const box: IndexedBox = {
         entityNumber: e.entityNumber,
-        left: e.x - w / 2,
-        top: e.y - h / 2,
-        right: e.x + w / 2,
-        bottom: e.y + h / 2,
+        left: e.x - w / 2 - pad,
+        top: e.y - h / 2 - lift - pad,
+        right: e.x + w / 2 + pad,
+        bottom: e.y + h / 2 - (e.railLayer === "elevated" ? lift : 0) + pad,
         // Track is hovered by the same turned box its brackets draw round,
         // not by its (mostly empty) axis-aligned footprint.
         turned: rail && { cx: e.x + rail.cx, cy: e.y + rail.cy, w: rail.w, h: rail.h, angle: rail.angle },
@@ -2610,7 +2661,7 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
     for (const e of entities) {
       const visual = visualFor(e.name);
       for (const layer of visual?.graphics?.layers ?? []) {
-        const sprites = !("per" in layer)
+        const sprites = !("per" in layer) || layer.per === "rail-ending"
           ? [layer.sprites]
           : layer.per === "heat-connection-patches"
             ? [...layer.connected, ...layer.disconnected]
@@ -2757,7 +2808,7 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
         return;
       }
       const step = rotationStep(mode.entityName);
-      ghostDirection = (ghostDirection + (reverse ? -step : step) + 16) % 16;
+      ghostDirection = (ghostDirection + (reverse ? -step : step) + 16) % rotationCount(mode.entityName);
       invalidate();
     },
     rotatePasteGhost(reverse) {

@@ -2,14 +2,17 @@
  *  shares a tile" rule, with track as the exception it is in the game.
  *
  *  Most entities collide by their axis-aligned footprints. Track doesn't: a
- *  curve's or diagonal's square footprint is mostly empty, so a ground rail
- *  blocks only the tiles it runs over. Rails cross and run alongside each
- *  other freely — only the very same piece twice collides —
- *  elevated track stands above everything on the ground, and signals and
- *  train stops stand beside track by design. */
+ *  curve's or diagonal's square footprint is mostly empty, so a rail blocks
+ *  only the tiles it runs over. Rails cross and run alongside each other
+ *  freely — only the very same piece twice collides. Elevated track stands
+ *  above everything on the ground. A ramp is solid from the ground to the
+ *  deck: nothing shares its tiles, track on either layer included. A rail
+ *  support blocks by its own turned box, ground track too. Signals and
+ *  train stops stand beside track by design, and a signal on elevated track
+ *  is up on the deck, clear of the ground. */
 
 import { stockOrientation, type PlacedEntity } from "@factoriotools/engine";
-import { isElevatedRail, isRail, isRollingStock, railKey, railTiles } from "./railGeometry.js";
+import { isElevatedRail, isRail, isRollingStock, RAIL_DECK_HEIGHT, railKey, railTiles, supportHitsBox } from "./railGeometry.js";
 
 export interface Box {
   left: number;
@@ -31,19 +34,29 @@ export function footprintBox(e: { x: number; y: number }, [w, h]: [number, numbe
   return { left: e.x - w / 2, top: e.y - h / 2, right: e.x + w / 2, bottom: e.y + h / 2 };
 }
 
-/** True when a ground rail covers any tile the box overlaps. */
+/** True when a rail covers any tile the box overlaps. */
 function railHitsBox(rail: PlacedEntity, box: Box): boolean {
   return railTiles(rail).some(([tx, ty]) => overlap(box, { left: tx, top: ty, right: tx + 1, bottom: ty + 1 }));
 }
 
-/** True when the box touches what the entity actually occupies — its rail
- *  tiles for track, its footprint for everything else. What box selection
- *  and rect queries should test after the spatial index's broad phase. */
+/** Collision boxes sit a little inside the tiles they fill. */
+const TILE_INSET = 0.1;
+
+function inset(box: Box): Box {
+  return { left: box.left + TILE_INSET, top: box.top + TILE_INSET, right: box.right - TILE_INSET, bottom: box.bottom - TILE_INSET };
+}
+
+/** True when the box touches what the entity actually occupies as it is
+ *  seen — its rail tiles for track (up on the deck for elevated track), its
+ *  footprint for everything else. What box selection and rect queries
+ *  should test after the spatial index's broad phase. */
 export function boxHitsEntity(box: Box, e: PlacedEntity, footprintOf: (e: PlacedEntity) => [number, number]): boolean {
   if (isRail(e.name)) {
-    return railTiles(e).some(([tx, ty]) => box.left <= tx + 1 && box.right >= tx && box.top <= ty + 1 && box.bottom >= ty);
+    const lift = isElevatedRail(e.name) ? RAIL_DECK_HEIGHT : 0;
+    return railTiles(e).some(([tx, ty]) => box.left <= tx + 1 && box.right >= tx && box.top <= ty - lift + 1 && box.bottom >= ty - lift);
   }
-  const f = footprintBox(e, footprintOf(e));
+  const lift = e.railLayer === "elevated" ? RAIL_DECK_HEIGHT : 0;
+  const f = footprintBox({ x: e.x, y: e.y - lift }, footprintOf(e));
   return box.left <= f.right && box.right >= f.left && box.top <= f.bottom && box.bottom >= f.top;
 }
 
@@ -68,6 +81,10 @@ function stockOverlap(a: PlacedEntity, b: PlacedEntity, footprintOf: (e: PlacedE
 
 /** True when `a` and `b` may not both stand where they are. */
 export function entitiesCollide(a: PlacedEntity, b: PlacedEntity, footprintOf: (e: PlacedEntity) => [number, number]): boolean {
+  // A signal on the deck only ever shares its spot with another one there.
+  if (a.railLayer === "elevated" || b.railLayer === "elevated") {
+    return a.railLayer === b.railLayer && RAILSIDE.has(a.name) && RAILSIDE.has(b.name) && a.x === b.x && a.y === b.y;
+  }
   const aRail = isRail(a.name);
   const bRail = isRail(b.name);
   const aStock = isRollingStock(a.name);
@@ -77,11 +94,31 @@ export function entitiesCollide(a: PlacedEntity, b: PlacedEntity, footprintOf: (
     if (aRail || bRail || RAILSIDE.has(a.name) || RAILSIDE.has(b.name)) return false;
     if (aStock && bStock) return stockOverlap(a, b, footprintOf);
   }
-  if (aRail && bRail) return railKey(a) === railKey(b);
+  if (aRail && bRail) {
+    if (railKey(a) === railKey(b)) return true;
+    // Track crosses track, but never a ramp: only the pieces joined to its
+    // two ends meet it, and those start where it stops.
+    if (a.name !== "rail-ramp" && b.name !== "rail-ramp") return false;
+    const tiles = new Set(railTiles(a).map(([tx, ty]) => `${tx},${ty}`));
+    return railTiles(b).some(([tx, ty]) => tiles.has(`${tx},${ty}`));
+  }
+  const aSupport = a.name === "rail-support";
+  const bSupport = b.name === "rail-support";
+  if (aSupport || bSupport) {
+    const support = aSupport ? a : b;
+    const other = aSupport ? b : a;
+    if (isElevatedRail(other.name)) return false;
+    if (isRail(other.name)) return railTiles(other).some(([tx, ty]) => supportHitsBox(support, inset({ left: tx, top: ty, right: tx + 1, bottom: ty + 1 })));
+    // Two supports: the other's box, unturned, is close enough.
+    if (other.name === "rail-support") return supportHitsBox(support, footprintBox(other, [2.78, 2.78]));
+    return supportHitsBox(support, inset(footprintBox(other, footprintOf(other))));
+  }
   if (aRail || bRail) {
     const rail = aRail ? a : b;
     const other = aRail ? b : a;
-    if (isElevatedRail(rail.name) || RAILSIDE.has(other.name)) return false;
+    if (isElevatedRail(rail.name)) return false;
+    // A signal stands beside ground track, but not inside a ramp.
+    if (RAILSIDE.has(other.name) && rail.name !== "rail-ramp") return false;
     return railHitsBox(rail, footprintBox(other, footprintOf(other)));
   }
   // Signals stand next to each other on adjacent slots; only the very same

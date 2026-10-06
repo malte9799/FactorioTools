@@ -209,7 +209,15 @@ export type FrameAxis =
   /** A sheet packing one frame per 16-way facing, `lineLength` frames to a
    *  row — rail-signal's rail_piece patch: the facing picks the frame, split
    *  into this column/row pair. */
-  | { by: "direction16Grid"; axis: "column" | "row"; lineLength: number }
+  | {
+      by: "direction16Grid";
+      axis: "column" | "row";
+      lineLength: number;
+      /** Facings the sheet holds, when fewer than 16: the facing wraps
+       *  round them (a rail support's 8, each standing for two opposite
+       *  facings). */
+      count?: number;
+    }
   /** Rail signals: the frame showing the colour the signal is at, from the
    *  prototype's signal_color_to_structure_frame_index. Which colour that
    *  is comes from the track and the trains on it (the renderer's
@@ -295,6 +303,10 @@ export type GraphicsLayer = {
    *  graph finds unconnected are drawn; keyed by Dir4Name to match
    *  `PipeConnectionPoint.direction`. */
   | { sprites: Partial<Record<Dir4Name, Sprite>>; per: "pipe-covers" }
+  /** A rail's end cap (the buffer where track stops): one sheet of 16
+   *  frames in a row, one per 16-way direction an end points out along.
+   *  Drawn once at each end of the piece no other track joins. */
+  | { sprites: Sprite; per: "rail-ending" }
   /** Connection art that belongs to ONE specific fluid-box connection
    *  point and changes with what that point is plugged into — fusion-reactor
    *  and fusion-generator's own ports, which don't use the generic round
@@ -843,6 +855,8 @@ export interface BpEntity {
   direction?: number;
   /** Rolling stock: heading as a fraction of a turn, clockwise from north. */
   orientation?: number;
+  /** Rail signals on elevated track: "elevated". Omitted on the ground. */
+  rail_layer?: string;
   recipe?: string;
   recipe_quality?: QualityName;
   quality?: QualityName;
@@ -1115,6 +1129,10 @@ export interface PlacedEntity {
    *  of a turn clockwise from north. `direction` carries the same heading
    *  rounded to 16 ways; see stockOrientation. */
   orientation?: number;
+  /** Rail signals only: set for one standing on elevated track (the
+   *  blueprint's own rail_layer). Its position is still the spot on the
+   *  ground below; it is drawn up on the deck. */
+  railLayer?: "elevated";
   quality: QualityName;
   recipe?: string;
   modules: ModuleStack[];
