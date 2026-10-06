@@ -76,6 +76,18 @@ test("modules are written to each kind's own module inventory", () => {
   assert.deepEqual(inventoryOf("electric-furnace"), [4]);
 });
 
+test("a signal on elevated track keeps its rail_layer; one on the ground has none", () => {
+  const entities: BpEntity[] = [
+    { entity_number: 1, name: "rail-signal", position: { x: 0.5, y: 0.5 }, direction: 4, rail_layer: "elevated" },
+    { entity_number: 2, name: "rail-signal", position: { x: 2.5, y: 0.5 }, direction: 4 },
+  ];
+  const placed = normaliseEntities(bp(entities).blueprint!);
+  assert.deepEqual(placed.map((e) => e.railLayer), ["elevated", undefined]);
+  const back = denormaliseEntities(placed);
+  assert.equal(back[0]!.rail_layer, "elevated");
+  assert.ok(!("rail_layer" in back[1]!));
+});
+
 test("defaults (direction 0, quality normal, no recipe, no modules) omit their fields", () => {
   const entities: PlacedEntity[] = [
     { entityNumber: 1, name: "transport-belt", x: 0, y: 0, direction: 0, quality: "normal", modules: [], filterItems: [] },

@@ -227,6 +227,7 @@ export function normaliseEntities(blueprint: Blueprint): PlacedEntity[] {
     x: entity.position.x,
     y: entity.position.y,
     direction: entity.direction ?? 0,
+    railLayer: entity.rail_layer === "elevated" ? "elevated" : undefined,
     quality: asQuality(entity.quality),
     recipe: entity.recipe,
     modules: readModules(entity),
@@ -369,6 +370,7 @@ export function denormaliseEntities(entities: PlacedEntity[]): BpEntity[] {
       position: { x: e.x, y: e.y },
     };
     if (e.direction !== 0) bp.direction = e.direction;
+    if (e.railLayer) bp.rail_layer = e.railLayer;
     if (e.quality !== "normal") bp.quality = e.quality;
     if (e.recipe) bp.recipe = e.recipe;
     if (e.modules.length) bp.items = writeModules(e.modules, e.name);

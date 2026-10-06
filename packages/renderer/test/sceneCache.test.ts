@@ -18,6 +18,7 @@
  * placement ghost through paint(), which is only safe while the two produce
  * the same calls for a list with no tint in it.
  */
+import { isRail, railJoints } from "../src/railGeometry.js";
 import assert from "node:assert/strict";
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
@@ -153,6 +154,7 @@ function commandsFor(entities: PlacedEntity[], animationFrame: number): DrawComm
     heatNetwork: buildHeatNetwork(entities, (name) => lookup.get(name)?.heatConnections),
     ...connectors,
     cargoBays: buildCargoBayGrid(entities, connectors.cargoBayShapeOf),
+    railJoints: railJoints(entities.filter((e) => isRail(e.name))),
     animationFrame,
   };
   const commands: DrawCommand[] = [];

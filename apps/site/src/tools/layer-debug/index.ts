@@ -310,6 +310,7 @@ export function mountLayerDebug(root: HTMLElement): () => void {
     if (!("per" in layer)) return layer.sprites;
     if (layer.per === "heat-connection-patches") return layer.disconnected[0];
     if (layer.per === "module-slot") return layer.slots[0]?.empty;
+    if (layer.per === "rail-ending") return layer.sprites;
     return layer.sprites[dirLabel(direction) as keyof typeof layer.sprites];
   }
 

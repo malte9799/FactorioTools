@@ -58,6 +58,7 @@ import {
   effectiveFootprint,
   isPoleLike,
   isTwoDirectionOnly,
+  rotationCount,
   rotationStep,
   type ResolvedVisual,
 } from "@factoriotools/renderer/src/entityLookup.js";
@@ -69,6 +70,7 @@ import {
   railName,
   railTiles,
   signalSlotsForEnd,
+  supportTiles,
   trainStopSlots,
   type RailEnd,
   type RailPiece,
@@ -352,7 +354,7 @@ function facings(name: string): number[] {
   // A thruster can't be turned at all: its ports are pinned in place.
   if (visual(name).pipeConnections?.some((p) => p.fixed)) return [N];
   const step = rotationStep(name);
-  if (step < 4) return Array.from({ length: 16 / step }, (_, i) => i * step);
+  if (step < 4) return Array.from({ length: rotationCount(name) / step }, (_, i) => i * step);
   return turns(name) ? DIRECTIONS : [N];
 }
 
@@ -1395,12 +1397,12 @@ function elevatedSection(): Sheet {
   const sheet = new Sheet();
   const ground = new Track(31, -9, S).go("straight", 14);
   const up = new Track(1, 41, N).go("straight").go("ramp").go("straight", 2).go("right", 4).go("straight", 8).go("right", 4).go("straight", 2).go("ramp").go("straight");
-  const groundTiles = new Set(ground.pieces.flatMap((p) => railTiles(p).map(([x, y]) => `${x},${y}`)));
-  const blocked = (x: number, y: number) => {
-    for (let ty = Math.floor(y - 1.5); ty < y + 1.5; ty++) for (let tx = Math.floor(x - 1.5); tx < x + 1.5; tx++) if (groundTiles.has(`${tx},${ty}`)) return true;
-    return false;
-  };
-  const { supports } = supportsFor(up.start, up.pieces.slice(1), () => false, blocked);
+  // Supports stand clear of everything on the ground: the line below and
+  // this track's own ramps and ground ends.
+  const onGround = [...ground.pieces, ...up.pieces.filter((p) => !isElevatedRail(p.name))];
+  const groundTiles = new Set(onGround.flatMap((p) => railTiles(p).map(([x, y]) => `${x},${y}`)));
+  const blocked = (x: number, y: number, direction: number) => supportTiles({ x, y, direction }).some(([tx, ty]) => groundTiles.has(`${tx},${ty}`));
+  const { supports } = supportsFor(up.start, up.pieces.slice(1), { startReach: -1, supported: () => false, blocked });
   for (const p of [...ground.pieces, ...up.pieces, ...supports]) sheet.add({ ...p });
   return sheet;
 }
