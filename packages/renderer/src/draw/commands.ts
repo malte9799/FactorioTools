@@ -38,6 +38,9 @@ export interface DrawCommand {
    *  module slot's beacon_tint. Unlike `tint` this recolours the art itself
    *  and keeps its alpha; undefined paints the sheet as-is. */
   multiply?: string;
+  /** The placed entity this sprite belongs to, so a sheet that has not loaded
+   *  yet can be stood in for by that entity's outline. */
+  entityNumber?: number;
 }
 
 /** Global paint order: layer, then screen depth, then the entity's own layer
