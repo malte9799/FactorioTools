@@ -3333,6 +3333,23 @@ export function mountBlueprintEditor(root: HTMLElement): () => void {
     await importText(text);
   }, { signal });
 
+  /** The blueprint a shared link carries: `#/blueprint-editor?bp=<string or
+   *  blueprint-site link>`. Removed from the address bar once read, so a
+   *  reload restores the autosave (edits included) instead of re-importing. */
+  function takeLinkedBlueprint(): string | null {
+    const [route, query] = window.location.hash.split("?", 2);
+    if (query === undefined) return null;
+    const params = new URLSearchParams(query);
+    const value = params.get("bp");
+    if (value === null) return null;
+    params.delete("bp");
+    const rest = params.toString();
+    history.replaceState(null, "", `${window.location.pathname}${window.location.search}${route}${rest ? `?${rest}` : ""}`);
+    // Query parsing turns a raw "+" (valid base64) into a space.
+    const text = value.trim();
+    return text.includes("://") ? text : text.replace(/ /g, "+");
+  }
+
   async function importFromLink(text: string): Promise<void> {
     setStatus("Fetching blueprint…", "info", true);
     try {
@@ -3920,7 +3937,18 @@ export function mountBlueprintEditor(root: HTMLElement): () => void {
   } catch {
     /* storage unavailable — fall through to the random example below */
   }
-  if (autosaved) {
+  const linked = takeLinkedBlueprint();
+  if (linked) {
+    // An explicit link beats the autosave, same as any other import.
+    if (looksLikeBlueprintString(linked)) {
+      input.value = linked;
+      load(linked);
+    } else if (parseBlueprintLink(linked)) {
+      void importFromLink(linked);
+    } else {
+      setStatus("The ?bp= value is neither a blueprint string nor a supported blueprint link.", "error");
+    }
+  } else if (autosaved) {
     input.value = autosaved;
     // The autosave is the blueprint that was open, edits included — so it
     // is still the same library entry it was before the reload.

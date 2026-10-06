@@ -14,7 +14,7 @@ Plus a live map seed viewer.
 ![Node](https://img.shields.io/badge/Node-22+-5fa04e?logo=nodedotjs&logoColor=white)
 [![Licence: MIT](https://img.shields.io/badge/licence-MIT-blue)](LICENSE)
 
-[Features](#-features) · [Seed Viewer](#-seed-viewer) · [Quick start](#-quick-start) · [Build from source](#-build-from-source) · [Architecture](#-architecture) · [Licence](#-licence)
+[Features](#-features) · [Open from a URL](#-open-a-blueprint-from-a-url) · [Seed Viewer](#-seed-viewer) · [Quick start](#-quick-start) · [Build from source](#-build-from-source) · [Architecture](#-architecture) · [Licence](#-licence)
 
 <br>
 
@@ -92,7 +92,9 @@ Plus a live map seed viewer.
       combinators; undo and redo. Import from a string, a
       <a href="https://factorioprints.com">factorioprints.com</a> or
       <a href="https://fprints.xyz">fprints.xyz</a> link, then export the
-      result back to a blueprint string.
+      result back to a blueprint string. A link can also open a blueprint
+      directly: <code>#/blueprint-editor?bp=&lt;string or link&gt;</code>
+      (see <a href="#-open-a-blueprint-from-a-url">below</a>).
     </td>
     <td width="50%">
       <img src="docs/screenshots/import-export.webp" alt="Import / Export menu with clipboard import, random example and share links">
@@ -110,6 +112,25 @@ Plus a live map seed viewer.
     </td>
   </tr>
 </table>
+
+## 🔗 Open a blueprint from a URL
+
+The Blueprint Editor imports whatever is in the `bp` parameter of its address:
+
+```
+https://malte9799.github.io/FactorioTools/#/blueprint-editor?bp=<blueprint string>
+https://malte9799.github.io/FactorioTools/#/blueprint-editor?bp=https://factorioprints.com/view/<id>
+```
+
+`bp` is either a blueprint string or a link to a supported site
+(factorioprints.com, fprints.xyz). Prefer a link for big blueprints, since
+strings can run to tens of kilobytes. Put `bp` inside the `#` part: the site
+is static and routes on the hash. Percent-encode the value when building links
+by hand (`encodeURIComponent`); a raw `+` is also tolerated.
+
+The parameter is removed from the address bar once it is read, so reloading
+restores your edits instead of importing again. Opening such a link replaces
+the blueprint that was open.
 
 ## 🌍 Seed Viewer
 
