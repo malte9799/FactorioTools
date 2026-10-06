@@ -75,6 +75,13 @@ export function iconName(name: string): string {
   return isRail(name) && railShape(name) !== "ramp" ? "rail" : name;
 }
 
+const ROLLING_STOCK = new Set(["locomotive", "cargo-wagon", "fluid-wagon", "artillery-wagon"]);
+
+/** Locomotives and wagons: they stand on track, at the track's heading. */
+export function isRollingStock(name: string): boolean {
+  return ROLLING_STOCK.has(name);
+}
+
 export function isElevatedRail(name: string): boolean {
   return name.startsWith("elevated-") && name in SHAPE_OF;
 }

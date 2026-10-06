@@ -220,13 +220,29 @@ export function normaliseWires(blueprint: Blueprint): WireLink[] {
   return links;
 }
 
+/** A rolling stock heading rounded to the 16-way direction everything else
+ *  in the editor turns by. */
+function orientationDirection(orientation: number): number {
+  return ((Math.round(orientation * 16) % 16) + 16) % 16;
+}
+
+/** Which way a piece of rolling stock heads, as a fraction of a turn
+ *  clockwise from north. The blueprint's own `orientation` while it still
+ *  agrees with `direction`; once an edit has turned the entity, `direction`
+ *  wins. */
+export function stockOrientation(e: Pick<PlacedEntity, "direction" | "orientation">): number {
+  if (e.orientation !== undefined && orientationDirection(e.orientation) === e.direction) return e.orientation;
+  return (((e.direction % 16) + 16) % 16) / 16;
+}
+
 export function normaliseEntities(blueprint: Blueprint): PlacedEntity[] {
   return (blueprint.entities ?? []).map((entity) => ({
     entityNumber: entity.entity_number,
     name: safeName(entity.name),
     x: entity.position.x,
     y: entity.position.y,
-    direction: entity.direction ?? 0,
+    direction: typeof entity.orientation === "number" ? orientationDirection(entity.orientation) : (entity.direction ?? 0),
+    orientation: typeof entity.orientation === "number" ? entity.orientation : undefined,
     quality: asQuality(entity.quality),
     recipe: entity.recipe,
     modules: readModules(entity),
@@ -368,7 +384,8 @@ export function denormaliseEntities(entities: PlacedEntity[]): BpEntity[] {
       name: e.name,
       position: { x: e.x, y: e.y },
     };
-    if (e.direction !== 0) bp.direction = e.direction;
+    if (e.orientation !== undefined) bp.orientation = stockOrientation(e);
+    else if (e.direction !== 0) bp.direction = e.direction;
     if (e.quality !== "normal") bp.quality = e.quality;
     if (e.recipe) bp.recipe = e.recipe;
     if (e.modules.length) bp.items = writeModules(e.modules, e.name);

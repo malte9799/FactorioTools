@@ -24,6 +24,7 @@ import path from "node:path";
 import { collectBlueprints, decodeBlueprintString, normaliseEntities, type PlacedEntity } from "@factoriotools/engine";
 import { DEBUG_BLUEPRINT } from "../../engine/src/data/debug-lab.js";
 import { DATA_DIR, requireDataset } from "./dataset.js";
+import { buildRailIndex } from "../src/railPlacement.js";
 
 const { gameData, catalog } = requireDataset("scene cache");
 
@@ -144,6 +145,7 @@ const lookup = buildVisualLookup(gameData, catalog);
 const connectors = makeConnectorPredicates(lookup);
 
 function commandsFor(entities: PlacedEntity[], animationFrame: number): DrawCommand[] {
+  const signalStates = buildRailIndex(entities, () => [1, 1], (name) => lookup.get(name)?.rollingStock).signalStates();
   const ctx = {
     grid: buildGrid(entities),
     fluidNetwork: buildFluidNetwork(entities, (e) => {
@@ -154,6 +156,8 @@ function commandsFor(entities: PlacedEntity[], animationFrame: number): DrawComm
     ...connectors,
     cargoBays: buildCargoBayGrid(entities, connectors.cargoBayShapeOf),
     animationFrame,
+    // Signals show what the track and its trains make them, as in render.ts.
+    signalState: (e: PlacedEntity) => signalStates.get(e.entityNumber) ?? "none",
   };
   const commands: DrawCommand[] = [];
   for (const e of entities) {

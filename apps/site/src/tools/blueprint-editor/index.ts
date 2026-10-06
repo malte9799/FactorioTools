@@ -22,7 +22,7 @@ import {
   stripRichText,
 } from "@factoriotools/engine";
 import type { CalculationResult, Timescale, Blueprint, BlueprintTreeNode, PlacedEntity, QualityName, MachineGroup, ModuleStack, ThroughputContext, BottleneckSubgroup, BpSignalId, WireColor, WireLink } from "@factoriotools/engine";
-import { mountRenderer, entitiesCollide, isRail, isElevatedRail, railTiles, railKey, type RailPiece, isPoleLike, isUndergroundLike, canBuildOver, undergroundForPlacement, undergroundPartner, isTwoDirectionOnly, rotationStep, effectiveFootprint, rotateAroundCenter, summariseRecording, slowestFrames, worstPhase, autoConnectPole, canWire, dropWiresFor, terminalSideAt, toggleWire, type BlueprintRenderer, type HighlightRole } from "@factoriotools/renderer";
+import { mountRenderer, entitiesCollide, isRail, isRollingStock, isElevatedRail, railTiles, railKey, type RailPiece, isPoleLike, isUndergroundLike, canBuildOver, undergroundForPlacement, undergroundPartner, isTwoDirectionOnly, rotationStep, effectiveFootprint, rotateAroundCenter, summariseRecording, slowestFrames, worstPhase, autoConnectPole, canWire, dropWiresFor, terminalSideAt, toggleWire, type BlueprintRenderer, type HighlightRole } from "@factoriotools/renderer";
 import { buildRecipeCard, renderResults, type ViewOptions } from "./legacy-view/panels.js";
 import { icon } from "./legacy-view/icons.js";
 import { makeFloatingWindow } from "../../window-manager.js";
@@ -1654,7 +1654,7 @@ export function mountBlueprintEditor(root: HTMLElement): () => void {
     const have = new Set(entities.filter((e) => isRail(e.name)).map((e) => railKey(e)));
     const taken = new Set<string>();
     for (const e of entities) {
-      if (isRail(e.name) || RAILSIDE.has(e.name)) continue;
+      if (isRail(e.name) || RAILSIDE.has(e.name) || isRollingStock(e.name)) continue;
       const visual = visualLookup().get(e.name);
       const [w, h] = visual ? effectiveFootprint(visual, e.direction) : [1, 1];
       for (let ty = Math.floor(e.y - h / 2 + 0.01); ty < Math.ceil(e.y + h / 2 - 0.01); ty++) {

@@ -1,4 +1,4 @@
-import { Layer, type FluidPointRef, type GraphicsLayer, type InserterGraphics, type PlacedEntity, type Sprite } from "@factoriotools/engine";
+import { Layer, stockOrientation, type FluidPointRef, type GraphicsLayer, type InserterGraphics, type PlacedEntity, type SignalColor, type Sprite } from "@factoriotools/engine";
 import type { ResolvedVisual } from "../entityLookup.js";
 import { dir4Name, dir8Name, toCardinal, opposite, splitterLaneCells, step, Dir, type Cardinal, type NeighbourGrid } from "../neighbours/grid.js";
 import { classifyPipe } from "../neighbours/pipe.js";
@@ -34,6 +34,9 @@ export interface CollectContext {
    *  themselves and across to each other. */
   cargoBays: CargoBayGrid;
   animationFrame: number;
+  /** What a placed rail signal shows (railSignals.ts). Left out, or
+   *  returning undefined, for a signal still in hand, which shows green. */
+  signalState?: (entity: PlacedEntity) => SignalColor | undefined;
 }
 
 /** Everything a layer's frame axes need, resolved once per entity. */
@@ -43,6 +46,10 @@ interface EntityFrame {
   /** entity.direction unmodified (0..15) — for a layer keyed by more than
    *  4-way facing, e.g. artillery-turret's direction256 axis. */
   rawDirection: number;
+  /** Rolling stock's heading, a fraction of a turn clockwise from north. */
+  orientation: number;
+  /** The colour a rail signal shows. */
+  signalState: SignalColor;
   /** Belt connection row, or a pipe/wall variant name. */
   connectionIndex: number;
   connectionName: string;
@@ -131,6 +138,8 @@ function resolveFrame(entity: PlacedEntity, visual: ResolvedVisual, ctx: Collect
   const frame: EntityFrame = {
     direction: Math.round(toCardinal(entity.direction) / 4) % 4,
     rawDirection: entity.direction,
+    orientation: stockOrientation(entity),
+    signalState: ctx.signalState?.(entity) ?? "green",
     connectionIndex: 0,
     connectionName: "",
     caps: [],
@@ -325,6 +334,14 @@ function axisIndex(axis: GraphicsLayer["column"], frame: EntityFrame): number {
     // IS the row directly, no 256-scaling needed (their sheet is a genuine
     // 16-row grid, one row per placement facing).
     case "direction16": return frame.rawDirection;
+    // A colour the sheet has no frame for (a rail signal with no track to
+    // guard) shows red.
+    case "signal-state": return axis.frames[frame.signalState] ?? axis.frames.red ?? 0;
+    case "orientation": {
+      const turn = ((frame.orientation % 1) + 1) % 1;
+      const index = Math.round(turn * (axis.halfTurn ? 2 : 1) * axis.count) % axis.count;
+      return axis.axis === "column" ? index % axis.lineLength : Math.floor(index / axis.lineLength);
+    }
     case "direction16Grid": {
       const index = ((frame.rawDirection % 16) + 16) % 16;
       return axis.axis === "column" ? index % axis.lineLength : Math.floor(index / axis.lineLength);

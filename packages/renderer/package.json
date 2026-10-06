@@ -6,7 +6,7 @@
   "main": "src/index.ts",
   "scripts": {
     "check": "tsc --noEmit",
-    "test": "tsx test/wires.test.ts && tsx test/wireEdit.test.ts && tsx test/beltAnimation.test.ts && tsx test/animProfile.test.ts && tsx test/pipe.test.ts && tsx test/beltGraph.test.ts && tsx test/spatial-camera.test.ts && tsx test/redraw.test.ts && tsx test/recordingSummary.test.ts && tsx test/entityPreview.test.ts && tsx test/heatNetwork.test.ts && tsx test/inserterLayering.test.ts && tsx test/bake.test.ts && tsx test/undergroundPairing.test.ts && tsx test/buildOver.test.ts && tsx test/fusionPorts.test.ts && tsx test/fluidArt.test.ts && tsx test/railGeometry.test.ts && tsx test/railPlanner.test.ts && tsx test/collision.test.ts && tsx test/railBlocks.test.ts && tsx test/tiles.test.ts && tsx test/cargoBay.test.ts && tsx test/sceneCache.test.ts"
+    "test": "tsx test/wires.test.ts && tsx test/wireEdit.test.ts && tsx test/beltAnimation.test.ts && tsx test/animProfile.test.ts && tsx test/pipe.test.ts && tsx test/beltGraph.test.ts && tsx test/spatial-camera.test.ts && tsx test/redraw.test.ts && tsx test/recordingSummary.test.ts && tsx test/entityPreview.test.ts && tsx test/heatNetwork.test.ts && tsx test/inserterLayering.test.ts && tsx test/bake.test.ts && tsx test/undergroundPairing.test.ts && tsx test/buildOver.test.ts && tsx test/fusionPorts.test.ts && tsx test/fluidArt.test.ts && tsx test/railGeometry.test.ts && tsx test/railPlanner.test.ts && tsx test/collision.test.ts && tsx test/railBlocks.test.ts && tsx test/railSignals.test.ts && tsx test/tiles.test.ts && tsx test/cargoBay.test.ts && tsx test/sceneCache.test.ts"
   },
   "dependencies": {
     "@factoriotools/engine": "*"

@@ -14,6 +14,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { PNG } from "pngjs";
 import { BuildCache, reportCache } from "./build-cache.js";
+import { packRollingStock, ROLLING_STOCK_TABLES } from "./pack-rolling-stock.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -355,7 +356,17 @@ function extractGuiSprites(): void {
   console.log(`GUI sprites: copied ${copied}, reused ${reused}, missing ${missing} -> ${outDir}`);
 }
 
+/** Locomotive and wagon art, thinned to the headings the editor draws —
+ *  see pack-rolling-stock.ts. */
+function extractRollingStock(): void {
+  const raw = JSON.parse(readFileSync(DUMP_PATH, "utf-8")) as Record<string, Record<string, any>>;
+  const protos = ROLLING_STOCK_TABLES.flatMap((table) => Object.values(raw[table] ?? {}));
+  const written = packRollingStock(protos, resolveModPath, ENTITY_SPRITE_OUT_DIR, FORCE);
+  console.log(`Rolling stock: packed ${written} sheets -> ${ENTITY_SPRITE_OUT_DIR}`);
+}
+
 extractEntitySheets();
+extractRollingStock();
 extractIconAtlas();
 extractItemGroupIcons();
 extractShortcutIcons();

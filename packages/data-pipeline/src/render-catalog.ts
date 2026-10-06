@@ -4,6 +4,7 @@
 import { Layer } from "@factoriotools/engine";
 import type { EntityGraphics, GraphicsLayer, MenuGroup, MenuPosition, RenderCatalog, RenderEntityProto, Sprite, TileProto, TileVariantSheet } from "@factoriotools/engine";
 import type { LocaleTables } from "./locale.js";
+import { ROLLING_STOCK_TABLES, STOCK_LINE_LENGTH, rollingStockLayout } from "./pack-rolling-stock.js";
 import {
   animationListGraphics,
   beltAnimationAxis,
@@ -530,23 +531,19 @@ function fusionReactorGraphics(proto: any): EntityGraphics | undefined {
 
 /** rail-signal/rail-chain-signal's own sheet: 16 rows (one per placement
  *  direction, 0..15 — a genuine 16-way sheet, not the 256-entry aiming grid
- *  artillery-turret's cannon uses) of line_length animation-state frames
- *  (red/orange/green light cycling) each. row picks the direction row
- *  directly (direction16); column cycles through the row's own frames with
- *  the renderer's animation clock — a blueprint view has no real signal
- *  state to show, but the light should still visibly blink/cycle rather
- *  than freeze on frame 0, matching a signal's look at rest in-game. */
+ *  artillery-turret's cannon uses) with one frame per signal colour as
+ *  columns. row picks the direction row directly (direction16); column
+ *  picks the frame of the colour the signal is at, through the prototype's
+ *  own signal_color_to_structure_frame_index. */
 function railSignalGraphics(proto: any): EntityGraphics | undefined {
   const layers: GraphicsLayer[] = [];
+  const frames: Record<string, number> = proto.ground_picture_set?.signal_color_to_structure_frame_index ?? { green: 0, yellow: 1, red: 2 };
   for (const l of unwrapAll(proto.ground_picture_set?.structure)) {
     const lineLength = l.sprite.columns ?? 1;
     layers.push({
       layer: l.shadow ? Layer.Shadow : Layer.Object,
       sprites: { ...l.sprite, columns: lineLength },
-      // ~1.5 real-world seconds per full 3-frame loop (0.5s/frame, 60fps
-      // render clock / 30) — full clock speed made the cycle read as a
-      // flicker/strobe instead of a visible color change.
-      column: { by: "animation", slowdown: 30 },
+      column: { by: "signal-state", frames },
       row: { by: "direction16" },
     });
   }
@@ -568,6 +565,30 @@ function railSignalGraphics(proto: any): EntityGraphics | undefined {
     });
   }
   return layers.length > 0 ? { layers } : undefined;
+}
+
+/** Locomotives and wagons: a shadow and a body, each one frame per heading
+ *  on the sheets pack-rolling-stock.ts writes. */
+function rollingStockGraphics(proto: any): EntityGraphics | undefined {
+  const layers: GraphicsLayer[] = [];
+  for (const { sheet, source, shadow, count, halfTurn } of rollingStockLayout(proto)) {
+    const axis = { by: "orientation", lineLength: STOCK_LINE_LENGTH, count, halfTurn: halfTurn || undefined } as const;
+    layers.push({
+      layer: shadow ? Layer.Shadow : Layer.Object,
+      sprites: { sheet, frameWidth: source.width, frameHeight: source.height, columns: STOCK_LINE_LENGTH, shift: source.shift, scale: source.scale ?? 1 },
+      column: { ...axis, axis: "column" },
+      row: { ...axis, axis: "row" },
+    });
+  }
+  // Shadows paint first.
+  layers.sort((a, b) => a.layer - b.layer);
+  return layers.length > 0 ? { layers } : undefined;
+}
+
+/** A rolling stock prototype's collision box: how wide it is and how long. */
+function rollingStockSize(proto: any): { width: number; length: number } {
+  const [[x1, y1], [x2, y2]] = proto.collision_box;
+  return { width: x2 - x1, length: y2 - y1 };
 }
 
 /** Gates only have two real orientations, so north aliases south and east
@@ -1309,7 +1330,7 @@ export function buildRenderCatalog(raw: Raw, locale: LocaleTables, version: stri
   // (heat-covers, drawn only when UNconnected, same rule as fluid
   // pipe-covers — see heatCoversOf's own doc comment for why heat-exchanger
   // needed this at all).
-  const add = (proto: any, graphics: EntityGraphics | undefined, footprintOverride?: [number, number]) => {
+  const add = (proto: any, graphics: EntityGraphics | undefined, footprintOverride?: [number, number], rollingStock?: { width: number; length: number }) => {
     if (entities[proto.name] || NOT_PLACEABLE.test(proto.name)) return;
     const pipeConnections = pipeConnectionsOf(proto);
     const pictureLayers = pipePictureLayers(proto);
@@ -1330,6 +1351,7 @@ export function buildRenderCatalog(raw: Raw, locale: LocaleTables, version: stri
       tileFootprint: footprintOverride ?? footprintOf(proto),
       graphics,
       rotatesFootprint: ROTATES_FOOTPRINT.has(proto.name),
+      rollingStock,
       pipeConnections: pipeConnections.length > 0 ? pipeConnections : undefined,
       heatConnections: heatConnections.length > 0 ? heatConnections : undefined,
       wireConnections: wireConnectionsOf(proto),
@@ -1375,6 +1397,12 @@ export function buildRenderCatalog(raw: Raw, locale: LocaleTables, version: stri
   for (const table of ["rail-signal", "rail-chain-signal"]) {
     for (const proto of Object.values(raw[table] ?? {})) {
       add(proto, railSignalGraphics(proto));
+    }
+  }
+  for (const table of ROLLING_STOCK_TABLES) {
+    for (const proto of Object.values(raw[table] ?? {})) {
+      const size = rollingStockSize(proto);
+      add(proto, rollingStockGraphics(proto), [size.width, size.length], size);
     }
   }
   for (const proto of Object.values(raw.pipe ?? {})) {

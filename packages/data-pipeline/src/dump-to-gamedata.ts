@@ -39,6 +39,7 @@ import type {
   UndergroundBeltProto,
 } from "@factoriotools/engine";
 import { loadLocale, localisedRecipeName, type LocaleTables } from "./locale.js";
+import { PACKED_PREFIX } from "./pack-rolling-stock.js";
 import { animationListGraphics, beltGraphics, directionColumnGraphics, fluidEnablersOf, pipeConnectionsOf, pipeCoversLayers, pipePictureLayers, sheetsOf, toSprite, unwrap, unwrapAll, type FluidEnabler } from "./sprite-shapes.js";
 import { buildRenderCatalog } from "./render-catalog.js";
 import type { RenderCatalog } from "@factoriotools/engine";
@@ -868,7 +869,8 @@ function collectSpriteFilenames(data: GameData, catalog: RenderCatalog): string[
   }
   for (const e of Object.values(catalog.entities)) sheetsOf(e.graphics).forEach((f) => files.add(f));
   for (const t of Object.values(catalog.tiles ?? {})) t.variants.forEach((v) => files.add(v.sheet));
-  return [...files].sort();
+  // Packed sheets are written by extract-sprites, not copied from the game.
+  return [...files].filter((f) => !f.startsWith(PACKED_PREFIX)).sort();
 }
 
 function main() {

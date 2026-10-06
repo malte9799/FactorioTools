@@ -311,4 +311,20 @@ test("display panel text, icon and lamp colour round-trip", () => {
   assert.deepEqual(back[1]!.color, { r: 1, g: 0, b: 0, a: 1 });
 });
 
+test("rolling stock keeps its heading, and a turned one writes the new heading", () => {
+  const entities: BpEntity[] = [
+    { entity_number: 1, name: "locomotive", position: { x: 1, y: -10 }, orientation: 0.25 },
+    { entity_number: 2, name: "cargo-wagon", position: { x: 4.5, y: 3.25 }, orientation: 0.3671875 },
+  ];
+  const placed = normaliseEntities({ item: "blueprint", entities });
+  // The 16-way direction follows the heading, for everything that turns by it.
+  assert.deepEqual(placed.map((e) => e.direction), [4, 6]);
+  const back = denormaliseEntities(placed);
+  assert.deepEqual(back.map((e) => e.orientation), [0.25, 0.3671875]);
+  assert.equal(back[0]!.direction, undefined);
+  // Turned end for end in the editor: direction moved, so it wins.
+  placed[0]!.direction = 12;
+  assert.equal(denormaliseEntities(placed)[0]!.orientation, 0.75);
+});
+
 console.log(`\n${passed} passing`);

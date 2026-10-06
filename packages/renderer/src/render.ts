@@ -33,6 +33,7 @@ import {
   previewRail,
   railsideSlot,
   railsideSlotTaken,
+  rollingStockSnap,
   startPiece,
   type RailIndex,
   type RailPreview,
@@ -841,7 +842,7 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
       railIndex = buildRailIndex(entities, (e) => {
         const visual = visualFor(e.name);
         return visual ? effectiveFootprint(visual, e.direction) : FALLBACK_FOOTPRINT;
-      });
+      }, (name) => visualFor(name)?.rollingStock);
       railIndexVersion = entitiesVersion;
     }
     return railIndex;
@@ -1070,7 +1071,15 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
         const slot = isRailSnapped(mode.entityName)
           ? railsideSlot(currentRailIndex(), mode.entityName, ghostWorldPos.x, ghostWorldPos.y, ghostDirection)
           : undefined;
-        const snapped = slot ? { x: slot.x, y: slot.y } : { x: snapAxis(ghostWorldPos.x, gfw), y: snapAxis(ghostWorldPos.y, gfh) };
+        // Locomotives and wagons snap onto the track itself, heading along it.
+        const onTrack = ghostVisual.rollingStock ? rollingStockSnap(currentRailIndex(), ghostWorldPos.x, ghostWorldPos.y, ghostDirection) : undefined;
+        const snapped = onTrack
+          ? { x: onTrack.x, y: onTrack.y }
+          : slot
+            ? { x: slot.x, y: slot.y }
+            : ghostVisual.rollingStock
+              ? { x: ghostWorldPos.x, y: ghostWorldPos.y }
+              : { x: snapAxis(ghostWorldPos.x, gfw), y: snapAxis(ghostWorldPos.y, gfh) };
         const previewKey = `${entitiesVersion}|${mode.entityName}|${snapped.x},${snapped.y}|${ghostDirection}`;
         const previewStale = previewKey !== ghostPreviewKey;
         // Valid iff nothing else's footprint overlaps the ghost's own —
@@ -1102,7 +1111,7 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
           name: mode.entityName,
           x: snapped.x,
           y: snapped.y,
-          direction: slot?.direction ?? ghostDirection,
+          direction: onTrack?.direction ?? slot?.direction ?? ghostDirection,
           quality: "normal",
           modules: [],
           filterItems: [],
@@ -1123,7 +1132,11 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
         const only = blockers.length === 1 ? entityById.get(blockers[0]!) : undefined;
         const replaced =
           only && canBuildOver(only, mode.entityName, snapped.x, snapped.y, probe.direction, visualFor, catalog.replaceGroups) ? only : undefined;
-        ghostCanPlace = isRailSnapped(mode.entityName) ? railsideOk(slot, overlapping) : blockers.length === 0 || replaced !== undefined;
+        ghostCanPlace = isRailSnapped(mode.entityName)
+          ? railsideOk(slot, overlapping)
+          : ghostVisual.rollingStock
+            ? onTrack !== undefined && blockers.length === 0
+            : blockers.length === 0 || replaced !== undefined;
         if (previewStale) {
           ghostUnderground = isUndergroundLike(mode.entityName)
             ? undergroundForPlacement(
@@ -1144,7 +1157,7 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
           y: snapped.y,
           // A paired exit is stored with its travel direction, the
           // reverse of how it's held (see autoUnderground).
-          direction: slot?.direction ?? ghostUnderground?.direction ?? ghostDirection,
+          direction: onTrack?.direction ?? slot?.direction ?? ghostUnderground?.direction ?? ghostDirection,
           quality: mode.quality ?? "normal",
           modules: [],
           filterItems: [],
@@ -1305,6 +1318,8 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
       }
       sceneCache = buildSceneCache(sceneKey, visibleEntities, {
         grid, fluidNetwork, heatNetwork, ...connectors, cargoBays, animationFrame: 0,
+        // A signal standing on no slot guards nothing and shows no colour.
+        signalState: (e) => currentRailIndex().signalStates().get(e.entityNumber) ?? "none",
       });
       sceneRebuiltThisFrame = true;
       sceneRebuildCount++;
@@ -2104,6 +2119,15 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
       return;
     }
     const visual = visualFor(mode.entityName);
+    if (visual?.rollingStock) {
+      // One locomotive or wagon per click, and only on track. The app
+      // turns down one that would overlap other stock.
+      const onTrack = rollingStockSnap(currentRailIndex(), ghostWorldPos.x, ghostWorldPos.y, ghostDirection);
+      if (!onTrack || placedThisGesture.size > 0) return;
+      placedThisGesture.add(`${onTrack.x},${onTrack.y}`);
+      placeCallback?.(onTrack.x, onTrack.y, onTrack.direction);
+      return;
+    }
     const [fw, fh] = visual ? effectiveFootprint(visual, ghostDirection) : FALLBACK_FOOTPRINT;
     const snapped = { x: snapAxis(ghostWorldPos.x, fw), y: snapAxis(ghostWorldPos.y, fh) };
     const key = `${snapped.x},${snapped.y}`;

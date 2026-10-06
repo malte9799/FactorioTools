@@ -1,7 +1,7 @@
 import type { EntityGraphics, GameData, HeatConnectionPoint, InserterGraphics, PipeConnectionPoint, PlacedEntity, RenderCatalog, WireAttachPoints } from "@factoriotools/engine";
 import { toCardinal, opposite, step, Dir } from "./neighbours/grid.js";
 import type { CargoBayShape } from "./neighbours/cargoBay.js";
-import { isRail, railFootprint } from "./railGeometry.js";
+import { isRail, isRollingStock, railFootprint } from "./railGeometry.js";
 
 /** One lookup over both GameData (entities with rates) and the RenderCatalog
  *  (visual-only ones) — the renderer doesn't care which side a name came
@@ -41,6 +41,8 @@ export interface ResolvedVisual {
   /** Rails only: the rail's entity name, whose footprint railGeometry
    *  works out per facing. */
   rail?: string;
+  /** Locomotives and wagons only: the collision box, across and along. */
+  rollingStock?: { width: number; length: number };
 }
 
 /** A module's look inside a beacon slot — its tier picks the art variation,
@@ -156,6 +158,7 @@ export function buildVisualLookup(data: GameData, catalog: RenderCatalog): Map<s
       supplyAreaDistance: e.supplyAreaDistance,
       maxWireDistance: e.maxWireDistance,
       rail: isRail(e.name) ? e.name : undefined,
+      rollingStock: e.rollingStock,
     });
   }
   // Most buildings take circuit wires, but the dataset only records where
@@ -205,6 +208,14 @@ export function effectiveFootprint(visual: ResolvedVisual, direction: number): [
   // swap describes (a curve's box is neither square nor symmetric).
   if (visual.rail) return railFootprint(visual.rail, direction);
   const [w, h] = visual.tileFootprint;
+  // Rolling stock turns with the track under it: the box around its own,
+  // turned to its heading.
+  if (visual.rollingStock) {
+    const a = (direction / 16) * Math.PI * 2;
+    const c = Math.abs(Math.cos(a));
+    const s = Math.abs(Math.sin(a));
+    return [w * c + h * s, w * s + h * c];
+  }
   if (!visual.rotatesFootprint) return [w, h];
   const facing = toCardinal(direction);
   return facing === Dir.East || facing === Dir.West ? [h, w] : [w, h];
@@ -378,6 +389,8 @@ const EIGHT_WAY_ROTATION = new Set(["railgun-turret", "straight-rail", "elevated
  *  FINE_ROTATION (step 1) and EIGHT_WAY_ROTATION (step 2) above. */
 export function rotationStep(name: string): number {
   if (FINE_ROTATION.has(name)) return 1;
+  // Rolling stock turns end for end on its track.
+  if (isRollingStock(name)) return 8;
   if (EIGHT_WAY_ROTATION.has(name)) return 2;
   return 4;
 }
