@@ -1,4 +1,5 @@
 import type { BpTile, GameData, PlacedEntity, QualityName, RenderCatalog, WireColor, WireLink } from "@factoriotools/engine";
+import { Layer } from "@factoriotools/engine";
 import { Camera } from "./camera.js";
 import { getSharedSpriteAtlas } from "./spriteAtlas.js";
 import { getSharedIconAtlas } from "./iconAtlas.js";
@@ -1341,6 +1342,20 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
       command.sx = sceneCache.animOrigin[i]! + column * sceneCache.animStride[i]!;
     }
     lastDrawCommandCount = commands.length;
+    // While sheets are still arriving, an entity whose art is not (fully)
+    // loaded shows its outline instead of leaving the grid empty. The outline
+    // sits under the sprites, so partly loaded entities just get a frame.
+    if (atlas.stats().pending > 0) {
+      const waiting = new Set<number>();
+      for (const c of commands) {
+        if (c.entityNumber === undefined || c.layer === Layer.Shadow || waiting.has(c.entityNumber)) continue;
+        if (!(c.multiply ? atlas.getTinted(c.sheet, c.multiply) : atlas.get(c.sheet))) waiting.add(c.entityNumber);
+      }
+      for (const id of waiting) {
+        const entity = entityById.get(id);
+        if (entity) outlined.push(entity);
+      }
+    }
     // Device pixels per world tile — matches the resolution every placed
     // entity already draws at via the ctx transform above (dpr * zoom), so
     // a tinted ghost's offscreen buffer (paintTinted) is exactly as sharp

@@ -476,6 +476,7 @@ function push(
     order,
     alpha,
     rotationDeg: sprite.rotationDeg,
+    entityNumber: entity.entityNumber,
   });
 }
 
