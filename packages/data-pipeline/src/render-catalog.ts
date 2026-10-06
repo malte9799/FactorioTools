@@ -729,6 +729,17 @@ function railGraphics(proto: any): EntityGraphics | undefined {
     }
   }
   layers.push(...railFenceLayers(proto, DIR8, "dir8", Layer.ElevatedRailMetal, (dir) => RAIL_MIRROR[dir]));
+  // The end cap where track stops (rail_endings): 16 frames in a row, one
+  // per direction an end points out along. On the ground the buffer and
+  // its gravel go under the rails and the rail tips over them; an elevated
+  // cap is one piece over the deck, with its shadow on the ground.
+  const endings: any[] = pics?.rail_endings?.sheets ?? [];
+  endings.forEach((sheet, i) => {
+    const sprite = toSprite(sheet);
+    if (!sprite) return;
+    const tier = sheet.draw_as_shadow ? Layer.Shadow : elevated ? Layer.ElevatedRailMetal : i === 0 ? Layer.RailScrew : Layer.RailMetal;
+    layers.push({ layer: tier, sprites: { ...sprite, columns: 16 }, per: "rail-ending" });
+  });
   return layers.length > 0 ? { layers } : undefined;
 }
 

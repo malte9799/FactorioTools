@@ -1,6 +1,6 @@
 import { Layer, type FluidPointRef, type GraphicsLayer, type InserterGraphics, type PlacedEntity, type Sprite } from "@factoriotools/engine";
 import type { ResolvedVisual } from "../entityLookup.js";
-import { RAIL_DECK_HEIGHT } from "../railGeometry.js";
+import { openEnds, RAIL_DECK_HEIGHT, railEnds } from "../railGeometry.js";
 import { dir4Name, dir8Name, toCardinal, opposite, splitterLaneCells, step, Dir, type Cardinal, type NeighbourGrid } from "../neighbours/grid.js";
 import { classifyPipe } from "../neighbours/pipe.js";
 import { classifyWall } from "../neighbours/wall.js";
@@ -35,6 +35,9 @@ export interface CollectContext {
    *  themselves and across to each other. */
   cargoBays: CargoBayGrid;
   animationFrame: number;
+  /** Every rail end in the scene (railGeometry's railJoints), so track
+   *  knows which of its ends stop in an end cap. Left out, every end does. */
+  railJoints?: ReadonlySet<string>;
 }
 
 /** Everything a layer's frame axes need, resolved once per entity. */
@@ -611,6 +614,17 @@ export function collectEntity(
         const sprite = layer.sprites[dir4Name(point.spriteDirection)];
         if (sprite) push(out, sprite, 0, 0, entity, layer.layer, order, alpha, point.offsetX, point.offsetY);
       }
+      return;
+    }
+
+    // A rail's end cap, at each end no other track carries on from: the
+    // frame is the direction that end points out along.
+    if ("per" in layer && layer.per === "rail-ending") {
+      const piece = { name: entity.name, x: entity.x, y: entity.y, direction: entity.direction };
+      const open = openEnds(piece, ctx.railJoints);
+      railEnds(entity.name, entity.direction).forEach((end, i) => {
+        if (open[i]) push(out, layer.sprites, end.dir, 0, entity, layer.layer, order, alpha, end.dx, end.dy);
+      });
       return;
     }
 

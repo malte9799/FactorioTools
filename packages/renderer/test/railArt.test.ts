@@ -16,6 +16,7 @@ import { buildHeatNetwork } from "../src/neighbours/heat.js";
 import { buildCargoBayGrid } from "../src/neighbours/cargoBay.js";
 import { collectEntity } from "../src/draw/collect.js";
 import type { DrawCommand } from "../src/draw/commands.js";
+import { openEnds, railHighlightBox, railJoints } from "../src/railGeometry.js";
 
 let passed = 0;
 function test(name: string, fn: () => void) {
@@ -38,8 +39,9 @@ function entity(name: string, x: number, y: number, direction = 0): PlacedEntity
   return { entityNumber: 1, name, x, y, direction, quality: "normal", modules: [], filterItems: [] };
 }
 
-function collect(self: PlacedEntity): DrawCommand[] {
+function collect(self: PlacedEntity, joints?: ReadonlySet<string>): DrawCommand[] {
   const ctx = {
+    railJoints: joints,
     grid: buildGrid([self]),
     fluidNetwork: buildFluidNetwork([self], () => undefined),
     heatNetwork: buildHeatNetwork([self], () => undefined),
@@ -122,6 +124,41 @@ test("elevated track and ramps carry their guard rails on both sides, in every f
   const metals = piece.find((c) => c.sheet.endsWith("elevated-rail-metals.png"))!;
   const fence = piece.find((c) => c.sheet.endsWith("elevated-rail-fence-A.png"))!;
   assert.deepEqual([fence.sy, fence.dx, fence.dy], [metals.sy, metals.dx, metals.dy]);
+});
+
+test("track stops in an end cap at each end nothing joins, facing out along it", () => {
+  const rails = [1, 3, 5].map((x) => entity("straight-rail", x, 1, 4));
+  const joints = railJoints(rails);
+  const caps = (self: PlacedEntity, sheet: string) =>
+    collect(self, joints)
+      .filter((c) => c.sheet.endsWith(sheet))
+      .map((c) => ({ frame: c.sx / c.sw, x: c.dx + c.dw / 2, y: c.dy + c.dh / 2 }));
+  // West end of the run: frame 12 (west) at the end point (0, 1), buffer and rail tips both.
+  assert.deepEqual(caps(rails[0]!, "rail-endings-background.png"), [{ frame: 12, x: 0, y: 1 }]);
+  assert.deepEqual(caps(rails[0]!, "rail-endings-foreground.png"), [{ frame: 12, x: 0, y: 1 }]);
+  assert.deepEqual(caps(rails[1]!, "rail-endings-background.png"), [], "none mid-run");
+  assert.deepEqual(caps(rails[2]!, "rail-endings-background.png"), [{ frame: 4, x: 6, y: 1 }]);
+  // A piece on its own is capped both ends; a diagonal end uses its own frame.
+  assert.deepEqual(collect(entity("curved-rail-a", 0, 0, 0), new Set()).filter((c) => c.sheet.endsWith("rail-endings-background.png")).map((c) => c.sx / c.sw).sort((a, b) => a - b), [8, 15]);
+  // Up on the deck the cap is the elevated one, lifted with the track.
+  const deck = collect(entity("elevated-straight-rail", 1, 1, 4), new Set()).filter((c) => c.sheet.endsWith("elevated-rail-ending.png"));
+  assert.deepEqual(deck.map((c) => c.sx / c.sw).sort((a, b) => a - b), [4, 12]);
+  assert.ok(deck.every((c) => Math.abs(c.dy + c.dh / 2 - (1 - 2.921875)) < 1e-9));
+  // Track on the other layer, or facing the same way, doesn't join.
+  const other = railJoints([entity("elevated-straight-rail", 3, 1, 4)]);
+  assert.deepEqual(openEnds(rails[0]!, other), [true, true]);
+  assert.deepEqual(openEnds(entity("rail-ramp", 0, 1, 4), new Set()), [false, false], "a ramp has none");
+});
+
+test("a rail's hover box takes in its end caps", () => {
+  const plain = railHighlightBox("straight-rail", 4);
+  assert.deepEqual([plain.cx, plain.cy, plain.h], [0, 0, 2]);
+  const ends = railHighlightBox("straight-rail", 4, [true, true]);
+  assert.deepEqual([ends.cx, ends.cy, ends.w], [0, 0, plain.w]);
+  assert.ok(Math.abs(ends.h - 2.6) < 1e-9);
+  // One capped end: longer that way only. A horizontal straight's first end is its east one.
+  const one = railHighlightBox("straight-rail", 4, [true, false]);
+  assert.ok(Math.abs(one.h - 2.3) < 1e-9 && Math.abs(one.cx - 0.15) < 1e-9 && one.cy === 0);
 });
 
 console.log(`\n${passed} passed`);

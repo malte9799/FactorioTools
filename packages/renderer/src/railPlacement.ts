@@ -9,10 +9,12 @@ import {
   isElevatedRail,
   isRail,
   nearestSlot,
+  openEnds,
   RAIL_DECK_HEIGHT,
   railCentreline,
   railEndsAt,
   railHighlightBox,
+  railJoints,
   railKey,
   railLength,
   railName,
@@ -60,6 +62,8 @@ export interface RailIndex {
   railsAt: Map<string, RailPiece[]>;
   /** railKey of every placed rail, so a plan reuses track already there. */
   existing: Set<string>;
+  /** Every placed rail end (railJoints), to tell where track stops. */
+  joints: ReadonlySet<string>;
   /** Placed rail supports, so a held rail can start from one. */
   supports: RailPiece[];
   /** True when a placed support at this joint carries track running along `dir`. */
@@ -224,6 +228,7 @@ export function buildRailIndex(entities: PlacedEntity[], footprintOf: (e: Placed
     railsAt,
     supports,
     existing: new Set(rails.map(railKey)),
+    joints: railJoints(rails),
     supported,
     reachAt,
     supportBlocked: (x, y, dir) =>
@@ -396,7 +401,7 @@ export function railStartAt(index: RailIndex, x: number, y: number): RailStart |
   for (let oy = -1; oy <= 1; oy++) {
     for (let ox = -1; ox <= 1; ox++) {
       for (const piece of index.railsAt.get(`${tx + ox},${ty + oy}`) ?? []) {
-        const box = railHighlightBox(piece.name, piece.direction);
+        const box = railHighlightBox(piece.name, piece.direction, openEnds(piece, index.joints));
         const dx = x - (piece.x + box.cx);
         const dy = y - (piece.y + box.cy);
         const cos = Math.cos(box.angle);

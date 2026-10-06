@@ -65,6 +65,7 @@ never lays a duplicate piece. It takes the tightest turn that fits: a minimal
 **Drawing.**
 - Each of a rail's five pieces gets its own render tier: `Layer.RailStonePathLower` up to `Layer.RailMetal`. Where tracks cross, every bed therefore paints under every rail.
 - Elevated rails use the same five tiers, above all ground objects (`Layer.ElevatedRail*`).
+- Track stops in an end cap (`rail_endings`) at every end no other track carries on from, ground and elevated; a rail's hover box takes the cap in.
 - Elevated rails and ramps carry their guard rails (`fence_pictures`, both sides) over the track.
 - A rail support has 8 facings in 22.5° steps (the 16-way direction folded in half, since it looks the same from both sides); its direction is that of the track it carries.
 - A signal on elevated track keeps the blueprint's `rail_layer` (`PlacedEntity.railLayer`). Its position is the spot on the ground below.
@@ -100,5 +101,5 @@ mod paths.
 - Guard rails (`fence_pictures`) run the full length of both sides of every
   elevated piece and ramp. The game leaves them off where track branches and
   caps them with end pieces; neither is done.
-- The elevated rail endings and water reflections aren't drawn.
+- Ramps have no end caps, and water reflections aren't drawn.
 - Diagonal train stops aren't offered.

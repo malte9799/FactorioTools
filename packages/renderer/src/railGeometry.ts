@@ -221,6 +221,30 @@ export function railEndsAt(piece: RailPiece): RailEnd[] {
   return railEnds(piece.name, piece.direction).map((e) => ({ x: piece.x + e.dx, y: piece.y + e.dy, dir: e.dir, elevated: e.elevated }));
 }
 
+/** Key of a rail end as other track joins it: the point, the layer, and
+ *  the direction the end points out along. */
+export function railJointKey(end: RailEnd): string {
+  return `${end.x},${end.y},${end.dir},${end.elevated ? 1 : 0}`;
+}
+
+/** Every end of the given rails, by railJointKey — what openEnds reads. */
+export function railJoints(rails: Iterable<RailPiece>): Set<string> {
+  const joints = new Set<string>();
+  for (const rail of rails) for (const end of railEndsAt(rail)) joints.add(railJointKey(end));
+  return joints;
+}
+
+/** Per end of a piece, in railEndsAt order: true where no other track
+ *  carries on from it, so the track stops there in an end cap. A ramp's
+ *  ends are part of it and never capped. With no joints given, both are. */
+export function openEnds(piece: RailPiece, joints: ReadonlySet<string> | undefined): boolean[] {
+  if (SHAPE_OF[piece.name] === "ramp") return [false, false];
+  return railEndsAt(piece).map((end) => !joints?.has(railJointKey({ ...end, dir: (end.dir + 8) % 16 })));
+}
+
+/** How far an end cap reaches past the end of its track. */
+export const RAIL_END_CAP = 0.3;
+
 /** Unit vector of a 16-way direction. */
 export function dirVector(dir: number): [number, number] {
   const a = (dir * Math.PI) / 8;
@@ -469,19 +493,30 @@ export function nearestSlot(slots: RailSlot[], x: number, y: number, reach: numb
 /** The box a rail is hovered and selected by, relative to its position:
  *  centred between its two ends and turned to lie along them, the size of
  *  the prototype's collision box (1.5 wide and as long as the track; a
- *  cardinal straight is a 2×2 square, a ramp 3.6 × 15.6). Elevated track's
- *  box is up on the deck, where the track is drawn. */
-export function railHighlightBox(name: string, direction: number): { cx: number; cy: number; w: number; h: number; angle: number } {
+ *  cardinal straight is a 2×2 square, a ramp 3.6 × 15.6), plus the end cap
+ *  where the track stops. Elevated track's box is up on the deck, where
+ *  the track is drawn. */
+export function railHighlightBox(
+  name: string,
+  direction: number,
+  open?: readonly boolean[],
+): { cx: number; cy: number; w: number; h: number; angle: number } {
   const ends = railEnds(name, direction);
   if (ends.length !== 2) return { cx: 0, cy: 0, w: 2, h: 2, angle: 0 };
   const [a, b] = ends as [RailEndOffset, RailEndOffset];
   const shape = SHAPE_OF[name];
   const cardinalStraight = shape === "straight" && Math.floor(direction / 2) % 2 === 0;
+  // The box takes in the end cap on each end the track stops at (`open`,
+  // see openEnds): longer by the cap, and moved half that way.
+  const capA = open?.[0] ? RAIL_END_CAP : 0;
+  const capB = open?.[1] ? RAIL_END_CAP : 0;
+  const chord = Math.hypot(b.dx - a.dx, b.dy - a.dy) || 1;
+  const slide = (capB - capA) / 2 / chord;
   return {
-    cx: (a.dx + b.dx) / 2,
-    cy: (a.dy + b.dy) / 2 - (isElevatedRail(name) ? RAIL_DECK_HEIGHT : 0),
+    cx: (a.dx + b.dx) / 2 + (b.dx - a.dx) * slide,
+    cy: (a.dy + b.dy) / 2 + (b.dy - a.dy) * slide - (isElevatedRail(name) ? RAIL_DECK_HEIGHT : 0),
     w: shape === "ramp" ? 3.6 : cardinalStraight ? 2 : 1.5,
-    h: shape === "ramp" ? 15.6 : railLength(name, direction),
+    h: (shape === "ramp" ? 15.6 : railLength(name, direction)) + capA + capB,
     // Clockwise from vertical, the way the box's long side runs.
     angle: Math.atan2(b.dx - a.dx, -(b.dy - a.dy)),
   };

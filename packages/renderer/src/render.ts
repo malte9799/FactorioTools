@@ -21,7 +21,7 @@ import { drawInserter } from "./sprites/inserter.js";
 import { SpatialIndex, type IndexedBox } from "./spatialIndex.js";
 import { boxHitsEntity, entitiesCollide } from "./collision.js";
 import { RAIL_BLOCK_COLORS } from "./railBlocks.js";
-import { isElevatedRail, isRail, RAIL_DECK_HEIGHT, railCentreline, railHighlightBox, type RailEnd, type RailPiece, type RailSlot } from "./railGeometry.js";
+import { isElevatedRail, isRail, openEnds, RAIL_DECK_HEIGHT, RAIL_END_CAP, railCentreline, railHighlightBox, railJoints, type RailEnd, type RailPiece, type RailSlot } from "./railGeometry.js";
 import {
   buildRailIndex,
   isRailPlannerItem,
@@ -549,6 +549,8 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
   let heatNetwork = new HeatNetwork();
   let spatialIndex = new SpatialIndex([]);
   let cargoBays = new CargoBayGrid();
+  // Every placed rail end, so track draws an end cap where it stops.
+  let railJointSet: ReadonlySet<string> = new Set();
   /** Whether the loaded blueprint's floor is space platform — the one hint
    *  of where cargo bays stand when their hub is not in the blueprint. */
   let floorInSpace = false;
@@ -1322,7 +1324,7 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
         else rebuildReasonThisFrame = "visibility";
       }
       sceneCache = buildSceneCache(sceneKey, visibleEntities, {
-        grid, fluidNetwork, heatNetwork, ...connectors, cargoBays, animationFrame: 0,
+        grid, fluidNetwork, heatNetwork, ...connectors, cargoBays, railJoints: railJointSet, animationFrame: 0,
       });
       sceneRebuiltThisFrame = true;
       sceneRebuildCount++;
@@ -1463,7 +1465,7 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
     // Track gets its brackets turned to lie along the rail, as in the game.
     const highlightEntity = (entity: PlacedEntity, visual: ResolvedVisual, sheet: HTMLImageElement) => {
       if (isRail(entity.name)) {
-        const box = railHighlightBox(entity.name, entity.direction);
+        const box = railHighlightBox(entity.name, entity.direction, openEnds(entity, railJointSet));
         drawHoverHighlight(ctx, sheet, entity.x + box.cx, entity.y + box.cy, box.w, box.h, "regular", box.angle, Math.min(box.w, box.h));
         return;
       }
@@ -1597,7 +1599,7 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
           drawInserter(ctx, atlas, ghost, visual.inserterGraphics, ghostTint, tintedRes);
         } else if (visual.graphics) {
           const ghostCommands: DrawCommand[] = [];
-          collectEntity(ghostCommands, ghost, isRailSnapped(ghost.name) ? withoutRailPatch(visual) : visual, { grid: previewGrid, fluidNetwork: previewFluidNetwork, heatNetwork: previewHeatNetwork, ...connectors, cargoBays, animationFrame }, 1);
+          collectEntity(ghostCommands, ghost, isRailSnapped(ghost.name) ? withoutRailPatch(visual) : visual, { grid: previewGrid, fluidNetwork: previewFluidNetwork, heatNetwork: previewHeatNetwork, ...connectors, cargoBays, railJoints: railJointSet, animationFrame }, 1);
           for (const c of ghostCommands) c.tint = ghostTint;
           paint(ctx, atlas, ghostCommands, tintedRes);
         }
@@ -1629,12 +1631,16 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
       // sorts under every piece's rails, same as placed track (a tinted
       // batch is washed in a single colour, so tints can't share one).
       const byTint = new Map<string, DrawCommand[]>();
+      // The plan's pieces join each other and the placed track: caps only
+      // where the planned track would really stop.
+      const planJoints = new Set(railJointSet);
+      for (const key of railJoints(railGhosts.map((g) => g.entity).filter((e) => isRail(e.name)))) planJoints.add(key);
       for (const { entity, tint } of railGhosts) {
         const visual = visualFor(entity.name);
         if (!visual?.graphics) continue;
         const commands = byTint.get(tint) ?? byTint.set(tint, []).get(tint)!;
         const start = commands.length;
-        collectEntity(commands, entity, visual, { grid: previewGrid, fluidNetwork: previewFluidNetwork, heatNetwork: previewHeatNetwork, ...connectors, cargoBays, animationFrame }, 1);
+        collectEntity(commands, entity, visual, { grid: previewGrid, fluidNetwork: previewFluidNetwork, heatNetwork: previewHeatNetwork, ...connectors, cargoBays, railJoints: planJoints, animationFrame }, 1);
         for (let i = start; i < commands.length; i++) commands[i]!.tint = tint;
       }
       for (const commands of byTint.values()) paint(ctx, atlas, commands, tintedRes);
@@ -2596,22 +2602,25 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
     heatNetwork = buildHeatNetwork(entities, (name) => visualFor(name)?.heatConnections);
 
     cargoBays = buildCargoBayGrid(entities, connectors.cargoBayShapeOf, floorInSpace);
+    railJointSet = railJoints(entities.filter((e) => isRail(e.name)));
 
     const boxes: IndexedBox[] = [];
     for (const e of entities) {
       const visual = visualFor(e.name);
       const [w, h] = visual ? effectiveFootprint(visual, e.direction) : FALLBACK_FOOTPRINT;
-      const rail = isRail(e.name) ? railHighlightBox(e.name, e.direction) : undefined;
+      const rail = isRail(e.name) ? railHighlightBox(e.name, e.direction, openEnds(e, railJointSet)) : undefined;
       // Elevated track and the signals on it are drawn, and so hovered, up
       // on the deck; track still covers its ground tiles for the culling
       // and collision queries, a signal up there covers none.
       const lift = isElevatedRail(e.name) || e.railLayer === "elevated" ? RAIL_DECK_HEIGHT : 0;
+      // Room for the end cap a rail's turned box takes in past its tiles.
+      const pad = rail ? RAIL_END_CAP : 0;
       const box: IndexedBox = {
         entityNumber: e.entityNumber,
-        left: e.x - w / 2,
-        top: e.y - h / 2 - lift,
-        right: e.x + w / 2,
-        bottom: e.y + h / 2 - (e.railLayer === "elevated" ? lift : 0),
+        left: e.x - w / 2 - pad,
+        top: e.y - h / 2 - lift - pad,
+        right: e.x + w / 2 + pad,
+        bottom: e.y + h / 2 - (e.railLayer === "elevated" ? lift : 0) + pad,
         // Track is hovered by the same turned box its brackets draw round,
         // not by its (mostly empty) axis-aligned footprint.
         turned: rail && { cx: e.x + rail.cx, cy: e.y + rail.cy, w: rail.w, h: rail.h, angle: rail.angle },
@@ -2630,7 +2639,7 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
     for (const e of entities) {
       const visual = visualFor(e.name);
       for (const layer of visual?.graphics?.layers ?? []) {
-        const sprites = !("per" in layer)
+        const sprites = !("per" in layer) || layer.per === "rail-ending"
           ? [layer.sprites]
           : layer.per === "heat-connection-patches"
             ? [...layer.connected, ...layer.disconnected]

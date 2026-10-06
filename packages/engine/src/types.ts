@@ -291,6 +291,10 @@ export type GraphicsLayer = {
    *  graph finds unconnected are drawn; keyed by Dir4Name to match
    *  `PipeConnectionPoint.direction`. */
   | { sprites: Partial<Record<Dir4Name, Sprite>>; per: "pipe-covers" }
+  /** A rail's end cap (the buffer where track stops): one sheet of 16
+   *  frames in a row, one per 16-way direction an end points out along.
+   *  Drawn once at each end of the piece no other track joins. */
+  | { sprites: Sprite; per: "rail-ending" }
   /** Connection art that belongs to ONE specific fluid-box connection
    *  point and changes with what that point is plugged into — fusion-reactor
    *  and fusion-generator's own ports, which don't use the generic round
