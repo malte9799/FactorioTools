@@ -3,11 +3,12 @@
  *  track up, where signals and train stops may go. Rebuilt once per edit,
  *  queried every frame while a rail item is held. */
 
-import type { PlacedEntity } from "@factoriotools/engine";
+import { stockOrientation, type PlacedEntity, type SignalColor } from "@factoriotools/engine";
 import {
   dirVector,
   isElevatedRail,
   isRail,
+  isRollingStock,
   nearestSlot,
   openEnds,
   RAIL_DECK_HEIGHT,
@@ -34,6 +35,7 @@ import {
 } from "./railGeometry.js";
 import { planEnd, planRail, RAIL_PLAN_LENGTH_LIMIT, railLevel, supportsFor, type RailLevel } from "./railPlanner.js";
 import { computeRailBlocks, type RailBlocks } from "./railBlocks.js";
+import { computeSignalStates, occupiedBlocks, type StockBox, type TrackSignal } from "./railSignals.js";
 
 /** Held items that drive the rail planner rather than placing one entity:
  *  the rail item, which lays track on the layer it starts from, and the
@@ -85,6 +87,13 @@ export interface RailIndex {
   hasRails: boolean;
   /** The blocks signals divide track into, worked out on first use. */
   blocks(): RailBlocks;
+  /** The blocks a train stands on, worked out on first use. */
+  occupied(): ReadonlySet<number>;
+  /** What every placed signal shows, by entity number. A signal missing
+   *  here stands on no signal slot. */
+  signalStates(): Map<number, SignalColor>;
+  /** Ground track, for snapping rolling stock onto it. */
+  groundRails: RailPiece[];
 }
 
 /** A signal or stop's spot: its position and the layer it stands on. */
@@ -101,7 +110,12 @@ function tilesUnder(e: PlacedEntity, footprint: [number, number], out: Set<strin
   }
 }
 
-export function buildRailIndex(entities: PlacedEntity[], footprintOf: (e: PlacedEntity) => [number, number]): RailIndex {
+export function buildRailIndex(
+  entities: PlacedEntity[],
+  footprintOf: (e: PlacedEntity) => [number, number],
+  /** A locomotive's or wagon's collision box; undefined for anything else. */
+  stockSizeOf: (name: string) => { width: number; length: number } | undefined = () => undefined,
+): RailIndex {
   // What stands on each tile, by what it blocks. Elevated signals stand on
   // the deck and take no ground.
   const objects = new Set<string>();
@@ -112,7 +126,8 @@ export function buildRailIndex(entities: PlacedEntity[], footprintOf: (e: Placed
   const rails: RailPiece[] = [];
   const supports: RailPiece[] = [];
   const railsideTaken = new Set<string>();
-  const signalsAt = new Set<string>();
+  const signalsAt = new Map<string, PlacedEntity>();
+  const stock: StockBox[] = [];
   for (const e of entities) {
     if (isRail(e.name)) {
       rails.push({ name: e.name, x: e.x, y: e.y, direction: e.direction });
@@ -122,11 +137,17 @@ export function buildRailIndex(entities: PlacedEntity[], footprintOf: (e: Placed
       const elevated = e.railLayer === "elevated";
       railsideTaken.add(railsideKey(e.x, e.y, elevated));
       if (SIGNALS.has(e.name)) {
-        signalsAt.add(`${e.x},${e.y},${e.direction},${elevated ? 1 : 0}`);
+        signalsAt.set(`${e.x},${e.y},${e.direction},${elevated ? 1 : 0}`, e);
         if (!elevated) signals.add(`${Math.floor(e.x)},${Math.floor(e.y)}`);
       } else {
         tilesUnder(e, footprintOf(e), objects);
       }
+      continue;
+    }
+    // Rolling stock stands on the track rather than taking ground tiles.
+    const size = stockSizeOf(e.name);
+    if (size) {
+      stock.push({ x: e.x, y: e.y, orientation: stockOrientation(e), ...size });
       continue;
     }
     if (e.name === "rail-support") {
@@ -211,11 +232,20 @@ export function buildRailIndex(entities: PlacedEntity[], footprintOf: (e: Placed
     ...signalSlots(rails.filter((r) => railLevel(r.name) === "elevated")).map((s) => ({ ...s, elevated: true })),
   ];
   const takenSignalGroups = new Set<string>();
+  const trackSignals: TrackSignal[] = [];
   for (const slot of slots) {
-    if (signalsAt.has(`${slot.x},${slot.y},${slot.direction},${slot.elevated ? 1 : 0}`)) takenSignalGroups.add(slotGroup(slot));
+    const signal = signalsAt.get(`${slot.x},${slot.y},${slot.direction},${slot.elevated ? 1 : 0}`);
+    if (!signal) continue;
+    takenSignalGroups.add(slotGroup(slot));
+    trackSignals.push({ id: signal.entityNumber, chain: signal.name === "rail-chain-signal", x: slot.ex!, y: slot.ey!, dir: slot.direction, elevated: !!slot.elevated });
   }
 
   let blocks: RailBlocks | undefined;
+  let occupied: Set<number> | undefined;
+  let signalStates: Map<number, SignalColor> | undefined;
+  const getBlocks = () =>
+    (blocks ??= computeRailBlocks(rails, (x, y, dir, elevated) => takenSignalGroups.has(slotGroup({ x, y, ex: x, ey: y, direction: dir, elevated }))));
+  const getOccupied = () => (occupied ??= occupiedBlocks(getBlocks(), stock));
   return {
     blocked: (tx, ty, level) => {
       const key = `${tx},${ty}`;
@@ -242,7 +272,10 @@ export function buildRailIndex(entities: PlacedEntity[], footprintOf: (e: Placed
     railsideTaken,
     takenSignalGroups,
     hasRails: rails.length > 0,
-    blocks: () => (blocks ??= computeRailBlocks(rails, (x, y, dir, elevated) => takenSignalGroups.has(slotGroup({ x, y, ex: x, ey: y, direction: dir, elevated })))),
+    blocks: getBlocks,
+    occupied: getOccupied,
+    signalStates: () => (signalStates ??= computeSignalStates(getBlocks(), trackSignals, getOccupied())),
+    groundRails: rails.filter((r) => railLevel(r.name) === "ground"),
   };
 }
 
@@ -343,7 +376,8 @@ export function buildableRails(
   pieces: RailPiece[],
   supports: RailPiece[],
 ): { pieces: RailPiece[]; supports: RailPiece[] } {
-  const index = buildRailIndex(entities, footprintOf);
+  // Rolling stock stands on track, so it never keeps track from being laid.
+  const index = buildRailIndex(entities.filter((e) => !isRollingStock(e.name)), footprintOf);
   const laid = new Set<string>();
   const fresh = pieces.filter((p) => {
     const key = railKey(p);
@@ -508,4 +542,43 @@ export function signalSlotsNear(index: RailIndex, x: number, y: number, radius =
       !index.railsideTaken.has(railsideKey(s.x, s.y, s.elevated)) &&
       !index.takenSignalGroups.has(slotGroup(s)),
   );
+}
+
+/** How far from track a held locomotive or wagon still snaps onto it. */
+export const STOCK_SNAP_RANGE = 2.5;
+
+/** Where a held locomotive or wagon goes: the point of ground track nearest
+ *  the cursor, heading along the rail there — of the two ways along it, the
+ *  one closer to the held direction, so R turns the stock round. Undefined
+ *  away from track. */
+export function rollingStockSnap(index: RailIndex, x: number, y: number, heldDirection: number): { x: number; y: number; direction: number } | undefined {
+  let best: { x: number; y: number; tx: number; ty: number } | undefined;
+  let bestDist = STOCK_SNAP_RANGE;
+  for (const rail of index.groundRails) {
+    if (Math.hypot(rail.x - x, rail.y - y) > 12) continue;
+    const line = railCentreline(rail.name, rail.direction, 12);
+    for (let i = 1; i < line.length; i++) {
+      const ax = rail.x + line[i - 1]![0];
+      const ay = rail.y + line[i - 1]![1];
+      const vx = rail.x + line[i]![0] - ax;
+      const vy = rail.y + line[i]![1] - ay;
+      const len2 = vx * vx + vy * vy;
+      if (len2 === 0) continue;
+      const t = Math.max(0, Math.min(1, ((x - ax) * vx + (y - ay) * vy) / len2));
+      const px = ax + t * vx;
+      const py = ay + t * vy;
+      const d = Math.hypot(px - x, py - y);
+      if (d < bestDist) {
+        bestDist = d;
+        best = { x: px, y: py, tx: vx, ty: vy };
+      }
+    }
+  }
+  if (!best) return undefined;
+  // Heading clockwise from north, in sixteenths of a turn.
+  const along = ((Math.round((Math.atan2(best.tx, -best.ty) / (Math.PI * 2)) * 16) % 16) + 16) % 16;
+  const turn = (a: number, b: number) => Math.min((a - b + 16) % 16, (b - a + 16) % 16);
+  const direction = turn(along, heldDirection) <= turn((along + 8) % 16, heldDirection) ? along : (along + 8) % 16;
+  // Stock sits on the game's 1/256-tile position grid.
+  return { x: Math.round(best.x * 256) / 256, y: Math.round(best.y * 256) / 256, direction };
 }

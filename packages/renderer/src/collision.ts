@@ -11,8 +11,8 @@
  *  train stops stand beside track by design, and a signal on elevated track
  *  is up on the deck, clear of the ground. */
 
-import type { PlacedEntity } from "@factoriotools/engine";
-import { isElevatedRail, isRail, RAIL_DECK_HEIGHT, railKey, railTiles, supportHitsBox } from "./railGeometry.js";
+import { stockOrientation, type PlacedEntity } from "@factoriotools/engine";
+import { isElevatedRail, isRail, isRollingStock, RAIL_DECK_HEIGHT, railKey, railTiles, supportHitsBox } from "./railGeometry.js";
 
 export interface Box {
   left: number;
@@ -60,6 +60,25 @@ export function boxHitsEntity(box: Box, e: PlacedEntity, footprintOf: (e: Placed
   return box.left <= f.right && box.right >= f.left && box.top <= f.bottom && box.bottom >= f.top;
 }
 
+/** Two pieces of rolling stock, each a box turned to its own heading:
+ *  separating-axis test over both boxes' axes. The footprint of stock
+ *  facing north is its collision box. */
+function stockOverlap(a: PlacedEntity, b: PlacedEntity, footprintOf: (e: PlacedEntity) => [number, number]): boolean {
+  const boxes = [a, b].map((e) => {
+    const [w, l] = footprintOf({ ...e, direction: 0 });
+    const t = stockOrientation(e) * Math.PI * 2;
+    return { x: e.x, y: e.y, along: [Math.sin(t), -Math.cos(t)] as const, across: [Math.cos(t), Math.sin(t)] as const, w, l };
+  });
+  const [p, q] = boxes as [(typeof boxes)[0], (typeof boxes)[0]];
+  for (const axis of [p.along, p.across, q.along, q.across]) {
+    const reach = (box: typeof p) =>
+      (Math.abs(box.along[0] * axis[0] + box.along[1] * axis[1]) * box.l) / 2 + (Math.abs(box.across[0] * axis[0] + box.across[1] * axis[1]) * box.w) / 2;
+    const gap = Math.abs((q.x - p.x) * axis[0] + (q.y - p.y) * axis[1]);
+    if (gap > reach(p) + reach(q) - EPSILON) return false;
+  }
+  return true;
+}
+
 /** True when `a` and `b` may not both stand where they are. */
 export function entitiesCollide(a: PlacedEntity, b: PlacedEntity, footprintOf: (e: PlacedEntity) => [number, number]): boolean {
   // A signal on the deck only ever shares its spot with another one there.
@@ -68,6 +87,13 @@ export function entitiesCollide(a: PlacedEntity, b: PlacedEntity, footprintOf: (
   }
   const aRail = isRail(a.name);
   const bRail = isRail(b.name);
+  const aStock = isRollingStock(a.name);
+  const bStock = isRollingStock(b.name);
+  if (aStock || bStock) {
+    // Stock rides on track and passes signals and stops beside it.
+    if (aRail || bRail || RAILSIDE.has(a.name) || RAILSIDE.has(b.name)) return false;
+    if (aStock && bStock) return stockOverlap(a, b, footprintOf);
+  }
   if (aRail && bRail) {
     if (railKey(a) === railKey(b)) return true;
     // Track crosses track, but never a ramp: only the pieces joined to its

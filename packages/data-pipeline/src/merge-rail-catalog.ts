@@ -1,6 +1,7 @@
 #!/usr/bin/env tsx
 /**
- * Merges every rail entity (ground and elevated rails, ramps, supports) into
+ * Merges every rail entity (ground and elevated rails, ramps, supports,
+ * signals, and the locomotives and wagons that run on them) into
  * the committed render-catalog.json from a rail-only prototype export,
  * without needing the full dump or a Factorio install — and copies the
  * sprite sheets those entries reference into the site's public assets.
@@ -22,6 +23,7 @@ import { fileURLToPath } from "node:url";
 import type { EntityGraphics, RenderCatalog } from "@factoriotools/engine";
 import { buildRenderCatalog } from "./render-catalog.js";
 import type { LocaleTables } from "./locale.js";
+import { PACKED_PREFIX, ROLLING_STOCK_TABLES, packRollingStock } from "./pack-rolling-stock.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DATA_DIR = path.resolve(__dirname, "../../../apps/site/public/data");
@@ -42,6 +44,7 @@ const RAIL_TABLES = [
   "rail-support",
   "rail-signal",
   "rail-chain-signal",
+  ...ROLLING_STOCK_TABLES,
 ];
 
 /** The game's English names — the rail export carries no locale files. */
@@ -58,6 +61,10 @@ const NAMES: Record<string, string> = {
   "rail-support": "Rail support",
   "rail-signal": "Rail signal",
   "rail-chain-signal": "Rail chain signal",
+  locomotive: "Locomotive",
+  "cargo-wagon": "Cargo wagon",
+  "fluid-wagon": "Fluid wagon",
+  "artillery-wagon": "Artillery wagon",
 };
 
 function required(name: string): string {
@@ -82,7 +89,10 @@ function sheetsOf(graphics: EntityGraphics | undefined): string[] {
 const dump = JSON.parse(readFileSync(required("RAIL_DUMP"), "utf-8")) as Record<string, Record<string, unknown>>;
 const spriteRoot = required("RAIL_SPRITES");
 
-const raw = Object.fromEntries(RAIL_TABLES.filter((t) => dump[t]).map((t) => [t, dump[t]]));
+// RAIL_ONLY (comma-separated table names) narrows the merge, leaving every
+// other entry of the committed catalog as it is.
+const only = process.env.RAIL_ONLY?.split(",");
+const raw = Object.fromEntries(RAIL_TABLES.filter((t) => dump[t] && (!only || only.includes(t))).map((t) => [t, dump[t]]));
 const locale: LocaleTables = {
   entityName: new Map(Object.entries(NAMES)),
   itemName: new Map(),
@@ -117,6 +127,8 @@ for (const [name, entry] of Object.entries(rails.entities)) {
   }
   catalog.entities[name] = entry;
   for (const sheet of sheetsOf(entry.graphics)) {
+    // Packed sheets are written below, not copied from the game.
+    if (sheet.startsWith(PACKED_PREFIX)) continue;
     const basename = claimBasename(sheet);
     files.add(sheet);
     // An export keeps the mod paths as written (__base__/…); a Factorio
@@ -131,6 +143,16 @@ for (const [name, entry] of Object.entries(rails.entities)) {
   }
   console.log(`  ${name}: ${entry.graphics.layers.length} layers`);
 }
+
+// A rail export keeps the game's __mod__ folders; the install itself drops
+// the underscores.
+const resolveSprite = (modPath: string) => {
+  const direct = path.join(spriteRoot, modPath);
+  return existsSync(direct) ? direct : path.join(spriteRoot, modPath.replace(/^__([a-z0-9_-]+)__\//, "$1/"));
+};
+const stock = ROLLING_STOCK_TABLES.flatMap((t) => Object.values(raw[t] ?? {}));
+const packed = packRollingStock(stock, resolveSprite, SPRITE_OUT_DIR, process.argv.includes("--force"));
+if (stock.length > 0) console.log(`packed ${packed} rolling stock sheets`);
 
 writeFileSync(CATALOG_PATH, JSON.stringify(catalog));
 writeFileSync(MANIFEST_PATH, JSON.stringify({ ...manifest, files: [...files].sort() }, null, 2));

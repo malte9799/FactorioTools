@@ -13,6 +13,15 @@ refresh the rail data from the game.
 | **Rail signal / chain signal** | Snaps to the nearest signal slot beside placed track, ground or elevated, facing the trains it stops. Which side of the track it goes on follows the cursor. Green handles mark every free signal spot on track within 12 tiles of the cursor, and the track shows the rail blocks signals divide it into: a line down the middle in each block's colour, ending at each signalled joint in a triangle on both sides pointing the way the signals there let trains through, or a diamond on both sides where signals face both ways. Away from track the ghost is red and nothing is placed. Over a spot that already has a signal (or the other spot on the same side of that joint), the ghost stays there in red rather than jumping to a free spot beside it. One click places at most one signal. |
 | **Train stop** | Snaps to the slot beside a straight cardinal rail, on the right-hand side of travel. Larger green handles mark the free slots near the cursor. Over a slot that already has a stop, the ghost stays there in red rather than jumping to the free slot beside it, and a click places nothing. One click places at most one stop. |
 
+| **Locomotive / wagon** | Snaps onto ground track under the cursor, heading along the rail. **R** turns it end for end. Away from track the ghost is red and nothing is placed. One click places one. |
+
+Signals show what the game would: green over a free block, red when a train
+stands in the block behind them. A chain signal is also red for an occupied
+block; over a free one it is green, red or blue as the signals leaving that
+block are all open, all closed or mixed. A signal that guards no track shows
+red. Trains come in with a blueprint or are placed by hand; the colours update
+on every edit.
+
 - **Length limit.** One placement lays at most the rail item's
   `manual_length_limit` of track (22.5 tiles: 11 straights, or 3–4 curves),
   heading as close to the cursor as that gets. When no track can get any
@@ -62,6 +71,14 @@ never lays a duplicate piece. It takes the tightest turn that fits: a minimal
 - Rebuilt once per edit. It records which tiles are taken on each layer, where track ends, what holds elevated track up, and where signals and supports can go.
 - `render.ts` uses it to drive the preview, and the app commits each placement through `onPlaceRails`.
 
+**`packages/renderer/src/railBlocks.ts` and `railSignals.ts`: blocks and signals.**
+- `computeRailBlocks` joins track into blocks: pieces sharing a joint with no signal on it, and track that crosses.
+- `occupiedBlocks` marks every block owning a rail whose centreline runs through a locomotive's or wagon's collision box, so a train standing across a signal holds both blocks.
+- `computeSignalStates` gives each signal its colour. A chain signal walks its block the way a train would and reads each signal it could leave by; ones that only face oncoming trains are no way out.
+- `railPlacement.ts` feeds both from the blueprint (`RailIndex.signalStates()`), and `draw/collect.ts` picks the signal's frame through the prototype's `signal_color_to_structure_frame_index`.
+
+**Rolling stock.** A blueprint stores a wagon's heading as `orientation` (a fraction of a turn); the editor keeps it and derives the 16-way `direction` from it. The art is one frame per heading on sheets `pack-rolling-stock.ts` thins from the game's 128–256 headings down to 32, with the colour mask baked in.
+
 **Drawing.**
 - Each of a rail's five pieces gets its own render tier: `Layer.RailStonePathLower` up to `Layer.RailMetal`. Where tracks cross, every bed therefore paints under every rail.
 - Elevated rails use the same five tiers, above all ground objects (`Layer.ElevatedRail*`).
@@ -90,8 +107,12 @@ To make a new export, run `factorio --dump-data` with Space Age, Quality and
 Elevated Rails enabled. Keep the prototype tables `straight-rail`,
 `half-diagonal-rail`, `curved-rail-a`, `curved-rail-b`, the four `elevated-*`
 rails, `rail-ramp`, `rail-support`, `rail-signal`, `rail-chain-signal`,
-`train-stop` and `rail-planner`. Copy the PNGs they reference, keeping their
-mod paths.
+`train-stop`, `rail-planner`, `locomotive`, `cargo-wagon`, `fluid-wagon` and
+`artillery-wagon`. Copy the PNGs they reference, keeping their mod paths.
+
+`RAIL_ONLY=locomotive,cargo-wagon` (any of the table names) narrows the merge
+to those tables. Sheets already cropped by `crop-sprite-sheets` need this:
+re-merging their entries would describe the uncropped files.
 
 ## Not done yet
 
@@ -103,3 +124,10 @@ mod paths.
   caps them with end pieces; neither is done.
 - Ramps have no end caps, and water reflections aren't drawn.
 - Diagonal train stops aren't offered.
+- Trains stand still, so no block is ever reserved: signals never show yellow.
+  Signals closed by a circuit condition aren't modelled either.
+- Only ground track detects trains: a blueprint doesn't say which layer
+  rolling stock stands on, so stock is taken to be on the ground. Elevated
+  signals still follow the blocks they guard, which run across ramps.
+- Rolling stock draws its body and shadow only: no wheels, no artillery
+  cannon, and every one in the prototype's default colour.

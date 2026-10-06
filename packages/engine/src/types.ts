@@ -217,7 +217,19 @@ export type FrameAxis =
        *  round them (a rail support's 8, each standing for two opposite
        *  facings). */
       count?: number;
-    };
+    }
+  /** Rail signals: the frame showing the colour the signal is at, from the
+   *  prototype's signal_color_to_structure_frame_index. Which colour that
+   *  is comes from the track and the trains on it (the renderer's
+   *  railSignals.ts). */
+  | { by: "signal-state"; frames: Partial<Record<SignalColor, number>> }
+  /** Rolling stock: one frame per heading, `count` of them clockwise from
+   *  north, `lineLength` to a row. With `halfTurn` the frames cover half a
+   *  turn only, the stock looking the same from either end. */
+  | { by: "orientation"; axis: "column" | "row"; lineLength: number; count: number; halfTurn?: boolean };
+
+/** What a rail signal shows. "none" is a signal with no track to guard. */
+export type SignalColor = "none" | "green" | "yellow" | "red" | "blue";
 
 /** One drawable piece of an entity.
  *
@@ -660,6 +672,10 @@ export interface RenderEntityProto {
   graphics?: EntityGraphics;
   /** Swaps footprint width/height at east/west facings (splitters). */
   rotatesFootprint?: boolean;
+  /** Locomotives and wagons only: the collision box, across and along the
+   *  track. Rolling stock stands on rails at any heading, and its box is
+   *  what occupies a rail block. */
+  rollingStock?: { width: number; length: number };
   /** Every fluid-box connection point this entity declares (all boxes
    *  flattened together — rendering never needs to know which fluid box a
    *  point belongs to, only where it is). Absent for entities with no fluid
@@ -837,6 +853,8 @@ export interface BpEntity {
   name: string;
   position: BpPosition;
   direction?: number;
+  /** Rolling stock: heading as a fraction of a turn, clockwise from north. */
+  orientation?: number;
   /** Rail signals on elevated track: "elevated". Omitted on the ground. */
   rail_layer?: string;
   recipe?: string;
@@ -1107,6 +1125,10 @@ export interface PlacedEntity {
   x: number;
   y: number;
   direction: number;
+  /** Rolling stock only: its heading as the blueprint stores it, a fraction
+   *  of a turn clockwise from north. `direction` carries the same heading
+   *  rounded to 16 ways; see stockOrientation. */
+  orientation?: number;
   /** Rail signals only: set for one standing on elevated track (the
    *  blueprint's own rail_layer). Its position is still the spot on the
    *  ground below; it is drawn up on the deck. */

@@ -75,6 +75,13 @@ export function iconName(name: string): string {
   return isRail(name) && railShape(name) !== "ramp" ? "rail" : name;
 }
 
+const ROLLING_STOCK = new Set(["locomotive", "cargo-wagon", "fluid-wagon", "artillery-wagon"]);
+
+/** Locomotives and wagons: they stand on track, at the track's heading. */
+export function isRollingStock(name: string): boolean {
+  return ROLLING_STOCK.has(name);
+}
+
 /** How far above its ground position the deck is drawn, in tiles (the
  *  elevated rail sprites' own shift). Hovering, selecting and planning
  *  elevated track all happen up here, where the track is seen. */
