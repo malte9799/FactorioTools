@@ -35,7 +35,7 @@ import {
 } from "./railGeometry.js";
 import { planEnd, planRail, RAIL_PLAN_LENGTH_LIMIT, railLevel, supportsFor, type RailLevel } from "./railPlanner.js";
 import { computeRailBlocks, type RailBlocks } from "./railBlocks.js";
-import { computeSignalStates, occupiedBlocks, type StockBox, type TrackSignal } from "./railSignals.js";
+import { computeSignalStates, headingVector, occupiedBlocks, type StockBox, type TrackSignal } from "./railSignals.js";
 
 /** Held items that drive the rail planner rather than placing one entity:
  *  the rail item, which lays track on the layer it starts from, and the
@@ -79,6 +79,9 @@ export interface RailIndex {
   /** Ends of elevated track with no support under them. */
   openJoints: RailEnd[];
   signalSlots: RailSlot[];
+  /** The shape of track (railGeometry's signalShape) under a signal at the
+   *  given spot, or undefined where there is no slot. */
+  signalShapeAt(x: number, y: number, direction: number, elevated: boolean): number | undefined;
   stopSlots: RailSlot[];
   /** Spots already holding a signal or stop (see railsideKey). */
   railsideTaken: Set<string>;
@@ -92,8 +95,9 @@ export interface RailIndex {
   /** What every placed signal shows, by entity number. A signal missing
    *  here stands on no signal slot. */
   signalStates(): Map<number, SignalColor>;
-  /** Ground track, for snapping rolling stock onto it. */
+  /** Ground and elevated track, for snapping rolling stock onto it. */
   groundRails: RailPiece[];
+  deckRails: RailPiece[];
 }
 
 /** A signal or stop's spot: its position and the layer it stands on. */
@@ -147,7 +151,7 @@ export function buildRailIndex(
     // Rolling stock stands on the track rather than taking ground tiles.
     const size = stockSizeOf(e.name);
     if (size) {
-      stock.push({ x: e.x, y: e.y, orientation: stockOrientation(e), ...size });
+      stock.push({ x: e.x, y: e.y, orientation: stockOrientation(e), elevated: e.railLayer === "elevated", ...size });
       continue;
     }
     if (e.name === "rail-support") {
@@ -240,6 +244,7 @@ export function buildRailIndex(
     trackSignals.push({ id: signal.entityNumber, chain: signal.name === "rail-chain-signal", x: slot.ex!, y: slot.ey!, dir: slot.direction, elevated: !!slot.elevated });
   }
 
+  let shapes: Map<string, number | undefined> | undefined;
   let blocks: RailBlocks | undefined;
   let occupied: Set<number> | undefined;
   let signalStates: Map<number, SignalColor> | undefined;
@@ -268,6 +273,7 @@ export function buildRailIndex(
       }),
     openJoints,
     signalSlots: slots,
+    signalShapeAt: (x, y, direction, elevated) => (shapes ??= new Map(slots.map((s) => [`${s.x},${s.y},${s.direction},${s.elevated ? 1 : 0}`, s.shape]))).get(`${x},${y},${direction},${elevated ? 1 : 0}`),
     stopSlots: trainStopSlots(rails.filter((r) => railLevel(r.name) === "ground")),
     railsideTaken,
     takenSignalGroups,
@@ -276,6 +282,7 @@ export function buildRailIndex(
     occupied: getOccupied,
     signalStates: () => (signalStates ??= computeSignalStates(getBlocks(), trackSignals, getOccupied())),
     groundRails: rails.filter((r) => railLevel(r.name) === "ground"),
+    deckRails: rails.filter((r) => railLevel(r.name) === "elevated"),
   };
 }
 
@@ -547,14 +554,11 @@ export function signalSlotsNear(index: RailIndex, x: number, y: number, radius =
 /** How far from track a held locomotive or wagon still snaps onto it. */
 export const STOCK_SNAP_RANGE = 2.5;
 
-/** Where a held locomotive or wagon goes: the point of ground track nearest
- *  the cursor, heading along the rail there — of the two ways along it, the
- *  one closer to the held direction, so R turns the stock round. Undefined
- *  away from track. */
-export function rollingStockSnap(index: RailIndex, x: number, y: number, heldDirection: number): { x: number; y: number; direction: number } | undefined {
-  let best: { x: number; y: number; tx: number; ty: number } | undefined;
-  let bestDist = STOCK_SNAP_RANGE;
-  for (const rail of index.groundRails) {
+/** The point of the given track nearest (x, y), within `reach`, and the
+ *  way the track runs there. */
+function nearestOnTrack(rails: readonly RailPiece[], x: number, y: number, reach: number): { x: number; y: number; tx: number; ty: number; dist: number } | undefined {
+  let best: { x: number; y: number; tx: number; ty: number; dist: number } | undefined;
+  for (const rail of rails) {
     if (Math.hypot(rail.x - x, rail.y - y) > 12) continue;
     const line = railCentreline(rail.name, rail.direction, 12);
     for (let i = 1; i < line.length; i++) {
@@ -567,18 +571,116 @@ export function rollingStockSnap(index: RailIndex, x: number, y: number, heldDir
       const t = Math.max(0, Math.min(1, ((x - ax) * vx + (y - ay) * vy) / len2));
       const px = ax + t * vx;
       const py = ay + t * vy;
-      const d = Math.hypot(px - x, py - y);
-      if (d < bestDist) {
-        bestDist = d;
-        best = { x: px, y: py, tx: vx, ty: vy };
-      }
+      const dist = Math.hypot(px - x, py - y);
+      if (dist < (best?.dist ?? reach)) best = { x: px, y: py, tx: vx, ty: vy, dist };
     }
   }
-  if (!best) return undefined;
-  // Heading clockwise from north, in sixteenths of a turn.
-  const along = ((Math.round((Math.atan2(best.tx, -best.ty) / (Math.PI * 2)) * 16) % 16) + 16) % 16;
+  return best;
+}
+
+/** How close to a rail's centreline stock has to stand to count as on it. */
+const ON_TRACK = 0.3;
+
+/** The layer a locomotive or wagon at (x, y) stands on. A blueprint doesn't
+ *  say, so it goes by the track there: up on the deck when only elevated
+ *  track runs under it. */
+export function stockLayer(rails: readonly RailPiece[], x: number, y: number): "elevated" | undefined {
+  const near = rails.filter((r) => Math.hypot(r.x - x, r.y - y) <= 12);
+  if (nearestOnTrack(near.filter((r) => railLevel(r.name) === "ground"), x, y, ON_TRACK)) return undefined;
+  return nearestOnTrack(near.filter((r) => railLevel(r.name) === "elevated"), x, y, ON_TRACK) ? "elevated" : undefined;
+}
+
+/** A set of wheels: where it sits relative to its wagon's centre, and the
+ *  way it points (a fraction of a turn clockwise from north). */
+export interface StockBogie {
+  dx: number;
+  dy: number;
+  orientation: number;
+}
+
+/** How far a bogie may be from where its wagon's own heading would put it
+ *  and still be taken onto the track there. */
+const BOGIE_REACH = 1;
+
+/** Tiles from a wagon's centre to each set of wheels: half the prototypes'
+ *  joint_distance, 4 for every kind of stock. */
+const BOGIE_OFFSET = 2;
+
+/** Where the wheels `along` tiles ahead of a wagon's centre (behind, when
+ *  negative) sit: on the track there, turned the way it runs, so on a curve
+ *  each set follows the rail rather than the wagon's body. Undefined with
+ *  no track there, when the wheels just go by the body. */
+export function stockBogie(index: RailIndex, stock: { x: number; y: number; orientation: number; elevated?: boolean }, along: number): StockBogie | undefined {
+  const [hx, hy] = headingVector(stock.orientation);
+  const on = nearestOnTrack(stock.elevated ? index.deckRails : index.groundRails, stock.x + hx * along, stock.y + hy * along, BOGIE_REACH);
+  if (!on) return undefined;
+  // Of the two ways along the track, the one the wagon heads.
+  const sign = on.tx * hx + on.ty * hy < 0 ? -1 : 1;
+  return {
+    dx: on.x - stock.x,
+    dy: on.y - stock.y,
+    orientation: (Math.atan2(sign * on.tx, -sign * on.ty) / (Math.PI * 2) + 1) % 1,
+  };
+}
+
+export interface StockSnap {
+  /** Where the stock stands; for elevated track, the spot on the ground
+   *  under it. */
+  x: number;
+  y: number;
+  /** The heading rounded to 16 ways, and exactly (a fraction of a turn
+   *  clockwise from north) — on a curve the track runs between the 16. */
+  direction: number;
+  orientation: number;
+  elevated: boolean;
+}
+
+/** Where a held locomotive or wagon goes: the point of track nearest the
+ *  cursor, heading along the rail there — of the two ways along it, the
+ *  one closer to the held direction, so R turns the stock round. Elevated
+ *  track is pointed at up on the deck, where it is drawn. Undefined away
+ *  from track. */
+export function rollingStockSnap(index: RailIndex, x: number, y: number, heldDirection: number): StockSnap | undefined {
+  const ground = nearestOnTrack(index.groundRails, x, y, STOCK_SNAP_RANGE);
+  const deck = nearestOnTrack(index.deckRails, x, y + RAIL_DECK_HEIGHT, STOCK_SNAP_RANGE);
+  const elevated = deck !== undefined && (!ground || deck.dist < ground.dist);
+  const on = elevated ? deck : ground;
+  if (!on) return undefined;
+  // Stock rides on two sets of wheels, each on the rail: its centre is
+  // midway between them and it heads from one to the other. On a curve
+  // that puts the centre a little inside the bend, not on the rail. Start
+  // from the rail under the cursor and settle the wheels onto the track.
+  const rails = elevated ? index.deckRails : index.groundRails;
+  const best = { x: on.x, y: on.y, tx: on.tx, ty: on.ty };
+  for (let i = 0; i < 4; i++) {
+    const len = Math.hypot(best.tx, best.ty);
+    const hx = best.tx / len;
+    const hy = best.ty / len;
+    const ends = [BOGIE_OFFSET, -BOGIE_OFFSET].map((d) => {
+      const want = { x: on.x + hx * d, y: on.y + hy * d };
+      return nearestOnTrack(rails, want.x, want.y, BOGIE_REACH) ?? want;
+    }) as [{ x: number; y: number }, { x: number; y: number }];
+    best.x = (ends[0].x + ends[1].x) / 2;
+    best.y = (ends[0].y + ends[1].y) / 2;
+    best.tx = ends[0].x - ends[1].x;
+    best.ty = ends[0].y - ends[1].y;
+  }
+  // Heading clockwise from north, as a fraction of a turn and in sixteenths.
+  const exact = (Math.atan2(best.tx, -best.ty) / (Math.PI * 2) + 1) % 1;
+  const along = Math.round(exact * 16) % 16;
   const turn = (a: number, b: number) => Math.min((a - b + 16) % 16, (b - a + 16) % 16);
-  const direction = turn(along, heldDirection) <= turn((along + 8) % 16, heldDirection) ? along : (along + 8) % 16;
+  const back = (along + 8) % 16;
+  // Track square across the held heading is as near one way as the other
+  // (a north/south ghost over east-west rail): the heading a quarter turn
+  // clockwise of the held one wins, so R still turns the stock end for end.
+  const gap = turn(along, heldDirection) - turn(back, heldDirection);
+  const forward = gap < 0 || (gap === 0 && (along - heldDirection + 16) % 16 <= 8);
   // Stock sits on the game's 1/256-tile position grid.
-  return { x: Math.round(best.x * 256) / 256, y: Math.round(best.y * 256) / 256, direction };
+  return {
+    x: Math.round(best.x * 256) / 256,
+    y: Math.round(best.y * 256) / 256,
+    direction: forward ? along : back,
+    orientation: forward ? exact : (exact + 0.5) % 1,
+    elevated,
+  };
 }

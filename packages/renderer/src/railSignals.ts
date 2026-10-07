@@ -41,6 +41,8 @@ export interface StockBox {
   orientation: number;
   width: number;
   length: number;
+  /** True for stock up on elevated track. */
+  elevated?: boolean;
 }
 
 /** Unit vector of a heading, in y-down world space. */
@@ -59,11 +61,12 @@ export function occupiedBlocks(blocks: RailBlocks, stock: StockBox[]): Set<numbe
   const out = new Set<number>();
   if (stock.length === 0) return out;
   for (const { piece, block } of blocks.pieces) {
-    // A blueprint doesn't say which layer stock stands on; it is taken to
-    // be on the ground, so a train under a bridge leaves the deck free.
-    if (out.has(block) || isElevatedRail(piece.name) || piece.name === "rail-ramp") continue;
+    if (out.has(block) || piece.name === "rail-ramp") continue;
+    const deck = isElevatedRail(piece.name);
     const line = railCentreline(piece.name, piece.direction, 8);
     hit: for (const s of stock) {
+      // A train under a bridge leaves the deck free, and the other way round.
+      if (!!s.elevated !== deck) continue;
       // No rail piece reaches further than this from its own position.
       if (Math.hypot(piece.x - s.x, piece.y - s.y) > s.length / 2 + 12) continue;
       const [hx, hy] = headingVector(s.orientation);

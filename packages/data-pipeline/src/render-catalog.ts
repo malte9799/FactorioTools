@@ -547,6 +547,60 @@ function railSignalGraphics(proto: any): EntityGraphics | undefined {
       row: { by: "direction16" },
     });
   }
+  // On elevated track a signal wears other art, hung off the side of the
+  // deck: a sheet with more rows than facings, the extra ones for
+  // particular rail shapes. structure_align_to_animation_index gives the
+  // row for each facing and shape (12 shapes per facing); the row most of
+  // a facing's shapes share is the plain one, used on any track.
+  const elevated = proto.elevated_picture_set;
+  const align: number[] | undefined = elevated?.structure_align_to_animation_index;
+  if (elevated?.structure && align?.length === 16 * 12) {
+    const rows = Array.from({ length: 16 }, (_, d) => {
+      const counts = new Map<number, number>();
+      for (const row of align.slice(d * 12, d * 12 + 12)) counts.set(row, (counts.get(row) ?? 0) + 1);
+      return [...counts].sort((a, b) => b[1] - a[1])[0]![0];
+    });
+    const deckFrames: Record<string, number> = elevated.signal_color_to_structure_frame_index ?? frames;
+    for (const l of layers) l.onDeck = false;
+    for (const l of unwrapAll(elevated.structure)) {
+      layers.push({
+        layer: Layer.Object,
+        onDeck: true,
+        sprites: { ...l.sprite, columns: l.sprite.columns ?? 1 },
+        column: { by: "signal-state", frames: deckFrames },
+        row: { by: "direction16", rows, byShape: align },
+      });
+    }
+    // The bracket that holds it off the deck, and its shadow on the ground:
+    // one frame per facing and rail shape, picked the same way. A chain
+    // signal has a second piece (upper_rail_piece) that reaches up over
+    // the deck's bed; the tier each is given here stands for the deck tier
+    // the renderer lifts it to.
+    for (const [bracket, tier] of [[elevated.rail_piece, Layer.LowerObject], [elevated.upper_rail_piece, Layer.LowerObjectOverlay]] as const) {
+      const bracketAlign: number[] | undefined = bracket?.align_to_frame_index;
+      if (!bracket?.sprites || bracketAlign?.length !== 16 * 12) continue;
+      const plain = (d: number) => {
+        const counts = new Map<number, number>();
+        for (const f of bracketAlign.slice(d * 12, d * 12 + 12)) counts.set(f, (counts.get(f) ?? 0) + 1);
+        return [...counts].sort((a, b) => b[1] - a[1])[0]![0];
+      };
+      const bracketFrames = Array.from({ length: 16 }, (_, d) => plain(d));
+      const raw: any[] = bracket.sprites.layers ?? [bracket.sprites];
+      for (const r of raw) {
+        const sprite = toSprite(r);
+        if (!sprite) continue;
+        const lineLength = r.line_length || r.frame_count || 1;
+        const axis = { by: "direction16Grid", lineLength, frames: bracketFrames, byShape: bracketAlign } as const;
+        layers.push({
+          layer: r.draw_as_shadow ? Layer.Shadow : tier,
+          onDeck: true,
+          sprites: { ...sprite, columns: lineLength },
+          column: { ...axis, axis: "column" },
+          row: { ...axis, axis: "row" },
+        });
+      }
+    }
+  }
   // The cables from the signal to the rail beside it (rail_piece): one frame
   // per facing in a line_length grid. Its align_to_frame_index picks a
   // slightly different frame for some rail shapes; frame = facing is the
@@ -559,6 +613,7 @@ function railSignalGraphics(proto: any): EntityGraphics | undefined {
     const lineLength = line_length || frame_count || 1;
     layers.unshift({
       layer: Layer.LowerObject,
+      onDeck: elevated?.structure ? false : undefined,
       sprites: { ...piece, columns: lineLength },
       column: { by: "direction16Grid", axis: "column", lineLength },
       row: { by: "direction16Grid", axis: "row", lineLength },
@@ -567,15 +622,28 @@ function railSignalGraphics(proto: any): EntityGraphics | undefined {
   return layers.length > 0 ? { layers } : undefined;
 }
 
-/** Locomotives and wagons: a shadow and a body, each one frame per heading
- *  on the sheets pack-rolling-stock.ts writes. */
+/** Locomotives and wagons: a shadow, two sets of wheels and a body, each
+ *  one frame per heading on the sheets pack-rolling-stock.ts writes. */
 function rollingStockGraphics(proto: any): EntityGraphics | undefined {
   const layers: GraphicsLayer[] = [];
-  for (const { sheet, source, shadow, count, halfTurn } of rollingStockLayout(proto)) {
+  for (const { sheet, source, shadow, count, halfTurn, bogieOffset } of rollingStockLayout(proto)) {
     const axis = { by: "orientation", lineLength: STOCK_LINE_LENGTH, count, halfTurn: halfTurn || undefined } as const;
+    const sprites = { sheet, frameWidth: source.width, frameHeight: source.height, columns: STOCK_LINE_LENGTH, shift: source.shift, scale: source.scale ?? 1 };
+    if (bogieOffset !== undefined) {
+      // A set of wheels under each end. A frame's coupling points back
+      // from its heading, so the front set is the one turned round: both
+      // couplings point out of the wagon. They sit a tier below the
+      // bodies, so no wagon's wheels paint over its own body or a
+      // neighbour's.
+      for (const along of [bogieOffset, -bogieOffset]) {
+        const turned = { ...axis, reversed: along > 0 || undefined };
+        layers.push({ layer: Layer.ObjectUnder, sprites, along, column: { ...turned, axis: "column" }, row: { ...turned, axis: "row" } });
+      }
+      continue;
+    }
     layers.push({
       layer: shadow ? Layer.Shadow : Layer.Object,
-      sprites: { sheet, frameWidth: source.width, frameHeight: source.height, columns: STOCK_LINE_LENGTH, shift: source.shift, scale: source.scale ?? 1 },
+      sprites,
       column: { ...axis, axis: "column" },
       row: { ...axis, axis: "row" },
     });

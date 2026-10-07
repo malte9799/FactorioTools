@@ -16,7 +16,7 @@ import { buildHeatNetwork } from "../src/neighbours/heat.js";
 import { buildCargoBayGrid } from "../src/neighbours/cargoBay.js";
 import { collectEntity } from "../src/draw/collect.js";
 import type { DrawCommand } from "../src/draw/commands.js";
-import { openEnds, railHighlightBox, railJoints } from "../src/railGeometry.js";
+import { openEnds, railEndsAt, railHighlightBox, railJoints, signalShape, signalSlotsForEnd } from "../src/railGeometry.js";
 
 let passed = 0;
 function test(name: string, fn: () => void) {
@@ -79,19 +79,80 @@ test("a rail support turns in 22.5° steps through its 8 facings, and blocks a 4
   assert.equal(rotateAroundCenter(entity("rail-support", 2, 0, 6), { x: 0, y: 0 }, 1).direction, 2);
 });
 
-test("a signal on elevated track is drawn up on the deck, over the track", () => {
-  const ground = collect(entity("rail-signal", 0.5, 0.5, 4));
-  const deck = collect({ ...entity("rail-signal", 0.5, 0.5, 4), railLayer: "elevated" });
-  assert.equal(deck.length, ground.length);
-  deck.forEach((c, i) => {
-    const g = ground[i]!;
-    if (g.layer === Layer.Shadow) {
-      assert.equal(c.dy, g.dy);
-      return;
-    }
-    assert.equal(c.dy, g.dy - 3);
-    assert.equal(c.layer, Layer.ElevatedRailMetal);
-  });
+test("a signal on elevated track wears its own art, hung off the side of the deck", () => {
+  const sheets = (commands: DrawCommand[]) => commands.map((c) => c.sheet.split("/").pop()!).sort();
+  const on = (name: string, direction: number, railLayer?: "elevated") => collect({ ...entity(name, 0.5, 0.5, direction), railLayer });
+  assert.deepEqual(sheets(on("rail-signal", 4)), ["rail-signal-metals.png", "rail-signal.png"]);
+  assert.deepEqual(sheets(on("rail-signal", 4, "elevated")), ["elevated-rail-signal-metals.png", "elevated-rail-signal-shadow.png", "elevated-rail-signal.png"]);
+  assert.deepEqual(sheets(on("rail-chain-signal", 4, "elevated")), [
+    "elevated-rail-chain-signal-metals-upper.png",
+    "elevated-rail-chain-signal-metals.png",
+    "elevated-rail-chain-signal-shadow.png",
+    "elevated-rail-chain-signal.png",
+  ]);
+
+  // The signal sits in with the deck's bed, its bracket a tier under it, a
+  // chain signal's upper piece over the sleepers; all three tiles up.
+  const part = (commands: DrawCommand[], sheet: string) => commands.find((c) => c.sheet.endsWith(`/${sheet}`))!;
+  const chain = on("rail-chain-signal", 4, "elevated");
+  assert.equal(part(chain, "elevated-rail-chain-signal.png").layer, Layer.ElevatedRailStonePath);
+  assert.equal(part(chain, "elevated-rail-chain-signal-metals.png").layer, Layer.ElevatedRailStonePathLower);
+  // The arm lies on the sleepers, under the rails, on either side of the track.
+  const arm = part(chain, "elevated-rail-chain-signal-metals-upper.png").layer;
+  assert.ok(arm > Layer.ElevatedRailScrew && arm < Layer.ElevatedRailMetal);
+  assert.equal(part(chain, "elevated-rail-chain-signal-shadow.png").layer, Layer.Shadow);
+  const head = part(on("rail-signal", 4, "elevated"), "elevated-rail-signal.png");
+  // 126 px at half scale is 1.97 tiles tall, shifted up 0.14.
+  assert.ok(Math.abs(head.dy + head.dh / 2 - (0.5 - 3 - 0.140625)) < 1e-9);
+
+  // The sheet has 25 rows for 16 facings (the extra ones are for particular
+  // rail shapes): each facing takes the row plain track uses.
+  const row = (direction: number) => {
+    const c = part(on("rail-signal", direction, "elevated"), "elevated-rail-signal.png");
+    return c.sy / c.sh;
+  };
+  assert.deepEqual(Array.from({ length: 16 }, (_, d) => row(d)), [0, 1, 3, 4, 6, 7, 9, 10, 12, 13, 16, 17, 19, 20, 22, 23]);
+  const bracket = (direction: number) => {
+    const c = part(on("rail-signal", direction, "elevated"), "elevated-rail-signal-metals.png");
+    return (c.sy / c.sh) * 9 + c.sx / c.sw;
+  };
+  assert.deepEqual(Array.from({ length: 16 }, (_, d) => bracket(d)), [0, 1, 4, 5, 8, 9, 13, 14, 17, 18, 21, 22, 25, 26, 29, 30]);
+});
+
+test("a signal on elevated track takes the frame for the shape of track it is on", () => {
+  // Where the first curve piece off a straight (A) meets the second (B),
+  // the track runs 22.5° off north. One of the two signals on B's side of
+  // that joint has art of its own; A's side and plain track don't.
+  const curve = { name: "elevated-curved-rail-b", x: -1, y: -5, direction: 0 };
+  const end = railEndsAt(curve)[0]!;
+  const rowOf = (slot: { x: number; y: number; direction: number }, shape: number | undefined) => {
+    const self = { ...entity("rail-signal", slot.x, slot.y, slot.direction), railLayer: "elevated" as const };
+    const out: DrawCommand[] = [];
+    collectEntity(out, self, lookup.get(self.name)!, {
+      grid: buildGrid([self]),
+      fluidNetwork: buildFluidNetwork([self], () => undefined),
+      heatNetwork: buildHeatNetwork([self], () => undefined),
+      ...connectors,
+      cargoBays: buildCargoBayGrid([self], connectors.cargoBayShapeOf),
+      animationFrame: 0,
+      signalShape: () => shape,
+    }, 1);
+    const head = out.find((c) => c.sheet.endsWith("/elevated-rail-signal.png"))!;
+    return head.sy / head.sh;
+  };
+  const plain = [0, 1, 3, 4, 6, 7, 9, 10, 12, 13, 16, 17, 19, 20, 22, 23];
+  const rowsAt = (piece: typeof curve, at: (typeof end)) =>
+    signalSlotsForEnd(at).map((slot) => {
+      assert.equal(rowOf(slot, undefined), plain[slot.direction]);
+      return [slot.direction, rowOf(slot, signalShape(piece, at, slot))];
+    }).sort((a, b) => a[0]! - b[0]!);
+  const special = rowsAt(curve, end).filter(([d, row]) => row !== plain[d!]);
+  assert.equal(special.length, 1, JSON.stringify(rowsAt(curve, end)));
+  const first = { name: "elevated-curved-rail-a", x: 1, y: 0, direction: 0 };
+  assert.deepEqual(rowsAt(first, railEndsAt(first)[1]!), [[7, plain[7]], [15, plain[15]]]);
+  // On straight track every slot is plain.
+  const straight = { name: "elevated-straight-rail", x: 1, y: 1, direction: 0 };
+  for (const e of railEndsAt(straight)) for (const slot of signalSlotsForEnd(e)) assert.equal(rowOf(slot, signalShape(straight, e, slot)), plain[slot.direction]);
 });
 
 test("elevated track and ramps carry their guard rails on both sides, in every facing", () => {
@@ -159,6 +220,43 @@ test("a rail's hover box takes in its end caps", () => {
   // One capped end: longer that way only. A horizontal straight's first end is its east one.
   const one = railHighlightBox("straight-rail", 4, [true, false]);
   assert.ok(Math.abs(one.h - 2.3) < 1e-9 && Math.abs(one.cx - 0.15) < 1e-9 && one.cy === 0);
+});
+
+
+test("rolling stock rides on a set of wheels under each end, below its body", () => {
+  for (const name of ["locomotive", "cargo-wagon", "fluid-wagon", "artillery-wagon"]) {
+    // Heading east: the wheels are two tiles ahead of the centre and two behind.
+    const commands = collect(entity(name, 10, 5, 4));
+    const wheels = commands.filter((c) => c.sheet.endsWith("train-wheel.png"));
+    assert.equal(wheels.length, 2, name);
+    const centre = (c: DrawCommand) => c.dx + c.dw / 2;
+    assert.deepEqual(wheels.map((c) => Math.round(centre(c))).sort((a, b) => a - b), [8, 12], name);
+    // The two sets face opposite ways: frames half a turn (32 of 64) apart.
+    const frame = (c: DrawCommand) => (c.sy / c.sh) * 8 + c.sx / c.sw;
+    assert.deepEqual(wheels.map(frame).sort((a, b) => a - b), [16, 48], name);
+    const body = commands.find((c) => c.layer === Layer.Object)!;
+    for (const w of wheels) assert.ok(w.layer < body.layer && w.layer > Layer.Shadow, name);
+  }
+  // On a bridge the whole wagon is drawn up on the deck, over the track,
+  // wheels still under the body; the shadow stays on the ground.
+  const ground = collect(entity("cargo-wagon", 10, 5, 4));
+  const raised = collect({ ...entity("cargo-wagon", 10, 5, 4), railLayer: "elevated" });
+  raised.forEach((c, i) => {
+    assert.equal(c.dy, ground[i]!.dy - (c.layer === Layer.Shadow ? 0 : 3));
+    if (c.layer !== Layer.Shadow) assert.ok(c.layer >= Layer.ElevatedRailMetal);
+  });
+  const up = (sheet: string) => raised.find((c) => c.sheet.endsWith(sheet))!.layer;
+  assert.ok(up("train-wheel.png") < up("cargo-wagon.png"));
+  // The packed sheet has one frame per 64th of a turn as seen on screen,
+  // so each of the 16 ways is four frames on from the last.
+  const bodyFrame = (direction: number) => {
+    const c = collect(entity("locomotive", 0, 0, direction)).find((c) => c.sheet.endsWith("locomotive.png"))!;
+    return (c.sy / c.sh) * 8 + c.sx / c.sw;
+  };
+  assert.deepEqual([0, 2, 4, 6, 8, 10, 12, 14].map(bodyFrame), [0, 8, 16, 24, 32, 40, 48, 56]);
+  // Heading north the front set is up the screen.
+  const north = collect(entity("locomotive", 0, 0, 0)).filter((c) => c.sheet.endsWith("train-wheel.png"));
+  assert.deepEqual(north.map((c) => Math.round(c.dy + c.dh / 2)).sort((a, b) => a - b), [-2, 2]);
 });
 
 console.log(`\n${passed} passed`);

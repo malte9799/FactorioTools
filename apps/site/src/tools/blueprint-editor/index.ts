@@ -22,7 +22,7 @@ import {
   stripRichText,
 } from "@factoriotools/engine";
 import type { CalculationResult, Timescale, Blueprint, BlueprintTreeNode, PlacedEntity, QualityName, MachineGroup, ModuleStack, ThroughputContext, BottleneckSubgroup, BpSignalId, WireColor, WireLink } from "@factoriotools/engine";
-import { mountRenderer, entitiesCollide, isRail, railEndsAt, isElevatedRail, buildableRails, supportHolds, type RailPiece, isPoleLike, isUndergroundLike, canBuildOver, undergroundForPlacement, undergroundPartner, isTwoDirectionOnly, rotationStep, rotationCount, effectiveFootprint, rotateAroundCenter, summariseRecording, slowestFrames, worstPhase, autoConnectPole, canWire, dropWiresFor, terminalSideAt, toggleWire, type BlueprintRenderer, type HighlightRole } from "@factoriotools/renderer";
+import { mountRenderer, entitiesCollide, isRail, isRollingStock, stockLayer, onRailGrid, snapToRailGrid, railEndsAt, isElevatedRail, buildableRails, supportHolds, type RailPiece, isPoleLike, isUndergroundLike, canBuildOver, undergroundForPlacement, undergroundPartner, isTwoDirectionOnly, rotationStep, rotationCount, effectiveFootprint, rotateAroundCenter, summariseRecording, slowestFrames, worstPhase, autoConnectPole, canWire, dropWiresFor, terminalSideAt, toggleWire, type BlueprintRenderer, type HighlightRole } from "@factoriotools/renderer";
 import { buildRecipeCard, renderResults, type ViewOptions } from "./legacy-view/panels.js";
 import { icon } from "./legacy-view/icons.js";
 import { makeFloatingWindow } from "../../window-manager.js";
@@ -1536,7 +1536,7 @@ export function mountBlueprintEditor(root: HTMLElement): () => void {
    *  engine — see canBuildOver) it swaps the entity, keeping its wires and
    *  whatever settings the new one can still hold. Anything else there
    *  still blocks the placement. */
-  function placeEntity(worldX: number, worldY: number, name: string, direction: number, quality: QualityName, railLayer?: "elevated") {
+  function placeEntity(worldX: number, worldY: number, name: string, direction: number, quality: QualityName, railLayer?: "elevated", orientation?: number) {
     const lookup = visualLookup();
     // A signal on the deck and one on the ground below it are separate spots.
     const existing = entities.find(
@@ -1553,7 +1553,7 @@ export function mountBlueprintEditor(root: HTMLElement): () => void {
     // buildVisualLookup's own default. The one entity being built over is
     // exempt, but everything else is still checked: re-facing a non-square
     // entity in place can swing it onto a neighbour.
-    const candidate: PlacedEntity = { entityNumber: -1, name, x: worldX, y: worldY, direction, railLayer, quality, modules: [], filterItems: [] };
+    const candidate: PlacedEntity = { entityNumber: -1, name, x: worldX, y: worldY, direction, orientation, railLayer, quality, modules: [], filterItems: [] };
     const collides = entities.some((e) => e !== existing && entitiesCollide(candidate, e, footprintOfEntity));
     if (collides) {
       setStatus("Can't build here — something else already occupies that space.", "error");
@@ -1585,6 +1585,8 @@ export function mountBlueprintEditor(root: HTMLElement): () => void {
         x: worldX,
         y: worldY,
         direction: underground?.direction ?? direction,
+        // Rolling stock only: its exact heading along the track.
+        orientation,
         railLayer,
         quality,
         modules: [],
@@ -1739,12 +1741,16 @@ export function mountBlueprintEditor(root: HTMLElement): () => void {
       from: placeholderIdByOriginal.get(w.from)!,
       to: placeholderIdByOriginal.get(w.to)!,
     }));
+    // Track is turned about a point on the rail grid, or R would take its
+    // pieces off that grid.
+    const centre = { x: (minX + maxX) / 2, y: (minY + maxY) / 2 };
+    const anchor = onRailGrid(boxedEntities) ? { x: snapToRailGrid(centre.x), y: snapToRailGrid(centre.y) } : centre;
     pasteArmed = true;
     renderer.setInteractionMode({
       kind: "paste",
       entities: placeholders,
       wires: placeholderWires,
-      anchor: { x: (minX + maxX) / 2, y: (minY + maxY) / 2 },
+      anchor,
       groupRotation: 0,
     });
     setStatus(`Copied ${boxedEntities.length} ${boxedEntities.length === 1 ? "entity" : "entities"} — click to place (Esc to stop).`);
@@ -1966,9 +1972,9 @@ export function mountBlueprintEditor(root: HTMLElement): () => void {
    *  called once at initial mount and again after loadData()'s swap, since
    *  a fresh renderer instance has empty callback slots. */
   function wireEditCallbacks() {
-    renderer.onPlace((worldX, worldY, direction, railLayer) => {
+    renderer.onPlace((worldX, worldY, direction, railLayer, orientation) => {
       if (!paletteSelection) return;
-      placeEntity(worldX, worldY, paletteSelection, direction, paletteQuality, railLayer);
+      placeEntity(worldX, worldY, paletteSelection, direction, paletteQuality, railLayer, orientation);
     });
     renderer.onPlaceRails(placeRails);
     renderer.onSelect((entityNumber) => {
@@ -2088,6 +2094,13 @@ export function mountBlueprintEditor(root: HTMLElement): () => void {
         nextEntityNumber,
       );
       nextEntityNumber = remapped.nextNumber;
+      // A blueprint doesn't say which layer a train stands on: it goes by
+      // the track where it lands, the group's own included, so a train on a
+      // bridge is checked against trains up there and not ones under it.
+      if (remapped.entities.some((e) => isRollingStock(e.name))) {
+        const track = [...entities, ...remapped.entities].filter((e) => isRail(e.name));
+        remapped.entities = remapped.entities.map((e) => (isRollingStock(e.name) ? { ...e, railLayer: stockLayer(track, e.x, e.y) } : e));
+      }
 
       const collidesWithAny = (e: PlacedEntity, against: PlacedEntity[]) =>
         against.some((other) => entitiesCollide(e, other, footprintOfEntity));
@@ -3128,10 +3141,12 @@ export function mountBlueprintEditor(root: HTMLElement): () => void {
       .filter((w) => placeholderIdByOriginal.has(w.from) && placeholderIdByOriginal.has(w.to))
       .map((w) => ({ ...w, from: placeholderIdByOriginal.get(w.from)!, to: placeholderIdByOriginal.get(w.to)! }));
     // A whole-tile anchor keeps every entity on its own grid parity however
-    // the ghost moves.
     const xs = picked.map((e) => e.x);
     const ys = picked.map((e) => e.y);
-    const anchor = { x: Math.round((Math.min(...xs) + Math.max(...xs)) / 2), y: Math.round((Math.min(...ys) + Math.max(...ys)) / 2) };
+    // the ghost moves; with track in it, a rail-grid one, so it turns on
+    // that grid too.
+    const whole = onRailGrid(picked) ? snapToRailGrid : Math.round;
+    const anchor = { x: whole((Math.min(...xs) + Math.max(...xs)) / 2), y: whole((Math.min(...ys) + Math.max(...ys)) / 2) };
     const size = bp["snap-to-grid"];
     setMode("idle");
     pasteArmed = true;

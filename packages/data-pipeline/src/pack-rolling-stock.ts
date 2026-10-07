@@ -5,10 +5,21 @@
  * The game ships a wagon's body as 128 or 256 headings spread over 4–8
  * files, about 40 MB per kind, for trains that turn smoothly as they drive.
  * A blueprint's trains stand still, mostly on straight track, so the editor
- * keeps every eighth heading: STOCK_HEADINGS around the full turn (half that
- * for stock that looks the same from either end). The colour mask is baked
+ * keeps a quarter of them: STOCK_HEADINGS around the full turn (half that for
+ * stock that looks the same from either end).
+ *
+ * The game's frames are a model turned in even steps and seen from 45°
+ * above, which squashes north-south: the frame turned by some yaw looks
+ * turned by more than that on screen, and the frames crowd round east and
+ * west. The game picks a heading's frame through that projection (a rotated
+ * sprite's apply_projection). The packed sheets have it done already: their
+ * frames are evenly spaced in the heading seen on screen, each the game
+ * frame that looks nearest to it (sourceFrame), so the renderer indexes
+ * them by heading alone and the headings near north and south are as finely
+ * covered as the rest. The colour mask is baked
  * into the body with the prototype's own colour, since the renderer has no
- * runtime tint.
+ * runtime tint. The wheels (one sheet all stock shares) are thinned the same
+ * way.
  *
  * rollingStockGraphics (render-catalog.ts) describes the packed sheets;
  * packRollingStock here writes them. Both read the same layout from
@@ -21,7 +32,7 @@ import { PNG } from "pngjs";
 export const ROLLING_STOCK_TABLES = ["locomotive", "cargo-wagon", "fluid-wagon", "artillery-wagon"];
 
 /** Headings kept around a full turn. */
-export const STOCK_HEADINGS = 32;
+export const STOCK_HEADINGS = 64;
 /** Frames per row of a packed sheet. */
 export const STOCK_LINE_LENGTH = 8;
 /** Mod-path prefix of sheets this packer writes rather than the game. */
@@ -35,14 +46,15 @@ export interface StockLayerLayout {
   /** Tint masks baked over `source`. */
   masks: any[];
   shadow: boolean;
-  /** Frames kept, and how many source frames lie between two of them. */
+  /** Frames kept, evenly spaced in on-screen heading. */
   count: number;
-  stride: number;
   halfTurn: boolean;
+  /** Set on the wheels: tiles from the stock's centre to each bogie. */
+  bogieOffset?: number;
 }
 
 /** How a stock prototype's rotated layers map onto packed sheets: one for
- *  the body (with its masks) and one for the shadow. */
+ *  the body (with its masks), one for the shadow and one for the wheels. */
 export function rollingStockLayout(proto: any): StockLayerLayout[] {
   const layers: any[] = proto.pictures?.rotated?.layers ?? [];
   const isMask = (l: any) => l.apply_runtime_tint || l.flags?.includes("mask");
@@ -53,18 +65,43 @@ export function rollingStockLayout(proto: any): StockLayerLayout[] {
     const shadow = !!isShadow(source);
     const halfTurn = !!source.back_equals_front;
     const count = halfTurn ? STOCK_HEADINGS / 2 : STOCK_HEADINGS;
-    if (source.direction_count % count !== 0) continue;
     out.push({
       sheet: `${PACKED_PREFIX}rolling-stock/${proto.name}${shadow ? "-shadow" : ""}.png`,
       source,
       masks: shadow ? [] : layers.filter((l) => isMask(l) && l.direction_count === source.direction_count),
       shadow,
       count,
-      stride: source.direction_count / count,
       halfTurn,
     });
   }
+  // Every kind of stock rides on the same wheels, one set under each end;
+  // they share one sheet, named after the game's own files.
+  const wheels = proto.wheels?.rotated;
+  if (Array.isArray(wheels?.filenames)) {
+    const name = path.basename(wheels.filenames[0]).replace(/-\d+\.png$/, "");
+    out.push({
+      sheet: `${PACKED_PREFIX}rolling-stock/${name}.png`,
+      source: wheels,
+      masks: [],
+      shadow: false,
+      count: STOCK_HEADINGS,
+      halfTurn: false,
+      bogieOffset: (proto.joint_distance ?? 4) / 2,
+    });
+  }
   return out;
+}
+
+/** The game frame of `layer` that looks, on screen, like packed frame `i`
+ *  of `layout`: heading i / STOCK_HEADINGS of a turn clockwise from north. */
+export function sourceFrame(layout: Pick<StockLayerLayout, "halfTurn">, layer: any, i: number): number {
+  const heading = (i / STOCK_HEADINGS) * Math.PI * 2;
+  // The model's yaw whose picture points along that heading.
+  const yaw = (Math.atan2(Math.sin(heading) * Math.SQRT1_2, Math.cos(heading)) / (Math.PI * 2) + 1) % 1;
+  // A layer that looks the same from both ends spreads its frames over
+  // half a turn.
+  const perTurn = layer.direction_count * (layout.halfTurn ? 2 : 1);
+  return Math.round(yaw * perTurn) % layer.direction_count;
 }
 
 /** Reads the frames of a multi-file rotated layer, one file at a time. */
@@ -88,11 +125,14 @@ function frameReader(layer: any, resolve: (modPath: string) => string) {
 export function packRollingStock(protos: any[], resolve: (modPath: string) => string, outDir: string, force = false): number {
   mkdirSync(outDir, { recursive: true });
   let written = 0;
+  const done = new Set<string>();
   for (const proto of protos) {
     for (const layout of rollingStockLayout(proto)) {
       const dest = path.join(outDir, path.basename(layout.sheet));
-      if (existsSync(dest) && !force) continue;
-      const { source, masks, count, stride } = layout;
+      // The wheels' sheet comes round once per kind of stock.
+      if (done.has(dest) || (existsSync(dest) && !force)) continue;
+      done.add(dest);
+      const { source, masks, count } = layout;
       const rows = Math.ceil(count / STOCK_LINE_LENGTH);
       const out = new PNG({ width: STOCK_LINE_LENGTH * source.width, height: rows * source.height });
       out.data.fill(0);
@@ -102,10 +142,10 @@ export function packRollingStock(protos: any[], resolve: (modPath: string) => st
       for (let i = 0; i < count; i++) {
         const dx = (i % STOCK_LINE_LENGTH) * source.width;
         const dy = Math.floor(i / STOCK_LINE_LENGTH) * source.height;
-        const frame = read(i * stride);
+        const frame = read(sourceFrame(layout, source, i));
         PNG.bitblt(frame.png, out, frame.x, frame.y, source.width, source.height, dx, dy);
         masks.forEach((mask, m) => {
-          const mf = maskReads[m]!(i * stride);
+          const mf = maskReads[m]!(sourceFrame(layout, mask, i));
           // Both layers are centred on their own shift; a tile is 32 px at
           // scale 1.
           const pxPerTile = 32 / (source.scale ?? 1);
