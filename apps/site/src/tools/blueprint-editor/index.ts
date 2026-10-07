@@ -22,7 +22,7 @@ import {
   stripRichText,
 } from "@factoriotools/engine";
 import type { CalculationResult, Timescale, Blueprint, BlueprintTreeNode, PlacedEntity, QualityName, MachineGroup, ModuleStack, ThroughputContext, BottleneckSubgroup, BpSignalId, WireColor, WireLink } from "@factoriotools/engine";
-import { mountRenderer, entitiesCollide, isRail, onRailGrid, snapToRailGrid, railEndsAt, isElevatedRail, buildableRails, supportHolds, type RailPiece, isPoleLike, isUndergroundLike, canBuildOver, undergroundForPlacement, undergroundPartner, isTwoDirectionOnly, rotationStep, rotationCount, effectiveFootprint, rotateAroundCenter, summariseRecording, slowestFrames, worstPhase, autoConnectPole, canWire, dropWiresFor, terminalSideAt, toggleWire, type BlueprintRenderer, type HighlightRole } from "@factoriotools/renderer";
+import { mountRenderer, entitiesCollide, isRail, isRollingStock, stockLayer, onRailGrid, snapToRailGrid, railEndsAt, isElevatedRail, buildableRails, supportHolds, type RailPiece, isPoleLike, isUndergroundLike, canBuildOver, undergroundForPlacement, undergroundPartner, isTwoDirectionOnly, rotationStep, rotationCount, effectiveFootprint, rotateAroundCenter, summariseRecording, slowestFrames, worstPhase, autoConnectPole, canWire, dropWiresFor, terminalSideAt, toggleWire, type BlueprintRenderer, type HighlightRole } from "@factoriotools/renderer";
 import { buildRecipeCard, renderResults, type ViewOptions } from "./legacy-view/panels.js";
 import { icon } from "./legacy-view/icons.js";
 import { makeFloatingWindow } from "../../window-manager.js";
@@ -2094,6 +2094,13 @@ export function mountBlueprintEditor(root: HTMLElement): () => void {
         nextEntityNumber,
       );
       nextEntityNumber = remapped.nextNumber;
+      // A blueprint doesn't say which layer a train stands on: it goes by
+      // the track where it lands, the group's own included, so a train on a
+      // bridge is checked against trains up there and not ones under it.
+      if (remapped.entities.some((e) => isRollingStock(e.name))) {
+        const track = [...entities, ...remapped.entities].filter((e) => isRail(e.name));
+        remapped.entities = remapped.entities.map((e) => (isRollingStock(e.name) ? { ...e, railLayer: stockLayer(track, e.x, e.y) } : e));
+      }
 
       const collidesWithAny = (e: PlacedEntity, against: PlacedEntity[]) =>
         against.some((other) => entitiesCollide(e, other, footprintOfEntity));

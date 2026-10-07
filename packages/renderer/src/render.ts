@@ -673,6 +673,10 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
   let ghostPreviewGrid: NeighbourGrid | null = null;
   let ghostPreviewFluid: FluidNetwork | null = null;
   let ghostPreviewHeat: HeatNetwork | null = null;
+  /** For a paste ghost with trains or signals in it: the track there plus
+   *  the group's own, and the layer each of its entities goes on. */
+  let ghostPreviewRail: RailIndex | null = null;
+  let ghostPreviewStockLayers: ("elevated" | undefined)[] | null = null;
   let ghostUnderground: { undergroundType: "input" | "output"; direction: number } | undefined;
   let entitiesVersion = 0;
   let highlightVersion = 0;
@@ -820,9 +824,25 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
       pasteHasRails = onRailGrid(mode.entities);
     }
     if (!pasteHasRails) return anchor;
+    // A blueprint's own grid is kept where it can be: on a grid of odd
+    // cells every other cell suits the rails, so the ghost goes to the next
+    // one over, on the cursor's side. Only where no cell does (even cells,
+    // set an odd tile off the rail grid) do the rails win, since track off
+    // its grid joins nothing.
+    const cell = mode.snap && (mode.snap.absolute || relativeSnapOrigin) ? pasteCell() : null;
+    const fit = (at: number, held: number, cursorAt: number, step: number | undefined): number => {
+      const onRails = (v: number) => Math.abs(v - held - snapToRailGrid(v - held)) < 1e-9;
+      if (onRails(at)) return at;
+      if (step !== undefined) {
+        const next = cursorAt >= at ? [at + step, at - step] : [at - step, at + step];
+        const found = next.find(onRails);
+        if (found !== undefined) return found;
+      }
+      return held + snapToRailGrid(at - held);
+    };
     return {
-      x: mode.anchor.x + snapToRailGrid(anchor.x - mode.anchor.x),
-      y: mode.anchor.y + snapToRailGrid(anchor.y - mode.anchor.y),
+      x: fit(anchor.x, mode.anchor.x, cursor.x, cell?.size.x),
+      y: fit(anchor.y, mode.anchor.y, cursor.y, cell?.size.y),
     };
   }
 
@@ -869,13 +889,13 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
   let shiftHeld = false;
 
   /** The shape of track a signal stands beside (see signalShape). */
-  function signalShapeOf(e: PlacedEntity): number | undefined {
-    return isRailSnapped(e.name) ? currentRailIndex().signalShapeAt(e.x, e.y, e.direction, e.railLayer === "elevated") : undefined;
+  function signalShapeOf(e: PlacedEntity, index: RailIndex = currentRailIndex()): number | undefined {
+    return isRailSnapped(e.name) ? index.signalShapeAt(e.x, e.y, e.direction, e.railLayer === "elevated") : undefined;
   }
 
   /** A wagon's wheels follow the track under them (see stockBogie). */
-  function bogieOf(e: PlacedEntity, along: number) {
-    return stockBogie(currentRailIndex(), { x: e.x, y: e.y, orientation: stockOrientation(e), elevated: e.railLayer === "elevated" }, along);
+  function bogieOf(e: PlacedEntity, along: number, index: RailIndex = currentRailIndex()) {
+    return stockBogie(index, { x: e.x, y: e.y, orientation: stockOrientation(e), elevated: e.railLayer === "elevated" }, along);
   }
 
   function currentRailIndex(): RailIndex {
@@ -1279,7 +1299,26 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
         };
       });
       const previewKey = `${entitiesVersion}|paste|${snappedAnchor.x},${snappedAnchor.y}|${groupRotation}`;
-      if (previewKey !== ghostPreviewKey) {
+      const previewStale = previewKey !== ghostPreviewKey;
+      // Trains and signals in the group go by the track they will stand on,
+      // the group's own included: which layer a train is on (a blueprint
+      // doesn't say), where its wheels sit, which frame a signal wears.
+      if (previewStale) {
+        ghostPreviewRail = null;
+        ghostPreviewStockLayers = null;
+        if (pasteGhosts.some((g) => isRollingStock(g.name) || isRailSnapped(g.name))) {
+          const track = [...entities, ...pasteGhosts].filter((e) => isRail(e.name));
+          ghostPreviewStockLayers = pasteGhosts.map((g) => (isRollingStock(g.name) ? stockLayer(track, g.x, g.y) : g.railLayer));
+        }
+      }
+      if (ghostPreviewStockLayers) {
+        const layers = ghostPreviewStockLayers;
+        pasteGhosts = pasteGhosts.map((g, i) => (g.railLayer === layers[i] ? g : { ...g, railLayer: layers[i] }));
+        if (previewStale) {
+          ghostPreviewRail = buildRailIndex([...entities, ...pasteGhosts], footprintOfEntity, (name) => visualFor(name)?.rollingStock);
+        }
+      }
+      if (previewStale) {
         ghostPreviewKey = previewKey;
         const withGhosts = [...entities, ...pasteGhosts];
         ghostPreviewGrid = buildGrid(withGhosts);
@@ -1303,9 +1342,11 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
         const visual = visualFor(pg.name);
         if (!visual) return true;
         const [gfw, gfh] = effectiveFootprint(visual, pg.direction);
+        // Things on the deck are indexed up where they are drawn; reach
+        // that far for a ghost that goes up there.
         const overlapping = spatialIndex.queryRect(
           pg.x - gfw / 2 + epsilon,
-          pg.y - gfh / 2 + epsilon,
+          pg.y - gfh / 2 + epsilon - (pg.railLayer === "elevated" ? RAIL_DECK_HEIGHT : 0),
           pg.x + gfw / 2 - epsilon,
           pg.y + gfh / 2 - epsilon,
         );
@@ -1688,7 +1729,24 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
         drawInserter(ctx, atlas, pg, visual.inserterGraphics, ghostTint, tintedRes);
       } else if (visual.graphics) {
         const ghostCommands: DrawCommand[] = [];
-        collectEntity(ghostCommands, pg, visual, { grid: previewGrid, fluidNetwork: previewFluidNetwork, heatNetwork: previewHeatNetwork, ...connectors, cargoBays, animationFrame }, 1);
+        const pasteRail = ghostPreviewRail;
+        collectEntity(
+          ghostCommands,
+          pg,
+          visual,
+          {
+            grid: previewGrid,
+            fluidNetwork: previewFluidNetwork,
+            heatNetwork: previewHeatNetwork,
+            ...connectors,
+            cargoBays,
+            // Against the track the group brings as well as the track there.
+            stockBogie: pasteRail ? (e, along) => bogieOf(e, along, pasteRail) : undefined,
+            signalShape: pasteRail ? (e) => signalShapeOf(e, pasteRail) : undefined,
+            animationFrame,
+          },
+          1,
+        );
         for (const c of ghostCommands) c.tint = ghostTint;
         paint(ctx, atlas, ghostCommands, tintedRes);
       }
@@ -2825,7 +2883,11 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
       invalidate();
     },
     setInteractionMode(newMode) {
-      if (newMode.kind !== "paste" || mode.kind !== "paste" || newMode.entities !== mode.entities) relativeSnapOrigin = null;
+      if (newMode.kind !== "paste" || mode.kind !== "paste" || newMode.entities !== mode.entities) {
+        relativeSnapOrigin = null;
+        // What the ghost previewed against belonged to the group before.
+        ghostPreviewKey = null;
+      }
       if (newMode.kind === "place") {
         // An explicit direction (the 'q' pipette carrying over the picked
         // entity's own facing) always wins; otherwise entering place mode,
