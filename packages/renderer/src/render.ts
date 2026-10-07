@@ -1,5 +1,5 @@
 import type { BpTile, GameData, PlacedEntity, QualityName, RenderCatalog, WireColor, WireLink } from "@factoriotools/engine";
-import { Layer } from "@factoriotools/engine";
+import { Layer, stockOrientation } from "@factoriotools/engine";
 import { Camera } from "./camera.js";
 import { getSharedSpriteAtlas } from "./spriteAtlas.js";
 import { getSharedIconAtlas } from "./iconAtlas.js";
@@ -22,7 +22,7 @@ import { drawInserter } from "./sprites/inserter.js";
 import { SpatialIndex, type IndexedBox } from "./spatialIndex.js";
 import { boxHitsEntity, entitiesCollide } from "./collision.js";
 import { RAIL_BLOCK_COLORS } from "./railBlocks.js";
-import { isElevatedRail, isRail, openEnds, RAIL_DECK_HEIGHT, RAIL_END_CAP, railCentreline, railHighlightBox, railJoints, type RailEnd, type RailPiece, type RailSlot } from "./railGeometry.js";
+import { isElevatedRail, isRail, isRollingStock, onRailGrid, openEnds, RAIL_DECK_HEIGHT, RAIL_END_CAP, railCentreline, railHighlightBox, railJoints, snapToRailGrid, type RailEnd, type RailPiece, type RailSlot } from "./railGeometry.js";
 import {
   buildRailIndex,
   isRailPlannerItem,
@@ -38,6 +38,8 @@ import {
   railsideSlotTaken,
   rollingStockSnap,
   startPiece,
+  stockBogie,
+  stockLayer,
   type RailIndex,
   type RailPreview,
 } from "./railPlacement.js";
@@ -307,7 +309,7 @@ export interface BlueprintRenderer {
   /** Fires on a left-click in 'place' mode, with the (already
    *  grid-snapped-by-caller — see index.ts) world position and the ghost's
    *  current facing (see rotateGhost) at the moment of the click. */
-  onPlace(callback: (worldX: number, worldY: number, direction: number, railLayer?: "elevated") => void): void;
+  onPlace(callback: (worldX: number, worldY: number, direction: number, railLayer?: "elevated", orientation?: number) => void): void;
   /** Fires when the rail planner lays track: the pieces in order from the
    *  start (some may already exist — the app keeps those as they are) and
    *  the supports that carry any elevated part. */
@@ -768,6 +770,10 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
   /** Where relative snap-to-grid's grid starts: the first stamp's cell
    *  corner. Cleared whenever a different thing is put in hand. */
   let relativeSnapOrigin: { x: number; y: number } | null = null;
+  /** Whether the held paste group has track in it (see snapPasteAnchor),
+   *  worked out once per group. */
+  let pasteRailsOf: readonly PlacedEntity[] | null = null;
+  let pasteHasRails = false;
 
   /** The held blueprint's grid cell, as its top-left corner relative to the
    *  ghost's anchor plus its size — both after the ghost's rotation. */
@@ -804,6 +810,23 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
    *  blueprint's offset, when absolute; the first stamp's grid when
    *  relative). */
   function snapPasteAnchor(cursor: { x: number; y: number }): { x: number; y: number } {
+    const anchor = snapPasteAnchorToTiles(cursor);
+    if (mode.kind !== "paste") return anchor;
+    // A group with track in it moves in whole rail-grid steps (2 tiles)
+    // from where it was copied, or its rails land between the grid's lines
+    // and join nothing. The same goes for a blueprint's own snap-to-grid.
+    if (pasteRailsOf !== mode.entities) {
+      pasteRailsOf = mode.entities;
+      pasteHasRails = onRailGrid(mode.entities);
+    }
+    if (!pasteHasRails) return anchor;
+    return {
+      x: mode.anchor.x + snapToRailGrid(anchor.x - mode.anchor.x),
+      y: mode.anchor.y + snapToRailGrid(anchor.y - mode.anchor.y),
+    };
+  }
+
+  function snapPasteAnchorToTiles(cursor: { x: number; y: number }): { x: number; y: number } {
     const cell = pasteCell();
     if (!cell || mode.kind !== "paste" || !mode.snap) return { x: Math.round(cursor.x), y: Math.round(cursor.y) };
     const { offset, size } = cell;
@@ -844,6 +867,16 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
   let railPendingPiece: RailPiece | null = null;
   // Shift plans all the way to the cursor, past the rail item's length limit.
   let shiftHeld = false;
+
+  /** The shape of track a signal stands beside (see signalShape). */
+  function signalShapeOf(e: PlacedEntity): number | undefined {
+    return isRailSnapped(e.name) ? currentRailIndex().signalShapeAt(e.x, e.y, e.direction, e.railLayer === "elevated") : undefined;
+  }
+
+  /** A wagon's wheels follow the track under them (see stockBogie). */
+  function bogieOf(e: PlacedEntity, along: number) {
+    return stockBogie(currentRailIndex(), { x: e.x, y: e.y, orientation: stockOrientation(e), elevated: e.railLayer === "elevated" }, along);
+  }
 
   function currentRailIndex(): RailIndex {
     if (!railIndex || railIndexVersion !== entitiesVersion) {
@@ -934,6 +967,9 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
   // (removed per user feedback: the initial press-and-hold felt laggy).
   let isErasing = false;
   let erasedThisGesture = new Set<number>();
+  /** Track under a train mined this gesture, which the gesture leaves be
+   *  (see eraseAtScreenPoint). */
+  let sparedThisGesture = new Set<number>();
 
   // Left-click-drag-to-place state: mirrors the erase state above — instant
   // on press, then drags across more grid cells keep placing for the rest
@@ -1117,7 +1153,8 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
         // while still catching any real overlap.
         const epsilon = 0.01;
         const left = snapped.x - gfw / 2 + epsilon;
-        const top = snapped.y - gfh / 2 + epsilon;
+        // Stock on the deck is indexed up where it is drawn; reach that far.
+        const top = snapped.y - gfh / 2 + epsilon - (onTrack?.elevated ? RAIL_DECK_HEIGHT : 0);
         const right = snapped.x + gfw / 2 - epsilon;
         const bottom = snapped.y + gfh / 2 - epsilon;
         const overlapping = spatialIndex.queryRect(left, top, right, bottom);
@@ -1129,7 +1166,8 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
           x: snapped.x,
           y: snapped.y,
           direction: fixed?.direction ?? ghostDirection,
-          railLayer: slot?.elevated ? "elevated" : undefined,
+          railLayer: slot?.elevated || onTrack?.elevated ? "elevated" : undefined,
+          orientation: onTrack?.orientation,
           quality: "normal",
           modules: [],
           filterItems: [],
@@ -1176,7 +1214,8 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
           // A paired exit is stored with its travel direction, the
           // reverse of how it's held (see autoUnderground).
           direction: fixed?.direction ?? ghostUnderground?.direction ?? ghostDirection,
-          railLayer: slot?.elevated ? "elevated" : undefined,
+          railLayer: slot?.elevated || onTrack?.elevated ? "elevated" : undefined,
+          orientation: onTrack?.orientation,
           quality: mode.quality ?? "normal",
           modules: [],
           filterItems: [],
@@ -1339,6 +1378,8 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
         grid, fluidNetwork, heatNetwork, ...connectors, cargoBays, railJoints: railJointSet, animationFrame: 0,
         // A signal standing on no slot guards nothing and shows no colour.
         signalState: (e) => currentRailIndex().signalStates().get(e.entityNumber) ?? "none",
+        stockBogie: bogieOf,
+        signalShape: signalShapeOf,
       });
       sceneRebuiltThisFrame = true;
       sceneRebuildCount++;
@@ -1627,7 +1668,7 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
           drawInserter(ctx, atlas, ghost, visual.inserterGraphics, ghostTint, tintedRes);
         } else if (visual.graphics) {
           const ghostCommands: DrawCommand[] = [];
-          collectEntity(ghostCommands, ghost, isRailSnapped(ghost.name) ? withoutRailPatch(visual) : visual, { grid: previewGrid, fluidNetwork: previewFluidNetwork, heatNetwork: previewHeatNetwork, ...connectors, cargoBays, railJoints: railJointSet, animationFrame }, 1);
+          collectEntity(ghostCommands, ghost, isRailSnapped(ghost.name) ? withoutRailPatch(visual) : visual, { grid: previewGrid, fluidNetwork: previewFluidNetwork, heatNetwork: previewHeatNetwork, ...connectors, cargoBays, railJoints: railJointSet, stockBogie: bogieOf, signalShape: signalShapeOf, animationFrame }, 1);
           for (const c of ghostCommands) c.tint = ghostTint;
           paint(ctx, atlas, ghostCommands, tintedRes);
         }
@@ -2099,8 +2140,19 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
   function eraseAtScreenPoint(clientX: number, clientY: number): void {
     const world = worldAtScreenPoint(clientX, clientY);
     const hit = spatialIndex.hitTest(world.x, world.y);
-    if (hit === undefined || erasedThisGesture.has(hit)) return;
+    if (hit === undefined || erasedThisGesture.has(hit) || sparedThisGesture.has(hit)) return;
     erasedThisGesture.add(hit);
+    // Mining a locomotive or wagon leaves the track it stood on: the cursor
+    // is still over that track the moment the train is gone, and the same
+    // press would take it too. It needs a press of its own.
+    const entity = entityById.get(hit);
+    if (entity && isRollingStock(entity.name)) {
+      const [w, h] = footprintOfEntity(entity);
+      for (const id of spatialIndex.queryRect(entity.x - w / 2, entity.y - h / 2, entity.x + w / 2, entity.y + h / 2)) {
+        const under = entityById.get(id);
+        if (under && isRail(under.name)) sparedThisGesture.add(id);
+      }
+    }
     eraseCallback?.(hit);
   }
 
@@ -2184,7 +2236,7 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
       const onTrack = rollingStockSnap(currentRailIndex(), ghostWorldPos.x, ghostWorldPos.y, ghostDirection);
       if (!onTrack || placedThisGesture.size > 0) return;
       placedThisGesture.add(`${onTrack.x},${onTrack.y}`);
-      placeCallback?.(onTrack.x, onTrack.y, onTrack.direction);
+      placeCallback?.(onTrack.x, onTrack.y, onTrack.direction, onTrack.elevated ? "elevated" : undefined, onTrack.orientation);
       return;
     }
     const [fw, fh] = visual ? effectiveFootprint(visual, ghostDirection) : FALLBACK_FOOTPRINT;
@@ -2269,6 +2321,7 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
       // "place") — the real game doesn't suppress right-click removal
       // while holding an item either.
       erasedThisGesture = new Set();
+      sparedThisGesture = new Set();
       isErasing = true;
       eraseAtPointer(e);
       return;
@@ -2512,7 +2565,7 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
   }
 
   let hoverCallback: ((entityNumber: number | undefined, e: PointerEvent) => void) | null = null;
-  let placeCallback: ((worldX: number, worldY: number, direction: number, railLayer?: "elevated") => void) | null = null;
+  let placeCallback: ((worldX: number, worldY: number, direction: number, railLayer?: "elevated", orientation?: number) => void) | null = null;
   let railPlaceCallback: ((pieces: RailPiece[], supports: RailPiece[]) => void) | null = null;
   let selectCallback: ((entityNumber: number) => void) | null = null;
   let eraseCallback: ((entityNumber: number) => void) | null = null;
@@ -2604,6 +2657,13 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
    *  the camera alone, so edits never jump the view. */
   function rebuildIndices(newEntities: PlacedEntity[], newWires?: WireLink[]): void {
     entities = newEntities;
+    // A blueprint doesn't say which layer its trains stand on: stock over
+    // elevated track alone is taken up onto the deck. A copy, like a turned
+    // pole below — this is how it is drawn, not an edit.
+    if (entities.some((e) => isRollingStock(e.name) && !e.railLayer)) {
+      const track = entities.filter((e) => isRail(e.name));
+      entities = entities.map((e) => (isRollingStock(e.name) && !e.railLayer && stockLayer(track, e.x, e.y) ? { ...e, railLayer: "elevated" as const } : e));
+    }
     entityById = new Map(entities.map((e) => [e.entityNumber, e]));
     // Undefined means "unchanged" (an edit that only moved entities), an
     // empty array means "this blueprint has no wires" — an edit must not
@@ -2642,6 +2702,7 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
     railJointSet = railJoints(entities.filter((e) => isRail(e.name)));
 
     const boxes: IndexedBox[] = [];
+    const stockBoxes: IndexedBox[] = [];
     for (const e of entities) {
       const visual = visualFor(e.name);
       const [w, h] = visual ? effectiveFootprint(visual, e.direction) : FALLBACK_FOOTPRINT;
@@ -2662,8 +2723,11 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
         // not by its (mostly empty) axis-aligned footprint.
         turned: rail && { cx: e.x + rail.cx, cy: e.y + rail.cy, w: rail.w, h: rail.h, angle: rail.angle },
       };
-      boxes.push(box);
+      // A train is on top of its track whatever order the blueprint lists
+      // them in: the pointer finds the last box added first.
+      (isRollingStock(e.name) ? stockBoxes : boxes).push(box);
     }
+    boxes.push(...stockBoxes);
     spatialIndex = new SpatialIndex(boxes);
     // Any edit changes what the ghost previews against, so drop its cache.
     entitiesVersion++;

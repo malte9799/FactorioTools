@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
-import type { PlacedEntity } from "@factoriotools/engine";
+import { stockOrientation, type PlacedEntity } from "@factoriotools/engine";
 import { entitiesCollide } from "../src/collision.js";
 import { railEndsAt, type RailEnd, type RailPiece } from "../src/railGeometry.js";
-import { buildRailIndex, rollingStockSnap, type RailIndex } from "../src/railPlacement.js";
+import { buildRailIndex, rollingStockSnap, stockBogie, stockLayer, type RailIndex } from "../src/railPlacement.js";
 import { planRail } from "../src/railPlanner.js";
 
 let passed = 0;
@@ -165,9 +165,78 @@ test("chain signals round a loop of free track don't lock each other shut", () =
 
 test("held stock snaps onto the track, heading along it the way it is held", () => {
   const north = rollingStockSnap(bare, 1.8, -9.25, 0);
-  assert.deepEqual(north, { x: 1, y: -9.25, direction: 0 });
+  assert.deepEqual(north, { x: 1, y: -9.25, direction: 0, orientation: 0, elevated: false });
   assert.equal(rollingStockSnap(bare, 1.8, -9.3, 8)?.direction, 8);
   assert.equal(rollingStockSnap(bare, 9, -9.3, 0), undefined);
+});
+
+test("held stock snaps onto elevated track where it is drawn, and holds the deck's blocks", () => {
+  const deck: RailPiece[] = line.map((p) => ({ ...p, name: "elevated-straight-rail" }));
+  const bridge = index(rails(deck));
+  // The deck is drawn three tiles up: that is where the cursor points.
+  const snap = rollingStockSnap(bridge, 1.6, -9.25 - 3, 0);
+  assert.deepEqual(snap, { x: 1, y: -9.25, direction: 0, orientation: 0, elevated: true });
+  // Three tiles below the far end of the deck's picture there is only its ground shadow.
+  assert.equal(rollingStockSnap(bridge, 1.6, 2 + 2, 0), undefined);
+  assert.equal(stockLayer(deck, 1, -9.25), "elevated");
+  assert.equal(stockLayer([...deck, ...line], 1, -9.25), undefined, "ground track under the bridge keeps it down");
+  assert.equal(stockLayer(deck, 5, -9.25), undefined);
+
+  // A train on the bridge closes the deck's signal, not one on the ground under it.
+  const both = [...rails(line), ...rails(deck)];
+  const bare2 = index(both);
+  const up = bare2.signalSlots.find((s) => s.elevated && s.ex === 1 && s.ey === -10 && s.direction === 8)!;
+  const upSignal = { ...at("rail-signal", up.x, up.y, up.direction), railLayer: "elevated" as const };
+  const downSignal = signalAt(bare2, "rail-signal", 1, -10, 8);
+  const train = { ...at("locomotive", 1, -20, 0, 0), railLayer: "elevated" as const };
+  const states = index([...both, upSignal, downSignal, train]).signalStates();
+  assert.equal(states.get(upSignal.entityNumber), "red");
+  assert.equal(states.get(downSignal.entityNumber), "green");
+  assert.equal(entitiesCollide(train, at("locomotive", 1, -20, 0, 0), footprint), false, "a train under the bridge is clear of it");
+  assert.equal(entitiesCollide(train, { ...train, entityNumber: 999 }, footprint), true);
+});
+
+test("on a curve held stock heads the way the track runs there, between the 16 ways", () => {
+  const curve = index(rails([{ name: "curved-rail-a", x: 1, y: 0, direction: 0 }]));
+  const headings = new Set<number>();
+  for (let y = -2.8; y <= 1.8; y += 0.2) {
+    const snap = rollingStockSnap(curve, 0.5, y, 0)!;
+    assert.equal(snap.direction, Math.round(snap.orientation * 16) % 16);
+    assert.equal(stockOrientation(at("locomotive", snap.x, snap.y, snap.direction, snap.orientation)), snap.orientation);
+    headings.add(snap.orientation);
+  }
+  assert.ok(headings.size > 4, `only ${headings.size} headings along the curve`);
+  for (const h of headings) assert.ok(h === 0 || h > 1 - 1 / 16 - 0.01, `heading ${h} is off a curve turning from north to north-north-west`);
+});
+
+test("a wagon's wheels sit on the track under each end, turned the way it runs there", () => {
+  // Straight track: two tiles ahead and behind, heading as the wagon does.
+  assert.deepEqual(stockBogie(bare, { x: 1, y: -10, orientation: 0 }, 2), { dx: 0, dy: -2, orientation: 0 });
+  assert.deepEqual(stockBogie(bare, { x: 1, y: -10, orientation: 0.5 }, 2), { dx: 0, dy: 2, orientation: 0.5 });
+  assert.equal(stockBogie(index([]), { x: 1, y: -10, orientation: 0 }, 2), undefined);
+  // A wagon half on a curve: the set on the straight keeps north, the one
+  // on the curve turns with it and stays on the rail.
+  const bend = index(rails([
+    { name: "straight-rail", x: 1, y: 3, direction: 0 },
+    { name: "straight-rail", x: 1, y: 5, direction: 0 },
+    { name: "curved-rail-a", x: 1, y: 0, direction: 0 },
+  ]));
+  const wagon = rollingStockSnap(bend, 1, 1.5, 0)!;
+  const rear = stockBogie(bend, wagon, -2)!;
+  const front = stockBogie(bend, wagon, 2)!;
+  assert.equal(rear.orientation, 0);
+  // The wagon's centre is itself just onto the curve, a hair left of the straight.
+  assert.ok(Math.abs(wagon.x + rear.dx - 1) < 1e-9 && Math.abs(rear.dy - 2) < 0.01);
+  assert.ok(front.orientation > 0.93 && front.orientation < 0.99, `front heads ${front.orientation}`);
+  assert.ok(front.dx < -0.05 && front.dy < -1.8, `front at ${front.dx},${front.dy}`);
+});
+
+test("R turns held stock end for end on track square across it too", () => {
+  // East-west track: the held headings R flips between, north and south,
+  // are both a quarter turn from it.
+  const across = index(rails(Array.from({ length: 8 }, (_, i) => ({ name: "straight-rail", x: 1 + 2 * i, y: 1, direction: 4 }))));
+  assert.equal(rollingStockSnap(across, 8.3, 1.4, 0)?.direction, 4);
+  assert.equal(rollingStockSnap(across, 8.3, 1.4, 8)?.direction, 12);
 });
 
 test("stock rides on rails and past signals, but not through other stock", () => {

@@ -41,6 +41,14 @@ export interface CollectContext {
   /** Every rail end in the scene (railGeometry's railJoints), so track
    *  knows which of its ends stop in an end cap. Left out, every end does. */
   railJoints?: ReadonlySet<string>;
+  /** Where a wagon's wheels `along` tiles ahead of its centre sit on the
+   *  track, and the way they point there (railPlacement's stockBogie).
+   *  Left out or undefined, they go by the wagon's own heading. */
+  /** The shape of track a rail signal stands beside (railGeometry's
+   *  signalShape), which picks between the frames its art has per facing.
+   *  Left out or undefined, it wears the plain one. */
+  signalShape?: (entity: PlacedEntity) => number | undefined;
+  stockBogie?: (entity: PlacedEntity, along: number) => { dx: number; dy: number; orientation: number } | undefined;
 }
 
 /** Everything a layer's frame axes need, resolved once per entity. */
@@ -54,6 +62,8 @@ interface EntityFrame {
   orientation: number;
   /** The colour a rail signal shows. */
   signalState: SignalColor;
+  /** The shape of track a rail signal stands beside, when known. */
+  railShape: number | undefined;
   /** Belt connection row, or a pipe/wall variant name. */
   connectionIndex: number;
   connectionName: string;
@@ -144,6 +154,7 @@ function resolveFrame(entity: PlacedEntity, visual: ResolvedVisual, ctx: Collect
     rawDirection: entity.direction,
     orientation: stockOrientation(entity),
     signalState: ctx.signalState?.(entity) ?? "green",
+    railShape: ctx.signalShape?.(entity),
     connectionIndex: 0,
     connectionName: "",
     caps: [],
@@ -337,18 +348,24 @@ function axisIndex(axis: GraphicsLayer["column"], frame: EntityFrame): number {
     // Rail-signal/rail-chain-signal's own row axis — entity.direction (0..15)
     // IS the row directly, no 256-scaling needed (their sheet is a genuine
     // 16-row grid, one row per placement facing).
-    case "direction16": return frame.rawDirection;
+    case "direction16":
+      return (frame.railShape !== undefined ? axis.byShape?.[frame.rawDirection * 12 + frame.railShape] : undefined) ?? axis.rows?.[frame.rawDirection] ?? frame.rawDirection;
     // A colour the sheet has no frame for (a rail signal with no track to
     // guard) shows red.
     case "signal-state": return axis.frames[frame.signalState] ?? axis.frames.red ?? 0;
     case "orientation": {
-      const turn = ((frame.orientation % 1) + 1) % 1;
+      // The packed frames are evenly spaced in the heading seen on screen
+      // (pack-rolling-stock.ts), so the heading picks its frame directly.
+      const turn = (((frame.orientation + (axis.reversed ? 0.5 : 0)) % 1) + 1) % 1;
       const index = Math.round(turn * (axis.halfTurn ? 2 : 1) * axis.count) % axis.count;
       return axis.axis === "column" ? index % axis.lineLength : Math.floor(index / axis.lineLength);
     }
     case "direction16Grid": {
       const count = axis.count ?? 16;
-      const index = ((frame.rawDirection % count) + count) % count;
+      const index =
+        (frame.railShape !== undefined ? axis.byShape?.[frame.rawDirection * 12 + frame.railShape] : undefined) ??
+        axis.frames?.[frame.rawDirection] ??
+        ((frame.rawDirection % count) + count) % count;
       return axis.axis === "column" ? index % axis.lineLength : Math.floor(index / axis.lineLength);
     }
   }
@@ -523,6 +540,10 @@ export function collectInserterPlatform(
   push(out, { ...graphics.platform, columns: graphics.platformDirections }, column, 0, entity, Layer.Object, 0, alpha);
 }
 
+/** How far over the sleepers' tier a chain signal's arm on elevated track
+ *  is drawn: over everything in that tier, under the rails' tier above. */
+const ARM_OVER_SLEEPERS = 0.05;
+
 /** Turns one entity into its draw commands. Nothing here touches the canvas —
  *  ordering is decided globally once every entity has contributed. */
 export function collectEntity(
@@ -556,6 +577,7 @@ export function collectEntity(
     }
     // A cargo bay's planet-only and platform-only art: draw whichever matches.
     if (layer.onSpacePlatform !== undefined && layer.onSpacePlatform !== frame.onSpacePlatform) return;
+    if (layer.onDeck !== undefined && layer.onDeck !== (entity.railLayer === "elevated")) return;
     // A cargo hub/bay draws several connection pieces at once, each at its
     // own spot on the outline. A piece sorts by that spot rather than by
     // its sprite's shift, so the pieces of one tier overlap front to back
@@ -689,8 +711,17 @@ export function collectEntity(
       if (frame.sideLoad.front && sprite.sheet.endsWith("-front-patch.png")) return;
     }
     if (!sprite) return;
-    let column = axisIndex(layer.column, frame);
-    const row = axisIndex(layer.row, frame);
+    // A set of wheels sits ahead of or behind the stock's centre: on the
+    // track there, turned the way it runs, or failing that straight along
+    // the stock's own heading (y grows downward, so north is -y).
+    let bogie: { dx: number; dy: number; orientation: number } | undefined;
+    if (layer.along) {
+      const turn = frame.orientation * Math.PI * 2;
+      bogie = ctx.stockBogie?.(entity, layer.along) ?? { dx: Math.sin(turn) * layer.along, dy: -Math.cos(turn) * layer.along, orientation: frame.orientation };
+    }
+    const turned = bogie ? { ...frame, orientation: bogie.orientation } : frame;
+    let column = axisIndex(layer.column, turned);
+    const row = axisIndex(layer.row, turned);
     // Turbo belt only: alternate tiles run their animation a half-cycle out
     // of phase (matches the real game's own look at that speed — every
     // frame in lockstep reads as a single strobing flicker instead of items
@@ -716,7 +747,7 @@ export function collectEntity(
     const underSideFeed = isUndergroundLane && (frame.sideLoad.back || frame.sideLoad.front);
     const laneLayer = underSideFeed ? Layer.LowerObject : layer.layer;
     const laneBias = (layer.ySortBias ?? 0) + (isUndergroundLane && frame.sideLoad.back ? -1 - CAP_PRIORITY_EPSILON : 0);
-    push(out, sprite, column, row, entity, laneLayer, order, alpha, 0, 0, false, isUndergroundLane ? frame.laneKeepSide : undefined, laneRecenter, laneBias);
+    push(out, sprite, column, row, entity, laneLayer, order, alpha, bogie?.dx ?? 0, bogie?.dy ?? 0, false, isUndergroundLane ? frame.laneKeepSide : undefined, laneRecenter, laneBias);
 
     // Belt caps share the body's grid but sit a tile off toward the
     // neighbour they cover. A splitter's two belt-lane layers each carry
@@ -743,14 +774,36 @@ export function collectEntity(
     }
   });
 
-  // A signal on elevated track is drawn with its ground art up on the deck,
-  // over the track it stands beside; its shadow stays on the ground.
+  // A signal or train on elevated track is drawn up on the deck; its shadow
+  // stays on the ground. A train goes over the track, its wheels still
+  // under its body. A signal has art of its own for up there, hung off the
+  // side of the deck: that sits in with the deck's bed, as the game has it
+  // (structure_render_layer), so the sleepers and rails run over it and a
+  // signal on the far side is hidden behind the deck. One without such art
+  // is drawn over the track.
   if (entity.railLayer === "elevated") {
+    const wheels = visual.rollingStock ? Layer.ObjectUnder : undefined;
+    const hung = graphics.layers.some((l) => l.onDeck);
     for (let i = first; i < out.length; i++) {
       const c = out[i]!;
+      if (hung) {
+        // Its shadow is placed from up there too. The rest is sorted
+        // against the deck by where it is seen, like the deck's own
+        // pieces, whose art carries the lift in its shift; the bracket goes
+        // a tier under the signal it holds (the prototypes' own render
+        // layers). A chain signal's upper piece, its arm, shares the
+        // sleepers' tier and lies on them whichever side of the track the
+        // signal is on, so it goes just over that tier, still under the
+        // rails.
+        c.dy -= RAIL_DECK_HEIGHT;
+        if (c.layer === Layer.Shadow) continue;
+        c.y -= RAIL_DECK_HEIGHT;
+        c.layer = c.layer === Layer.LowerObject ? Layer.ElevatedRailStonePathLower : c.layer === Layer.LowerObjectOverlay ? Layer.ElevatedRailScrew + ARM_OVER_SLEEPERS : Layer.ElevatedRailStonePath;
+        continue;
+      }
       if (c.layer === Layer.Shadow) continue;
       c.dy -= RAIL_DECK_HEIGHT;
-      c.layer = Layer.ElevatedRailMetal;
+      c.layer = c.layer === wheels ? Layer.ElevatedRailMetal + 0.01 : c.layer === Layer.Object && wheels ? Layer.ElevatedRailMetal + 0.02 : Layer.ElevatedRailMetal;
     }
   }
 }

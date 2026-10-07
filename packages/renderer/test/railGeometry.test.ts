@@ -4,9 +4,11 @@ import path from "node:path";
 import { collectBlueprints, decodeBlueprintString } from "@factoriotools/engine";
 import { DATA_DIR } from "./dataset.js";
 import { SpatialIndex } from "../src/spatialIndex.js";
+import { rotateAroundCenter } from "../src/entityLookup.js";
 import { buildRailIndex, railsideKey, railsideSlot, railsideSlotTaken, signalSlotsNear, supportSpotNear } from "../src/railPlacement.js";
 import {
   isRail,
+  onRailGrid,
   railEnds,
   railEndsAt,
   railFootprint,
@@ -15,6 +17,7 @@ import {
   signalSlots,
   slotGroup,
   snapStraightRail,
+  snapToRailGrid,
   supportDirection,
   supportHolds,
   supportTiles,
@@ -46,6 +49,44 @@ function exampleBlueprints(): { name: string; position: { x: number; y: number }
 const blueprints = exampleBlueprints();
 const railsOf = (entities: (typeof blueprints)[number]): RailPiece[] =>
   entities.filter((e) => isRail(e.name)).map((e) => ({ name: e.name, x: e.position.x, y: e.position.y, direction: e.direction ?? 0 }));
+
+test("a copied group with track moves and turns on the rail grid", () => {
+  assert.equal(onRailGrid([{ name: "transport-belt" }, { name: "curved-rail-a" }]), true);
+  assert.equal(onRailGrid([{ name: "transport-belt" }, { name: "rail-signal" }]), false);
+  assert.deepEqual([-3, -1, 0, 0.9, 1.1, 3.4, 5].map(snapToRailGrid), [-2, -0, 0, 0, 2, 4, 6]);
+
+  // Where on the 2-tile grid each kind of rail end sits, by the way it
+  // points, as the example blueprints have them.
+  const cls = (v: number) => ((v % 2) + 2) % 2;
+  const seen = new Set<string>();
+  const all = blueprints.flatMap(railsOf);
+  for (const rail of all) for (const end of railEndsAt(rail)) seen.add(`${end.dir}|${cls(end.x)},${cls(end.y)}`);
+  assert.ok(new Set([...seen].map((k) => k.split("|")[0])).size === 16, "the examples have ends pointing all 16 ways");
+  assert.equal(seen.size, 16, "one spot on the grid per way an end points");
+
+  // Two different curves, whose bounding-box centre is on no tile corner:
+  // the anchor they are held by still is, on the rail grid.
+  const curves = [
+    { name: "curved-rail-a", x: 1, y: 0, direction: 0 },
+    { name: "curved-rail-b", x: -1, y: -5, direction: 0 },
+  ];
+  assert.deepEqual(railEndsAt(curves[0]!)[1], { ...railEndsAt(curves[1]!)[0]!, dir: 15 }, "the two curves join");
+  const anchor = { x: snapToRailGrid((1 + -1) / 2), y: snapToRailGrid((0 + -5) / 2) };
+  for (const group of [curves, all.slice(0, 400)]) {
+    for (let steps = 0; steps < 4; steps++) {
+      for (const [dx, dy] of [[0, 0], [2, -6], [-14, 4]] as const) {
+        for (const rail of group) {
+          const turned = rotateAroundCenter({ ...rail, entityNumber: 1 } as never, anchor, steps);
+          const moved = { name: rail.name, x: turned.x + dx, y: turned.y + dy, direction: turned.direction };
+          for (const end of railEndsAt(moved)) {
+            assert.ok(seen.has(`${end.dir}|${cls(end.x)},${cls(end.y)}`), `${rail.name} ${rail.direction} turned ${steps} moved ${dx},${dy}: end off the grid`);
+          }
+          if (rail.name === "straight-rail") assert.deepEqual(snapStraightRail(moved.x, moved.y, moved.direction), { x: moved.x, y: moved.y });
+        }
+      }
+    }
+  }
+});
 
 test("every piece has two ends facing different ways", () => {
   for (const name of ["straight-rail", "half-diagonal-rail", "curved-rail-a", "curved-rail-b", "rail-ramp"]) {

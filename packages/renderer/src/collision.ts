@@ -81,10 +81,6 @@ function stockOverlap(a: PlacedEntity, b: PlacedEntity, footprintOf: (e: PlacedE
 
 /** True when `a` and `b` may not both stand where they are. */
 export function entitiesCollide(a: PlacedEntity, b: PlacedEntity, footprintOf: (e: PlacedEntity) => [number, number]): boolean {
-  // A signal on the deck only ever shares its spot with another one there.
-  if (a.railLayer === "elevated" || b.railLayer === "elevated") {
-    return a.railLayer === b.railLayer && RAILSIDE.has(a.name) && RAILSIDE.has(b.name) && a.x === b.x && a.y === b.y;
-  }
   const aRail = isRail(a.name);
   const bRail = isRail(b.name);
   const aStock = isRollingStock(a.name);
@@ -92,7 +88,13 @@ export function entitiesCollide(a: PlacedEntity, b: PlacedEntity, footprintOf: (
   if (aStock || bStock) {
     // Stock rides on track and passes signals and stops beside it.
     if (aRail || bRail || RAILSIDE.has(a.name) || RAILSIDE.has(b.name)) return false;
-    if (aStock && bStock) return stockOverlap(a, b, footprintOf);
+    // A train on a bridge clears one on the ground under it.
+    if (aStock && bStock) return a.railLayer === b.railLayer && stockOverlap(a, b, footprintOf);
+  }
+  // A signal on the deck only ever shares its spot with another one there,
+  // and stock up there is clear of everything on the ground.
+  if (a.railLayer === "elevated" || b.railLayer === "elevated") {
+    return a.railLayer === b.railLayer && RAILSIDE.has(a.name) && RAILSIDE.has(b.name) && a.x === b.x && a.y === b.y;
   }
   if (aRail && bRail) {
     if (railKey(a) === railKey(b)) return true;

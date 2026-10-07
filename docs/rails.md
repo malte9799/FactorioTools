@@ -13,7 +13,7 @@ refresh the rail data from the game.
 | **Rail signal / chain signal** | Snaps to the nearest signal slot beside placed track, ground or elevated, facing the trains it stops. Which side of the track it goes on follows the cursor. Green handles mark every free signal spot on track within 12 tiles of the cursor, and the track shows the rail blocks signals divide it into: a line down the middle in each block's colour, ending at each signalled joint in a triangle on both sides pointing the way the signals there let trains through, or a diamond on both sides where signals face both ways. Away from track the ghost is red and nothing is placed. Over a spot that already has a signal (or the other spot on the same side of that joint), the ghost stays there in red rather than jumping to a free spot beside it. One click places at most one signal. |
 | **Train stop** | Snaps to the slot beside a straight cardinal rail, on the right-hand side of travel. Larger green handles mark the free slots near the cursor. Over a slot that already has a stop, the ghost stays there in red rather than jumping to the free slot beside it, and a click places nothing. One click places at most one stop. |
 
-| **Locomotive / wagon** | Snaps onto ground track under the cursor, heading along the rail. **R** turns it end for end. Away from track the ghost is red and nothing is placed. One click places one. |
+| **Locomotive / wagon** | Snaps onto the track under the cursor, ground or elevated (pointed at up on the deck), heading exactly the way the rail runs there, curves included. **R** turns it end for end. Away from track the ghost is red and nothing is placed. One click places one. |
 
 Signals show what the game would: green over a free block, red when a train
 stands in the block behind them. A chain signal is also red for an occupied
@@ -34,6 +34,12 @@ on every edit.
 - **Esc** or **right-click** drops the plan and keeps the rail in hand.
 - **Q** over any rail, ground or elevated, picks up the rail item. Over a ramp, it picks up the ramp item.
 - **Undo** reverses each placement in a single step.
+- **Copy, cut and blueprints** with track in them move in 2-tile steps and
+  turn about a point on the rail grid, so the track always lands where other
+  track can join it.
+- **Right-click** on a locomotive or wagon removes it and leaves the track
+  under it, however long the button is held; the track takes a press of its
+  own.
 
 Elevated track is drawn three tiles above its ground position, and that is
 where it is pointed at: its hover box, the start arrow, signal handles, box
@@ -77,7 +83,7 @@ never lays a duplicate piece. It takes the tightest turn that fits: a minimal
 - `computeSignalStates` gives each signal its colour. A chain signal walks its block the way a train would and reads each signal it could leave by; ones that only face oncoming trains are no way out.
 - `railPlacement.ts` feeds both from the blueprint (`RailIndex.signalStates()`), and `draw/collect.ts` picks the signal's frame through the prototype's `signal_color_to_structure_frame_index`.
 
-**Rolling stock.** A blueprint stores a wagon's heading as `orientation` (a fraction of a turn); the editor keeps it and derives the 16-way `direction` from it. The art is one frame per heading on sheets `pack-rolling-stock.ts` thins from the game's 128–256 headings down to 32, with the colour mask baked in.
+**Rolling stock.** A blueprint stores a wagon's heading as `orientation` (a fraction of a turn); the editor keeps it and derives the 16-way `direction` from it. The art is one frame per heading on sheets `pack-rolling-stock.ts` thins from the game's 128–256 headings down to 64, with the colour mask baked in. The wheels are one more such sheet, shared by every kind of stock and drawn under each end (half the prototype's `joint_distance` from the centre), a tier below the bodies. Each set sits on the rail under it and turns with it (`stockBogie`); the stock's centre is midway between the two and it heads from one to the other, so on a curve the centre is a little inside the bend. The game's frames are a model turned in even steps and seen from 45° above, so they crowd round east and west on screen; the packer picks, for each 64th of a turn as seen on screen, the game frame that looks nearest (the game's `apply_projection`, done ahead of time), and the renderer indexes the sheet by heading alone.
 
 **Drawing.**
 - Each of a rail's five pieces gets its own render tier: `Layer.RailStonePathLower` up to `Layer.RailMetal`. Where tracks cross, every bed therefore paints under every rail.
@@ -85,7 +91,7 @@ never lays a duplicate piece. It takes the tightest turn that fits: a minimal
 - Track stops in an end cap (`rail_endings`) at every end no other track carries on from, ground and elevated; a rail's hover box takes the cap in.
 - Elevated rails and ramps carry their guard rails (`fence_pictures`, both sides) over the track.
 - A rail support has 8 facings in 22.5° steps (the 16-way direction folded in half, since it looks the same from both sides); its direction is that of the track it carries.
-- A signal on elevated track keeps the blueprint's `rail_layer` (`PlacedEntity.railLayer`). Its position is the spot on the ground below.
+- A signal on elevated track keeps the blueprint's `rail_layer` (`PlacedEntity.railLayer`). Its position is the spot on the ground below. It wears its own art up there (`elevated_picture_set`): the signal hung off the side of the deck, in with the deck's bed so the sleepers and rails run over it, the bracket that holds it a tier lower, and a shadow on the ground.
 
 ## Refreshing the rail data
 
@@ -116,9 +122,14 @@ re-merging their entries would describe the uncropped files.
 
 ## Not done yet
 
-- Signals on elevated track draw with their ground art, lifted onto the deck.
-  The prototypes carry `elevated_picture_set`, a 25-direction sheet with its
-  own frame alignment table, which isn't extracted yet.
+- A signal on elevated track picks its frame by the track it is on, through
+  `elevated_picture_set`'s align tables (16 facings × 12 shapes of track;
+  `signalShape` in `railGeometry.ts` says how the 12 are counted). How the
+  tables count them isn't documented: it was worked out from where their
+  special frames can fall on real track (which leaves two readings) and
+  which of the two matches the game. Where several rails meet at a joint (the tables'
+  "multi") isn't told apart. Ground signals still use the plain frame of
+  their facing. A signal's lights and circuit connector aren't drawn.
 - Guard rails (`fence_pictures`) run the full length of both sides of every
   elevated piece and ramp. The game leaves them off where track branches and
   caps them with end pieces; neither is done.
@@ -126,8 +137,10 @@ re-merging their entries would describe the uncropped files.
 - Diagonal train stops aren't offered.
 - Trains stand still, so no block is ever reserved: signals never show yellow.
   Signals closed by a circuit condition aren't modelled either.
-- Only ground track detects trains: a blueprint doesn't say which layer
-  rolling stock stands on, so stock is taken to be on the ground. Elevated
-  signals still follow the blocks they guard, which run across ramps.
-- Rolling stock draws its body and shadow only: no wheels, no artillery
-  cannon, and every one in the prototype's default colour.
+- A blueprint doesn't say which layer rolling stock stands on. Stock over
+  elevated track alone is taken to be up on the deck (drawn there, holding
+  the deck's blocks); where ground track runs under the bridge too, it is
+  taken to be on the ground. Stock placed by hand keeps the layer it was put
+  on while editing. Stock on a ramp isn't offered.
+- Rolling stock draws its shadow, wheels and body: no artillery cannon, and
+  every one in the prototype's default colour.

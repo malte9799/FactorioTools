@@ -387,7 +387,9 @@ export function denormaliseEntities(entities: PlacedEntity[]): BpEntity[] {
     };
     if (e.orientation !== undefined) bp.orientation = stockOrientation(e);
     else if (e.direction !== 0) bp.direction = e.direction;
-    if (e.railLayer) bp.rail_layer = e.railLayer;
+    // Rolling stock carries no layer in a blueprint: the game puts it on
+    // the track it finds there. The editor's own note of it stays behind.
+    if (e.railLayer && e.orientation === undefined) bp.rail_layer = e.railLayer;
     if (e.quality !== "normal") bp.quality = e.quality;
     if (e.recipe) bp.recipe = e.recipe;
     if (e.modules.length) bp.items = writeModules(e.modules, e.name);

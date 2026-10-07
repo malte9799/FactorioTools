@@ -204,8 +204,11 @@ export type FrameAxis =
    *  needed) with several animation-state frames per row as columns —
    *  `column` picks by "animation" (slowed way down, see its own doc
    *  comment) to cycle through the row's red/orange/green frames, while
-   *  `row` uses this to pick the direction row directly. */
-  | { by: "direction16" }
+   *  `row` uses this to pick the direction row directly. With `rows`, the
+   *  facing looks its row up there instead: a signal's elevated sheet has
+   *  25 rows, the extra ones for particular rail shapes.
+   *  `byShape` is the prototype's whole table (see RailShapeTable). */
+  | { by: "direction16"; rows?: number[]; byShape?: RailShapeTable }
   /** A sheet packing one frame per 16-way facing, `lineLength` frames to a
    *  row — rail-signal's rail_piece patch: the facing picks the frame, split
    *  into this column/row pair. */
@@ -217,6 +220,11 @@ export type FrameAxis =
        *  round them (a rail support's 8, each standing for two opposite
        *  facings). */
       count?: number;
+      /** The frame of each of the 16 facings, when it isn't the facing's
+       *  own number: a signal's bracket on elevated track, whose sheet has
+       *  extra frames for particular rail shapes. */
+      frames?: number[];
+      byShape?: RailShapeTable;
     }
   /** Rail signals: the frame showing the colour the signal is at, from the
    *  prototype's signal_color_to_structure_frame_index. Which colour that
@@ -225,8 +233,17 @@ export type FrameAxis =
   | { by: "signal-state"; frames: Partial<Record<SignalColor, number>> }
   /** Rolling stock: one frame per heading, `count` of them clockwise from
    *  north, `lineLength` to a row. With `halfTurn` the frames cover half a
-   *  turn only, the stock looking the same from either end. */
-  | { by: "orientation"; axis: "column" | "row"; lineLength: number; count: number; halfTurn?: boolean };
+   *  turn only, the stock looking the same from either end. `reversed`
+   *  picks the frame half a turn round: one of the two bogies' wheels. */
+  | { by: "orientation"; axis: "column" | "row"; lineLength: number; count: number; halfTurn?: boolean; reversed?: boolean };
+
+/** A rail signal's frame for each facing and each shape of track it can
+ *  stand beside: 16 facings × 12 shapes, as the prototypes' align tables
+ *  have it. A facing's 12 are the track turning left, running straight and
+ *  turning right, each at the four spots the signal can take on the 2-tile
+ *  rail grid. Used when the signal's spot is known (the renderer's
+ *  signalShape); otherwise the facing's plain frame is. */
+export type RailShapeTable = number[];
 
 /** What a rail signal shows. "none" is a signal with no track to guard. */
 export type SignalColor = "none" | "green" | "yellow" | "red" | "blue";
@@ -272,6 +289,15 @@ export type GraphicsLayer = {
    *  `true` for the art it wears on a space platform, `false` for the art
    *  it wears on a planet. Absent on everything both looks share. */
   onSpacePlatform?: boolean;
+  /** Set on a layer that only draws in one of a rail signal's two looks:
+   *  `true` for the art it wears on elevated track (hung off the side of
+   *  the deck), `false` for the art it wears on the ground. Absent on
+   *  everything both looks share. */
+  onDeck?: boolean;
+  /** Rolling stock only: how far ahead of the stock's centre, in tiles
+   *  along its heading, this layer is drawn (negative for behind) — a
+   *  bogie's wheels, half the prototype's joint_distance either way. */
+  along?: number;
 } & (
   | { sprites: Sprite }
   /** Partial: some Factorio entities (e.g. electric-mining-drill's small

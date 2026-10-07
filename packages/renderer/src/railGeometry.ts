@@ -388,6 +388,19 @@ export function snapStraightRail(x: number, y: number, direction: number): { x: 
   return { x: snap(x), y: snap(y) };
 }
 
+/** True for a group of entities that holds track (or a train stop, which
+ *  only fits beside it): it has to stay on the rail grid when moved. */
+export function onRailGrid(entities: readonly { name: string }[]): boolean {
+  return entities.some((e) => isRail(e.name) || e.name === "train-stop");
+}
+
+/** The nearest rail-grid line. Track sits on a grid two tiles wide, so a
+ *  copied piece only fits back onto other track when moved a whole number
+ *  of 2-tile steps, and turned about a point on that grid. */
+export function snapToRailGrid(v: number): number {
+  return Math.round(v / 2) * 2;
+}
+
 /** Stable key for one rail entity — two pieces with the same key are the
  *  same piece and must never both exist. */
 export function railKey(piece: RailPiece): string {
@@ -415,6 +428,29 @@ export interface RailSlot {
   /** True for a signal slot beside elevated track: the signal stands on
    *  the deck (the blueprint's rail_layer). */
   elevated?: boolean;
+  /** Signal slots only: which of the 12 shapes of track the prototypes'
+   *  align tables tell apart the slot is on — see signalShape. */
+  shape?: number;
+}
+
+/** The shape of track a signal slot is on, as a signal's align tables
+ *  count them: 4 × (0 where its own piece turns left, 1 where it runs
+ *  straight, 2 where it turns right) + the slot's spot on the 2-tile rail
+ *  grid (x + 2y, each 0 or 1). The turn is the piece's as a train enters it
+ *  through the slot's joint; the grid spot counts from the tile corner
+ *  beyond the slot's own tile. Worked out from where the tables' special
+ *  frames can fall on real track (only this grid spot reaches them all,
+ *  and then they fall on one kind of piece: with this turn the second
+ *  curve piece, B; with the opposite one the first, A), and from which of
+ *  the two the game draws with them. */
+export function signalShape(piece: RailPiece, end: RailEnd, slot: { x: number; y: number }): number {
+  const other = railEndsAt(piece).find((e) => e.x !== end.x || e.y !== end.y || e.dir !== end.dir);
+  // Entering through this end a train heads the opposite of end.dir, and
+  // leaves heading the other end's outward direction.
+  const turned = other ? (other.dir - (end.dir + 8) + 32) % 16 : 0;
+  const turn = turned === 0 ? 1 : turned < 8 ? 2 : 0;
+  const spot = (v: number) => (((Math.floor(v) + 1) % 2) + 2) % 2;
+  return turn * 4 + spot(slot.x) + 2 * spot(slot.y);
 }
 
 /** One side of one rail joint: the spot a single signal takes, whichever of
@@ -458,7 +494,7 @@ export function signalSlots(rails: RailPiece[]): RailSlot[] {
       for (const slot of signalSlotsForEnd(end)) {
         // A slot two joints share keeps the first joint it was found at.
         const key = `${slot.x},${slot.y},${slot.direction}`;
-        if (!seen.has(key)) seen.set(key, slot);
+        if (!seen.has(key)) seen.set(key, { ...slot, shape: signalShape(rail, end, slot) });
       }
     }
   }
