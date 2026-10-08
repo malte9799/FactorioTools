@@ -3177,8 +3177,15 @@ export function mountBlueprintEditor(root: HTMLElement): () => void {
   }
 
   /** Takes a quickbar item into the cursor as a ghost, as a Build-menu pick
-   *  would. */
+   *  would — or puts it away when it is the one already in hand, the same
+   *  take/put-away toggle the wire shortcuts have. */
   function pickQuickbarItem(item: QuickbarItem): void {
+    if (paletteSelection === item.name && paletteQuality === item.quality) {
+      setMode("idle");
+      updateCursorIcon(lastPointerPos.x, lastPointerPos.y);
+      setStatus(`Put the ${item.name.replace(/-/g, " ")} away.`);
+      return;
+    }
     if (!placeableEntries(getData(), getRenderCatalog()).some((e) => e.name === item.name)) {
       setStatus(`${item.name} can't be placed with the current game data.`, "error");
       return;
@@ -3186,6 +3193,7 @@ export function mountBlueprintEditor(root: HTMLElement): () => void {
     deselect();
     setMode({ place: item.name, quality: item.quality });
     updateCursorIcon(lastPointerPos.x, lastPointerPos.y);
+    setStatus(`Holding ${item.name.replace(/-/g, " ")} — click to place (Q or Esc to put away).`);
   }
 
   /** The wire shortcuts' take/put-away toggle, shared with Alt+C/R/G. */
@@ -3555,8 +3563,9 @@ export function mountBlueprintEditor(root: HTMLElement): () => void {
     setStatus("Cut tool — drag a box to cut it.");
   }, { signal });
 
-  // Escape cancels an active box-drag mode or an armed paste ghost,
-  // returning to idle — checked and consumed here, BEFORE the existing
+  // Escape cancels an active box-drag mode or an armed paste ghost, and —
+  // with no menu open to back out of first — puts away an entity or wire
+  // in hand, returning to idle — checked and consumed here, BEFORE the existing
   // menu-state Escape handler below, via stopImmediatePropagation, so a
   // box/paste-mode Escape doesn't also fall through and try to back out of
   // a (default, no-op) menu state.
@@ -3568,10 +3577,12 @@ export function mountBlueprintEditor(root: HTMLElement): () => void {
       e.stopImmediatePropagation();
       return;
     }
-    if (!boxModeOn && !pasteArmed) return;
+    const inHand = menuState === "default" && (paletteSelection !== null || wireColorInHand !== null);
+    if (!boxModeOn && !pasteArmed && !inHand) return;
     e.preventDefault();
     e.stopImmediatePropagation();
     setMode("idle");
+    updateCursorIcon(lastPointerPos.x, lastPointerPos.y);
   }, { signal });
 
   // Cmd/Ctrl+V anywhere on the tool pastes a blueprint string straight in,

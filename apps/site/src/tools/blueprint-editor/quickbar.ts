@@ -72,8 +72,8 @@ export function writeAltLayers(layers: AltLayers): void {
 }
 
 export interface QuickbarCallbacks {
-  /** Left or right click on a filled slot (or its number key): put the item
-   *  in the cursor. */
+  /** Click on a filled slot (or its number key): put the item in the
+   *  cursor — or put it away again if it is the one already in hand. */
   onPickItem(item: QuickbarItem): void;
   /** Left click on an empty slot: the caller opens its picker and later
    *  answers through the handle's setSlot(). */
@@ -372,7 +372,7 @@ export function buildQuickbar(host: HTMLElement, callbacks: QuickbarCallbacks): 
         q.title = item.quality;
         button.appendChild(q);
       }
-      button.title = `${item.name.replace(/-/g, " ")}\nClick: take into cursor · ⌘/Ctrl+right-click: clear`;
+      button.title = `${item.name.replace(/-/g, " ")}\nClick: take into cursor (again to put away) · Right-click: clear`;
       if (held && held.name === item.name && held.quality === item.quality) button.classList.add("is-held");
     } else {
       button.title = "Click to set this slot";
@@ -388,14 +388,9 @@ export function buildQuickbar(host: HTMLElement, callbacks: QuickbarCallbacks): 
     button.addEventListener("contextmenu", (e) => {
       e.preventDefault();
       if (!item) return;
-      if (e.metaKey || e.ctrlKey) {
-        stored.bars[bar]![slot] = null;
-        persist();
-        render();
-        return;
-      }
-      callbacks.onPickItem(item);
-      closePanel();
+      stored.bars[bar]![slot] = null;
+      persist();
+      render();
     });
     return button;
   }
