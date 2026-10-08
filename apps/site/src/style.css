@@ -3339,6 +3339,7 @@ canvas.select-mode {
 
 .seed-fields { display: grid; gap: 4px; margin-top: 4px; }
 .seed-field { display: grid; grid-template-columns: 92px 1fr; align-items: center; gap: 8px; font-size: 13px; color: var(--text-dim); }
+.seed-field[hidden] { display: none; }
 .seed-field select { padding: 4px 8px; min-width: 0; }
 .seed-advanced { margin-top: 8px; font-size: 13px; }
 .seed-advanced summary { cursor: pointer; color: var(--gold); font-family: var(--display); font-weight: 600; }

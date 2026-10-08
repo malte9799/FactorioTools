@@ -38,6 +38,10 @@ export class Evaluator {
   /** Above zero while spots are being chosen: those draws are part of where
    *  a patch is and how big, so they are never skipped. */
   private choosingSpots = 0;
+  /** Tiles between neighbouring points of the grid being evaluated, which
+   *  is what `multisample` counts its offsets in: 1 for tiles, 4 for the
+   *  vertices cliffs are laid on. */
+  sampleStep = 1;
 
   /** @param penalties Apply `random_penalty` per tile. Turned off, a tile's
    *  penalty is zero and a probability becomes its upper bound: where an
@@ -284,8 +288,8 @@ export class Evaluator {
         const sx = new Float32Array(n);
         const sy = new Float32Array(n);
         for (let i = 0; i < n; i++) {
-          sx[i] = xs[i]! + node.p.offsetX;
-          sy[i] = ys[i]! + node.p.offsetY;
+          sx[i] = xs[i]! + node.p.offsetX * this.sampleStep;
+          sy[i] = ys[i]! + node.p.offsetY * this.sampleStep;
         }
         out.set(this.run([node.p.expr], sx, sy)[0]!);
         return;

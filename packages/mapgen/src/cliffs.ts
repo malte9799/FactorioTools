@@ -3,7 +3,8 @@
  *  The game lays cliffs on a grid of 4x4-tile cells. Each grid vertex gets a
  *  level from `cliff_elevation` (which contour band it is in); a cell side
  *  whose two vertices differ in level is crossed by a cliff line, provided
- *  `cliffiness` is above 0.5 at either vertex. A cell with crossings holds
+ *  `cliffiness` averages above 0.5 over the two and neither lies below
+ *  zero elevation. A cell with crossings holds
  *  one cliff piece running from one side to another, or ending in the cell
  *  where only one side is crossed. Worked out from cliffs the game placed;
  *  see the fixture in test/. */
@@ -38,8 +39,7 @@ export function cliffName(code: number): string | null {
  *
  *  `elevation` and `cliffiness` hold `(cols + 1) * (rows + 1)` vertices,
  *  row-major. A piece runs with the high ground on its left, so a line
- *  entering through the north side has the higher vertex to the east. Cells
- *  where levels meet diagonally (four crossings) get no piece. */
+ *  entering through the north side has the higher vertex to the east. */
 export function cliffPieces(
   elevation: Float32Array,
   cliffiness: Float32Array,
@@ -47,7 +47,13 @@ export function cliffPieces(
   rows: number,
   elevation0: number,
   interval: number,
+  cellX0?: number,
+  cellY0?: number,
 ): Uint8Array {
+  // Where the block's first cell stands on the game's grid of cells, when
+  // the cells are the game's own: that decides which sides lie on a chunk's
+  // edge.
+  const chunked = cellX0 !== undefined && cellY0 !== undefined;
   const out = new Uint8Array(cols * rows);
   const stride = cols + 1;
   // Level 0 is everything below the first cliff elevation: ground lower
@@ -65,29 +71,34 @@ export function cliffPieces(
       const sw = level(elevation[c]!);
       const se = level(elevation[d]!);
       if (nw === ne && ne === sw && sw === se) continue;
-      const cliffy = (p: number, q: number): boolean => cliffiness[p]! > 0.5 || cliffiness[q]! > 0.5;
+      // A side is only crossed between two vertices at or above zero (sea
+      // level, whatever the planet's sea is made of), and then only if the
+      // cliffiness midway between them is above a half.
+      const cliffy = (p: number, q: number): boolean => elevation[p]! >= 0 && elevation[q]! >= 0 && cliffiness[p]! + cliffiness[q]! > 1;
       let from = NO_SIDE;
       let to = NO_SIDE;
-      let crossings = 0;
-      // Walking the sides clockwise: a rise along the walk is where the line
-      // enters, a drop where it leaves.
-      if (nw !== ne) {
-        crossings++;
-        if (cliffy(a, b)) ne > nw ? (from = 0) : (to = 0);
-      }
-      if (ne !== se) {
-        crossings++;
-        if (cliffy(b, d)) se > ne ? (from = 1) : (to = 1);
-      }
-      if (se !== sw) {
-        crossings++;
-        if (cliffy(d, c)) sw > se ? (from = 2) : (to = 2);
-      }
-      if (sw !== nw) {
-        crossings++;
-        if (cliffy(c, a)) nw > sw ? (from = 3) : (to = 3);
-      }
-      if (crossings > 2 || (from === NO_SIDE && to === NO_SIDE)) continue;
+      // Walking the sides clockwise from the west: a rise along the walk is
+      // where the line enters, a drop where it leaves. Where more than two
+      // sides are crossed (levels meeting diagonally, or three levels in
+      // one cell) the later side wins, as it does in the game. The game
+      // works a chunk of 8 x 8 cells at a time and comes to the sides on a
+      // chunk's west and north edges last. Read off maps whose every cell
+      // is crossed on all four sides.
+      const edgeX = chunked && ((cellX0! + i) & 7) === 0;
+      const edgeY = chunked && ((cellY0! + j) & 7) === 0;
+      const west = (): void => {
+        if (sw !== nw && cliffy(c, a)) nw > sw ? (from = 3) : (to = 3);
+      };
+      const north = (): void => {
+        if (nw !== ne && cliffy(a, b)) ne > nw ? (from = 0) : (to = 0);
+      };
+      if (!edgeX) west();
+      if (!edgeY) north();
+      if (ne !== se && cliffy(b, d)) se > ne ? (from = 1) : (to = 1);
+      if (se !== sw && cliffy(d, c)) sw > se ? (from = 2) : (to = 2);
+      if (edgeX) west();
+      if (edgeY) north();
+      if (from === NO_SIDE && to === NO_SIDE) continue;
       out[j * cols + i] = cliffCode(from, to);
     }
   }
@@ -97,8 +108,10 @@ export function cliffPieces(
 const DX = [0, 1, 0, -1];
 const DY = [-1, 0, 1, 0];
 
-/** Drop the pieces `removed` names, then end every line that led into a
- *  dropped or empty cell, as the game does when ore takes a cliff's place. */
+/** Drop the pieces `removed` names, then end every line that its neighbour
+ *  does not take up: one that led into a dropped or empty cell, or into a
+ *  cell whose own piece runs elsewhere. The game does the same when ore
+ *  takes a cliff's place, and where lines crowd each other. */
 export function trimCliffs(pieces: Uint8Array, cols: number, rows: number, removed: (index: number) => boolean): void {
   for (let k = 0; k < pieces.length; k++) if (pieces[k] && removed(k)) pieces[k] = 0;
   const before = pieces.slice();
@@ -106,16 +119,21 @@ export function trimCliffs(pieces: Uint8Array, cols: number, rows: number, remov
     for (let i = 0; i < cols; i++) {
       const code = before[j * cols + i]!;
       if (!code) continue;
-      const open = (side: number): number => {
+      const open = (side: number, entering: boolean): number => {
         if (side === NO_SIDE) return side;
         const ni = i + DX[side]!;
         const nj = j + DY[side]!;
         // Beyond the block nothing is known; leave the line running.
         if (ni < 0 || nj < 0 || ni >= cols || nj >= rows) return side;
-        return before[nj * cols + ni] ? side : NO_SIDE;
+        const next = before[nj * cols + ni]!;
+        if (!next) return NO_SIDE;
+        // The neighbour meets this side with its opposite one, leaving
+        // through it where this piece enters.
+        const opposite = (side + 2) % 4;
+        return (entering ? cliffTo(next) : cliffFrom(next)) === opposite ? side : NO_SIDE;
       };
-      const from = open(cliffFrom(code));
-      const to = open(cliffTo(code));
+      const from = open(cliffFrom(code), true);
+      const to = open(cliffTo(code), false);
       pieces[j * cols + i] = from === NO_SIDE && to === NO_SIDE ? 0 : cliffCode(from, to);
     }
   }

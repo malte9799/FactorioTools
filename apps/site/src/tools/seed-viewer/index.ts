@@ -3,16 +3,20 @@
  *  Nothing is pre-rendered. A pool of workers runs the game's own noise
  *  expressions (packages/mapgen) and fills the map in 256x256-sample tiles;
  *  this file owns the camera, the tile cache and the panel. Each worker
- *  returns raw layers (tile, resource, enemy, trees, cliffs), not pixels, so
+ *  returns raw layers (tile, resource, enemy, trees, cliffs, rocks), not pixels, so
  *  toggling a layer repaints from cache without generating anything again.
  *
  *  The map is drawn the way the game's own map draws it: resources as a
  *  checkerboard over the ground, trees as a scatter, cliffs as lines. */
-import { presetOptions, unsupportedFunctions, type AutoplaceControlValue, type ClimateValue, type EnemyBase, type LayerColors, type MapGenData, type MapGenOptions, type PatchMeasure, type ResourceLayer, type TileLayer } from "@factoriotools/mapgen";
+import { presetOptions, unsupportedFunctions, type AutoplaceControlValue, type ClimateValue, type DecorLayer, type EnemyBase, type LayerColors, type MapGenData, type MapGenOptions, type PatchMeasure, type ResourceLayer, type TileLayer } from "@factoriotools/mapgen";
 import type { PatchInfo, WorkerRequest, WorkerResponse } from "./worker.js";
 
 /** Samples along one side of a map tile image. */
 const TILE = 256;
+/** The colour a territory's border is drawn in. */
+const TERRITORY_COLOR: [number, number, number] = [255, 64, 48];
+/** Tiles of void shown around a bounded map: two chunks. */
+const VOID_MARGIN = 64;
 const MIN_SCALE = 1 / 256;
 const MAX_SCALE = 8;
 /** Coarsest sampling: one sample every 2^8 world tiles. */
@@ -68,7 +72,7 @@ const TEMPLATE = `
       <p class="seed-note" id="seed-status" role="status"></p>
 
       <div class="seed-fields">
-        <label class="seed-field"><span>Game version</span><select id="seed-version"></select></label>
+        <label class="seed-field" hidden><span>Game version</span><select id="seed-version"></select></label>
         <label class="seed-field"><span>Planet</span><select id="seed-planet"></select></label>
         <label class="seed-field"><span>Preset</span><select id="seed-preset"></select></label>
         <label class="seed-field"><span>Map type</span><select id="seed-maptype"></select></label>
@@ -99,6 +103,8 @@ interface CachedTile {
   enemy: Uint8Array;
   trees: Uint8Array;
   cliff: Uint8Array;
+  decor: Uint8Array;
+  territory: Uint8Array;
   canvas: HTMLCanvasElement;
   used: number;
 }
@@ -291,6 +297,11 @@ export function mountSeedViewer(container: HTMLElement): () => void {
   const controlsEl = container.querySelector<HTMLElement>("#seed-controls")!;
   let tiles: TileLayer[] = [];
   let resources: ResourceLayer[] = [];
+  let decor: DecorLayer[] = [];
+  let decorLut = new Uint32Array(0);
+  let showDecor = true;
+  let hasTerritories = false;
+  let showTerritories = true;
   let colors: LayerColors = { tree: [48, 99, 48], enemy: [255, 26, 26], cliff: [144, 119, 87] };
   let patches: PatchInfo[] = [];
   let bases: EnemyBase[] = [];
@@ -535,9 +546,13 @@ export function mountSeedViewer(container: HTMLElement): () => void {
           const sameResources = resources.length === msg.resources.length && resources.every((r, i) => r.name === msg.resources[i]!.name);
           tiles = msg.tiles;
           resources = msg.resources;
+          const sameDecor = decor.length === msg.decor.length && decor.every((d, i) => d.name === msg.decor[i]!.name);
+          decor = msg.decor;
           colors = msg.colors;
+          const sameTerritories = hasTerritories === msg.hasTerritories;
+          hasTerritories = msg.hasTerritories;
           buildLuts();
-          if (!sameResources) {
+          if (!sameResources || !sameDecor || !sameTerritories) {
             showResource = resources.map(() => true);
             renderLayers();
           }
@@ -559,7 +574,7 @@ export function mountSeedViewer(container: HTMLElement): () => void {
         tileCanvas.width = tileCanvas.height = TILE;
         const cached: CachedTile = {
           key: msg.key, level, tx, ty, tile: msg.tile, resource: msg.resource, enemy: msg.enemy, trees: msg.trees, cliff: msg.cliff,
-          canvas: tileCanvas, used: ++useCounter,
+          decor: msg.decor, territory: msg.territory, canvas: tileCanvas, used: ++useCounter,
         };
         paint(cached);
         cache.set(msg.key, cached);
@@ -602,17 +617,30 @@ export function mountSeedViewer(container: HTMLElement): () => void {
     return Math.min(MAX_LEVEL, Math.max(0, Math.round(Math.log2(1 / scale))));
   }
 
-  const tileKey = (level: number, tx: number, ty: number): string => `${level}:${tx}:${ty}:${showTrees ? 1 : 0}`;
+  /** The layers that are generated per tile image rather than painted from
+   *  what is already there: switching one fetches the map again. */
+  const layerKey = (): string => `:${showTrees ? 1 : 0}${showDecor ? 1 : 0}`;
+  const tileKey = (level: number, tx: number, ty: number): string => `${level}:${tx}:${ty}${layerKey()}`;
+
+  /** How far from the origin the view is drawn, per axis: a bounded map's
+   *  half size plus a margin of void, or no limit. */
+  function mapLimit(): [number, number] {
+    const side = (size: number | null | undefined): number => (size ? size / 2 + VOID_MARGIN : Infinity);
+    return [side(custom.width ?? preset().width), side(custom.height ?? preset().height)];
+  }
 
   function schedule(): void {
     const level = currentLevel();
     const span = TILE * 2 ** level;
     const halfW = canvas.clientWidth / 2 / scale;
     const halfH = canvas.clientHeight / 2 / scale;
-    const tx0 = Math.floor((cx - halfW) / span);
-    const tx1 = Math.floor((cx + halfW) / span);
-    const ty0 = Math.floor((cy - halfH) / span);
-    const ty1 = Math.floor((cy + halfH) / span);
+    // Nothing generates beyond a bounded map: tiles wholly outside it (and
+    // its margin of void) are never asked for.
+    const [limitX, limitY] = mapLimit();
+    const tx0 = Math.floor(Math.max(cx - halfW, -limitX) / span);
+    const tx1 = Math.floor(Math.min(cx + halfW, limitX - 1) / span);
+    const ty0 = Math.floor(Math.max(cy - halfH, -limitY) / span);
+    const ty1 = Math.floor(Math.min(cy + halfH, limitY - 1) / span);
     const wanted: typeof queue = [];
     for (let ty = ty0; ty <= ty1; ty++) {
       for (let tx = tx0; tx <= tx1; tx++) {
@@ -636,7 +664,7 @@ export function mountSeedViewer(container: HTMLElement): () => void {
       const step = 2 ** next.level;
       entry.busy = true;
       inFlight.add(next.key);
-      post(entry, { type: "tile", generation, key: next.key, x0: next.tx * TILE * step, y0: next.ty * TILE * step, size: TILE, step, trees: showTrees });
+      post(entry, { type: "tile", generation, key: next.key, x0: next.tx * TILE * step, y0: next.ty * TILE * step, size: TILE, step, trees: showTrees, decor: showDecor });
     }
   }
 
@@ -652,6 +680,7 @@ export function mountSeedViewer(container: HTMLElement): () => void {
   function buildLuts(): void {
     tileLut = Uint32Array.from(tiles, (t) => pack(...t.color));
     resourceLut = Uint32Array.from(resources, (r) => pack(...r.color));
+    decorLut = Uint32Array.from(decor, (d) => pack(...d.color));
   }
 
   function blend(base: number, [r, g, b]: readonly [number, number, number], alpha: number): number {
@@ -663,6 +692,7 @@ export function mountSeedViewer(container: HTMLElement): () => void {
     const image = new ImageData(TILE, TILE);
     const out = new Uint32Array(image.data.buffer);
     const cliffColor = pack(...colors.cliff);
+    const territoryColor = pack(...TERRITORY_COLOR);
     const sparse = resources.map((r) => r.wells);
     // Sample coordinates across the whole level, so the checkerboard and the
     // tree scatter run on unbroken from one tile image to the next.
@@ -673,6 +703,7 @@ export function mountSeedViewer(container: HTMLElement): () => void {
         const k = j * TILE + i;
         let color = tileLut[t.tile[k]!]!;
         if (showTrees && t.trees[k]! > speckle(gx0 + i, gy0 + j)) color = blend(color, colors.tree, 0.8);
+        if (showDecor && t.decor[k]) color = decorLut[t.decor[k]! - 1]!;
         if (showCliffs && t.cliff[k]) color = cliffColor;
         // One flat wash for "a spawner can stand here". Which tiles get one
         // is a random roll the viewer does not reproduce, so no single
@@ -682,6 +713,8 @@ export function mountSeedViewer(container: HTMLElement): () => void {
         // The game's map shows an ore on every other tile, the ground through
         // the rest; an oil well is a solid square.
         if (res && showResource[res - 1] && (sparse[res - 1] || ((gx0 + i + gy0 + j) & 1) === 0)) color = resourceLut[res - 1]!;
+        // A territory's border goes over everything, as on the game's map.
+        if (showTerritories && t.territory[k]) color = territoryColor;
         out[k] = color;
       }
     }
@@ -731,9 +764,19 @@ export function mountSeedViewer(container: HTMLElement): () => void {
     // Whatever is cached at other zoom levels stands in until the current
     // level arrives: coarse first, the current level on top.
     const level = currentLevel();
-    const trees = showTrees ? ":1" : ":0";
+    const trees = layerKey();
     const rank = (t: CachedTile): number => (t.key.endsWith(trees) ? 2 : 0) + (t.level === level ? 1 : 0);
     const visible = [...cache.values()].sort((a, b) => rank(a) - rank(b) || b.level - a.level);
+    // A bounded map is drawn up to its margin of void and no further.
+    const [limitX, limitY] = mapLimit();
+    const clipX0 = Math.max(0, Math.round((-limitX - cx) * scale + w / 2));
+    const clipY0 = Math.max(0, Math.round((-limitY - cy) * scale + h / 2));
+    const clipX1 = Math.min(w, Math.round((limitX - cx) * scale + w / 2));
+    const clipY1 = Math.min(h, Math.round((limitY - cy) * scale + h / 2));
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(clipX0, clipY0, Math.max(0, clipX1 - clipX0), Math.max(0, clipY1 - clipY0));
+    ctx.clip();
     for (const t of visible) {
       const span = TILE * 2 ** t.level;
       const size = span * scale;
@@ -746,6 +789,7 @@ export function mountSeedViewer(container: HTMLElement): () => void {
       ctx.imageSmoothingEnabled = size < TILE;
       ctx.drawImage(t.canvas, x0, y0, x1 - x0, y1 - y0);
     }
+    ctx.restore();
 
     // The hovered patch: solid, with a white rim, as the game marks a
     // selection on its map.
@@ -919,6 +963,13 @@ export function mountSeedViewer(container: HTMLElement): () => void {
     return row;
   }
 
+  /** What the planet's fixtures are, going by their names. */
+  function decorLabel(): string {
+    const has = (word: string): boolean => decor.some((d) => d.name.includes(word));
+    const parts = [has("rock") ? "Rocks" : "", has("ruin") ? "Ruins" : "", has("iceberg") ? "Icebergs" : "", has("stromatolite") ? "Stromatolites" : "", has("chimney") ? "Chimneys" : ""].filter(Boolean);
+    return parts.length ? parts.join(" & ").replace(/ & (?=.* & )/g, ", ") : "Rocks";
+  }
+
   function renderLayers(): void {
     layersEl.replaceChildren(
       ...resources.map((r, i) =>
@@ -945,6 +996,28 @@ export function mountSeedViewer(container: HTMLElement): () => void {
         showCliffs = on;
         repaintAll();
       }),
+      ...(hasTerritories
+        ? [
+            layerToggle("Demolisher territories", TERRITORY_COLOR, showTerritories, (on) => {
+              showTerritories = on;
+              repaintAll();
+            }),
+          ]
+        : []),
+      // Rocks on most planets, ruins on Fulgora, icebergs on Aquilo: one
+      // switch for whatever the planet scatters about. Like trees they are
+      // generated per tile image; up close, where each one is placed as the
+      // game places it, they about double the work.
+      ...(decor.length
+        ? [
+            layerToggle(decorLabel(), decor[0]!.color, showDecor, (on) => {
+              showDecor = on;
+              queue = [];
+              schedule();
+              requestDraw();
+            }),
+          ]
+        : []),
     );
   }
 

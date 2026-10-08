@@ -38,6 +38,8 @@ export interface CliffEntry {
   grid_offset?: [number, number];
   /** Collision box of each piece, by its name ("west-to-east"). */
   orientations: Record<string, OrientedBox>;
+  /** A piece cannot stand on a tile that shares one of these layers. */
+  collision_layers?: string[];
 }
 
 /** The contents of `mapgen-data.json`, written by the data pipeline. */
@@ -136,11 +138,13 @@ export function presetOptions(preset: MapGenPreset | undefined): Omit<MapGenOpti
     controls,
     propertyExpressionNames: { ...(basic.property_expression_names ?? {}) },
     startingArea: sizeValue(basic.starting_area),
+    // Not the preset's `cliff_smoothing`: the Lakes and Island presets ask
+    // for it, but a map the game makes from them keeps the planet's own (no
+    // smoothing on Nauvis).
     cliffs: cliffs && {
       elevation0: cliffs.cliff_elevation_0,
       interval: cliffs.cliff_elevation_interval,
       richness: sizeValue(cliffs.richness),
-      smoothing: cliffs.cliff_smoothing,
     },
     width: basic.width,
     height: basic.height,

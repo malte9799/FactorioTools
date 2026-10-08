@@ -6,7 +6,7 @@
 import { writeFileSync } from "node:fs";
 import path from "node:path";
 import type { MapGenData, MapGenOptions } from "../src/index.js";
-import { queryEntities, queryOracle } from "./oracle.js";
+import { queryEntities, queryOracle, queryTerritories } from "./oracle.js";
 import { loadDataset } from "../test/dataset.js";
 
 const ROOT = path.join(import.meta.dirname, "..");
@@ -231,16 +231,51 @@ for (const planet of ["vulcanus", "gleba", "fulgora", "aquilo"]) {
 }
 
 /** The cliffs the game really places around spawn, as grid cells. */
-function recordCliffs(file: string, seed: number, half: number): void {
+function recordCliffs(file: string, seed: number, half: number, where: { preset?: string; planet?: string } = {}): void {
   if (!wanted(file)) return;
-  const cliffs = queryEntities(seed, [-half, -half, half, half], ["cliff"]);
+  const { preset, planet } = where;
+  const name = data.planets[planet ?? "nauvis"]!.map_gen_settings.cliff_settings.name;
+  const cliffs = queryEntities(seed, [-half, -half, half, half], ["cliff"], { planet, gamePreset: preset }).filter((c) => c.name === name);
   // A cliff entity stands at the centre of its 4x4 cell, half a tile south.
   const cells = cliffs.map((c) => [(c.x - 2) / 4, (c.y - 2.5) / 4, c.o!] as [number, number, string]);
-  writeFileSync(path.join(ROOT, "test/fixtures", file), JSON.stringify({ seed, half, cliffs: cells }));
+  writeFileSync(path.join(ROOT, "test/fixtures", file), JSON.stringify({ seed, preset, planet, half, cliffs: cells }));
   console.log(`${file}: ${cells.length} cliffs`);
 }
 
 recordCliffs("cliffs-123.json", 123, 384);
+// The island preset, made as the New Game screen makes it: cliffs that
+// follow the elevation and that the sea displaces.
+recordCliffs("cliffs-island-123.json", 123, 384, { preset: "island" });
+// The other planets with cliffs: Vulcanus smooths them and reads its
+// elevation through `multisample`, Fulgora's cliffiness comes in every
+// shade, Gleba's stop at its wetlands.
+for (const planet of ["vulcanus", "gleba", "fulgora"]) recordCliffs(`cliffs-${planet}-123.json`, 123, 256, { planet });
+
+/** The rocks, ruins and the like the game really places around spawn. */
+function recordDecor(file: string, seed: number, half: number, planet?: string): void {
+  if (!wanted(file)) return;
+  const placed = queryEntities(seed, [-half, -half, half, half], ["simple-entity", "lightning-attractor"], { planet })
+    .filter((e) => e.x >= -half && e.x < half && e.y >= -half && e.y < half)
+    .map((e) => [e.name, e.x, e.y] as [string, number, number]);
+  writeFileSync(path.join(ROOT, "test/fixtures", file), JSON.stringify({ seed, planet, half, decor: placed }));
+  console.log(`${file}: ${placed.length} rocks and ruins`);
+}
+
+recordDecor("decor-123.json", 123, 256);
+recordDecor("decor-vulcanus-123.json", 123, 256, "vulcanus");
+
+/** The territories the game gives Vulcanus's demolishers around spawn, as
+ *  lists of chunks within the area. */
+function recordTerritories(file: string, seed: number, half: number, planet: string): void {
+  if (!wanted(file)) return;
+  const chunks = half / 32;
+  const inside = ([x, y]: [number, number]): boolean => x >= -chunks && x < chunks && y >= -chunks && y < chunks;
+  const territories = queryTerritories(seed, [-half, -half, half, half], planet).map((t) => t.chunks.filter(inside)).filter((c) => c.length > 0);
+  writeFileSync(path.join(ROOT, "test/fixtures", file), JSON.stringify({ seed, planet, half, territories }));
+  console.log(`${file}: ${territories.length} territories`);
+}
+
+recordTerritories("territories-vulcanus-123.json", 123, 1024, "vulcanus");
 
 /** The resource entities the game really places in a few chunks: every ore
  *  tile and oil well with its amount. */

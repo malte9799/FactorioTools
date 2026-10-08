@@ -156,14 +156,19 @@ function main(): void {
   // Cliffs are not autoplaced like other entities: the planet's cliff
   // settings name a prototype, and the game lays its pieces along contour
   // lines. The viewer needs each piece's footprint to know where ore
-  // displaces it.
+  // or water displaces it.
   const cliffs: Json = {};
   for (const [name, p] of Object.entries(raw.cliff ?? {})) {
     const orientations: Json = {};
     for (const [orientation, o] of Object.entries((p.orientations ?? {}) as Record<string, Json>)) {
       orientations[orientation.replace(/_/g, "-")] = o.collision_bounding_box;
     }
-    cliffs[name] = { map_color: rgb(p.map_color), grid_size: p.grid_size, grid_offset: p.grid_offset, orientations };
+    // The layers say which tiles displace it too: Nauvis's cliffs cannot
+    // stand in water, Fulgora's stand in its oil ocean.
+    cliffs[name] = {
+      map_color: rgb(p.map_color), grid_size: p.grid_size, grid_offset: p.grid_offset, orientations,
+      collision_layers: layerNames(table(p.collision_mask) ?? table(defaultMasks?.cliff)),
+    };
   }
 
   const planets: Json = {};
