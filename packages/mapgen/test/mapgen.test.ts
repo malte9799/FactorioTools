@@ -196,6 +196,11 @@ test("settings: a bounded map ends in void, and a disabled resource is gone", ()
   assert.notEqual(names[(96 - 64) * 4], "out-of-map");
   assert.notEqual(names[(96 + 63) * 4], "out-of-map");
   assert.equal(names[(96 + 64) * 4], "out-of-map");
+  // Nothing is placed in the void: no oil wells beyond the strip.
+  const wide = ribbon.sample(-2048, -512, 256, 64, 16, { wells: true });
+  wide.resource.forEach((r, k) => assert.ok(!r || Math.abs(-512 + Math.floor(k / 256) * 16 + 0.5) <= 64, `resource in the void at sample ${k}`));
+  assert.ok(wide.resource.some(Boolean));
+  for (const [cx, cy] of [[0, 2], [5, -3], [-7, 4]]) assert.equal(ribbon.chunkResources(cx!, cy!).length, 0);
 
   const none = new MapSurface(data, { seed: 123, controls: { "iron-ore": { size: 0 } } });
   const iron = none.resources.findIndex((r) => r.name === "iron-ore");
@@ -305,12 +310,25 @@ test("cliffs: a piece runs with the high ground on its left", () => {
   assert.equal(piece(0, 0, 0, 20), "east-to-south");
   assert.equal(piece(0, 20, 20, 20), "north-to-west");
   assert.equal(piece(0, 0, 0, 0), null);
-  // Levels meeting diagonally leave the cell empty.
-  assert.equal(piece(20, 0, 0, 20), null);
-  // A side counts only if either of its vertices is cliffy.
+  // Where levels meet diagonally all four sides are crossed; the piece
+  // takes the east and south ones.
+  assert.equal(piece(20, 0, 0, 20), "east-to-south");
+  assert.equal(piece(0, 20, 20, 0), "south-to-east");
+  // On the west or north edge of a chunk it is that edge's side instead.
+  const edge = (x: number, y: number): string | null =>
+    cliffName(cliffPieces(Float32Array.of(20, 0, 0, 20), Float32Array.of(10, 10, 10, 10), 1, 1, 10, 40, x, y)[0]!);
+  assert.equal(edge(3, 5), "east-to-south");
+  assert.equal(edge(8, 5), "west-to-south");
+  assert.equal(edge(3, -8), "east-to-north");
+  // Three levels in a cell: of two sides the line could leave by, the
+  // later one clockwise from the west.
+  assert.equal(piece(20, 0, 60, 60), "east-to-north");
+  // A side counts only if the cliffiness midway along it is above a half.
   assert.equal(piece(0, 0, 0, 20, [0, 0, 10, 0]), "none-to-south");
   assert.equal(piece(0, 0, 0, 20, [0, 10, 0, 0]), "east-to-none");
   assert.equal(piece(0, 0, 0, 20, [10, 0, 0, 0]), null);
+  assert.equal(piece(0, 0, 0, 20, [0, 0.7, 0, 0.2]), null);
+  assert.equal(piece(0, 0, 0, 20, [0, 0.7, 0, 0.4]), "east-to-none");
 });
 
 test("cliffs: none form below the first cliff elevation", () => {
@@ -318,7 +336,28 @@ test("cliffs: none form below the first cliff elevation", () => {
   // the first cliff elevation of 10.
   const cliffy = Float32Array.of(1, 1, 1, 1);
   assert.equal(cliffPieces(Float32Array.of(-100, 5, -100, 5), cliffy, 1, 1, 10, 40)[0], 0);
-  assert.notEqual(cliffPieces(Float32Array.of(-100, 15, -100, 15), cliffy, 1, 1, 10, 40)[0], 0);
+  assert.notEqual(cliffPieces(Float32Array.of(5, 15, 5, 15), cliffy, 1, 1, 10, 40)[0], 0);
+});
+
+test("cliffs: a side with a vertex below zero is not crossed", () => {
+  const cliffy = Float32Array.of(1, 1, 1, 1);
+  const piece = (...v: number[]): string | null => cliffName(cliffPieces(Float32Array.from(v), cliffy, 1, 1, 10, 40)[0]!);
+  assert.equal(piece(5, 15, 5, 15), "north-to-south");
+  assert.equal(piece(-1, 15, 5, 15), "none-to-south");
+  assert.equal(piece(-1, 15, -1, 15), null);
+});
+
+test("cliffs: a line ends where its neighbour runs elsewhere", () => {
+  const [north, east, south, west] = [0, 1, 2, 3];
+  // The middle piece leaves southwards, so the one to its east has nothing
+  // to take up and is left ending in its cell.
+  const row = Uint8Array.of(cliffCode(west, east), cliffCode(west, south), cliffCode(west, east));
+  trimCliffs(row, 3, 1, () => false);
+  assert.deepEqual([...row].map(cliffName), ["west-to-east", "west-to-south", "none-to-east"]);
+  // A piece left with neither end goes.
+  const lone = Uint8Array.of(cliffCode(north, south), cliffCode(west, east), cliffCode(north, south));
+  trimCliffs(lone, 3, 1, () => false);
+  assert.equal(lone[1], 0);
 });
 
 test("cliffs: a line ends where its neighbour is displaced", () => {
@@ -337,26 +376,121 @@ test("cliffs: the drawn line is thinner than its cell and reaches both sides", (
   assert.equal(onCliffLine(westToEast, 1, 0, 0), true);
 });
 
-test("cliffs: match the cliffs the game places", () => {
-  const fixture = JSON.parse(readFileSync(path.join(fixtureDir, "cliffs-123.json"), "utf8")) as { seed: number; half: number; cliffs: [number, number, string][] };
-  const surface = new MapSurface(loadData(), { seed: fixture.seed });
-  const cells = fixture.half / 4;
-  const pieces = surface.cliffs(-cells, -cells, cells * 2, cells * 2);
-  const game = new Map(fixture.cliffs.map(([x, y, name]) => [`${x},${y}`, name]));
-  let same = 0;
-  let different = 0;
-  for (let j = 0; j < cells * 2; j++) {
-    for (let i = 0; i < cells * 2; i++) {
-      const ours = cliffName(pieces[j * cells * 2 + i]!);
-      const theirs = game.get(`${i - cells},${j - cells}`) ?? null;
-      if (ours === theirs) same += ours ? 1 : 0;
-      else different++;
+// How many cells may differ from the game's, per hundred that match. What
+// is left on the island and on Fulgora is a handful of crowded cells;
+// Vulcanus and Gleba also lose pieces to things not reproduced here.
+const CLIFF_FIXTURES: [string, number][] = [
+  ["cliffs-123.json", 0.5], ["cliffs-island-123.json", 1.5], ["cliffs-vulcanus-123.json", 3.5], ["cliffs-gleba-123.json", 4], ["cliffs-fulgora-123.json", 1],
+];
+for (const [file, tolerance] of CLIFF_FIXTURES) {
+  test(`cliffs: match the cliffs the game places: ${file}`, () => {
+    const fixture = JSON.parse(readFileSync(path.join(fixtureDir, file), "utf8")) as { seed: number; preset?: string; planet?: string; half: number; cliffs: [number, number, string][] };
+    const data = loadData();
+    const surface = new MapSurface(data, { seed: fixture.seed, planet: fixture.planet, ...(fixture.preset ? presetOptions(data.presets![fixture.preset]) : {}) });
+    const cells = fixture.half / 4;
+    const pieces = surface.cliffs(-cells, -cells, cells * 2, cells * 2);
+    const game = new Map(fixture.cliffs.map(([x, y, name]) => [`${x},${y}`, name]));
+    let same = 0;
+    let different = 0;
+    for (let j = 0; j < cells * 2; j++) {
+      for (let i = 0; i < cells * 2; i++) {
+        const ours = cliffName(pieces[j * cells * 2 + i]!);
+        const theirs = game.get(`${i - cells},${j - cells}`) ?? null;
+        if (ours === theirs) same += ours ? 1 : 0;
+        else different++;
+      }
     }
+    console.log(`     ${file}: ${same} of the game's ${game.size} cliffs matched, ${different} cells differ`);
+    assert.ok(same > 300, `${same} cliffs matched`);
+    assert.ok(different <= (same * tolerance) / 100, `${different} cells differ from the game, ${same} match`);
+  });
+}
+
+/* ---------- territories ---------- */
+
+test("territories: Vulcanus's chunks fall into the territories the game makes", () => {
+  const fixture = JSON.parse(readFileSync(path.join(fixtureDir, "territories-vulcanus-123.json"), "utf8")) as { seed: number; planet: string; half: number; territories: [number, number][][] };
+  const surface = new MapSurface(loadData(), { seed: fixture.seed, planet: fixture.planet });
+  assert.equal(surface.hasTerritories, true);
+  const chunks = fixture.half / 32;
+  const ours = surface.territories(-chunks, -chunks, chunks * 2, chunks * 2);
+  const at = (x: number, y: number): number => ours[(y + chunks) * chunks * 2 + x + chunks]!;
+  // Every territory of the game's is one value of ours, and no two share one.
+  const seen = new Set<number>();
+  let owned = 0;
+  for (const territory of fixture.territories) {
+    const value = at(...territory[0]!);
+    assert.ok(value > 0);
+    assert.ok(!seen.has(value), "two territories with one value");
+    seen.add(value);
+    for (const [x, y] of territory) assert.equal(at(x, y), value, `chunk ${x},${y}`);
+    owned += territory.length;
   }
-  assert.ok(same > 300, `${same} cliffs matched`);
-  // Not zero: an oil well displaces a cliff too, and where wells stand is a
-  // random roll. Everything else is exact.
-  assert.ok(different <= same * 0.01, `${different} cells differ from the game, ${same} match`);
+  // What the game leaves out (the starting area) is none of ours either.
+  assert.equal(ours.reduce((n, v) => n + (v > 0 ? 1 : 0), 0), owned);
+  assert.ok(owned < ours.length && owned > ours.length * 0.9);
+
+  const grid = surface.sample(-256, -256, 256, 256, 2, { territories: true });
+  const marked = grid.territory.reduce((a, b) => a + b, 0);
+  assert.ok(marked > 100 && marked < 256 * 256 * 0.1, `${marked} border samples`);
+  assert.equal(new MapSurface(loadData(), { seed: 1 }).hasTerritories, false);
+});
+
+/* ---------- rocks and ruins ---------- */
+
+for (const [file, share] of [["decor-123.json", 0.97], ["decor-vulcanus-123.json", 0.95]] as const) {
+  test(`decor: rocks stand where the game puts them: ${file}`, () => {
+    const fixture = JSON.parse(readFileSync(path.join(fixtureDir, file), "utf8")) as { seed: number; planet?: string; half: number; decor: [string, number, number][] };
+    const surface = new MapSurface(loadData(), { seed: fixture.seed, planet: fixture.planet });
+    const game = new Set(fixture.decor.map(([name, x, y]) => `${name}@${x},${y}`));
+    const chunks = fixture.half / 32;
+    let ours = 0;
+    let same = 0;
+    for (let cy = -chunks; cy < chunks; cy++) {
+      for (let cx = -chunks; cx < chunks; cx++) {
+        for (const d of surface.chunkDecor(cx, cy)) {
+          ours++;
+          if (game.has(`${surface.decor[d.decor]!.name}@${d.x},${d.y}`)) same++;
+        }
+      }
+    }
+    console.log(`     ${file}: ${same} of the game's ${game.size} at the exact spot, ${ours - same} of ours are not the game's`);
+    assert.ok(same >= game.size * share, `${same} of ${game.size} matched`);
+    assert.ok(ours - same <= game.size * 0.08, `${ours - same} that the game does not have`);
+  });
+}
+
+test("decor: sampled up close as placed, from afar as a scatter", () => {
+  const surface = new MapSurface(loadData(), { seed: 123 });
+  const none = surface.sample(-256, -256, 256, 256, 1);
+  assert.equal(none.decor.some(Boolean), false);
+  const close = surface.sample(-256, -256, 256, 256, 1, { decor: true });
+  // Every rock the game places in the area covers at least its own tile.
+  for (const d of surface.chunkDecor(-4, -4)) assert.ok(close.decor[(Math.floor(d.y) + 256) * 256 + Math.floor(d.x) + 256], `no mark at ${d.x},${d.y}`);
+  const marked = close.decor.reduce((a, b) => a + (b ? 1 : 0), 0);
+  assert.ok(marked > 20 && marked < 256 * 256 * 0.02, `${marked} samples marked`);
+  // Zoomed out it is a scatter: present, sparse, and the same each time.
+  const far = surface.sample(-2048, -2048, 256, 256, 16, { decor: true });
+  const again = surface.sample(-2048, -2048, 256, 256, 16, { decor: true });
+  assert.ok(far.decor.some(Boolean));
+  assert.deepEqual(far.decor, again.decor);
+  assert.ok(far.decor.reduce((a, b) => a + (b ? 1 : 0), 0) < 256 * 256 * 0.05);
+});
+
+test("cliffs: none stand in water", () => {
+  // The island map keeps Nauvis's cliff lines, which then run out to sea;
+  // the game drops every piece that touches water.
+  const surface = new MapSurface(loadData(), { seed: 1989924216, propertyExpressionNames: { elevation: "elevation_island" } });
+  const pieces = surface.cliffs(-128, -128, 256, 256);
+  let count = 0;
+  pieces.forEach((code, k) => {
+    if (!code) return;
+    count++;
+    const p = surface.probe((k % 256 - 128) * 4 + 2, (Math.floor(k / 256) - 128) * 4 + 2);
+    assert.ok(!/water/.test(p.tile), `cliff in ${p.tile}`);
+  });
+  // The game places 507 here; one of ours stands where it put an oil well.
+  assert.equal(count, 508);
 });
 
 test("surface: cliffs and trees appear in the sampled grid when asked for", () => {

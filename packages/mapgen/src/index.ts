@@ -6,7 +6,7 @@ export {
   type ClimateValue, type MapGenOptions, type MapGenPreset,
 } from "./settings.js";
 export {
-  MapSurface, unsupportedFunctions, type EnemyBase, type LayerColors, type PatchAmount, type PatchMeasure, type PlacedResource, type Probe, type ResourceLayer, type ResourcePatch,
+  MapSurface, unsupportedFunctions, type DecorLayer, type EnemyBase, type LayerColors, type PatchAmount, type PatchMeasure, type PlacedDecor, type PlacedResource, type Probe, type ResourceLayer, type ResourcePatch,
   type Rgb, type SampleGrid, type SampleOptions, type TileLayer,
 } from "./surface.js";
 export { NO_SIDE, SIDES, cliffCode, cliffFrom, cliffName, cliffPieces, cliffTo, onCliffLine, trimCliffs, type OrientedBox } from "./cliffs.js";

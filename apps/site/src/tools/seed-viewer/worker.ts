@@ -2,7 +2,7 @@
  *  holds its own compiled surface for the current seed and answers tile,
  *  patch and survey requests. */
 import {
-  MapSurface, type EnemyBase, type LayerColors, type MapGenData, type MapGenOptions, type PatchAmount, type PatchMeasure, type ResourceLayer,
+  MapSurface, type DecorLayer, type EnemyBase, type LayerColors, type MapGenData, type MapGenOptions, type PatchAmount, type PatchMeasure, type ResourceLayer,
   type ResourcePatch, type TileLayer,
 } from "@factoriotools/mapgen";
 
@@ -10,13 +10,13 @@ export type PatchInfo = ResourcePatch & PatchAmount;
 
 export type WorkerRequest =
   | { type: "init"; generation: number; data: MapGenData | null; options: MapGenOptions }
-  | { type: "tile"; generation: number; key: string; x0: number; y0: number; size: number; step: number; trees: boolean }
+  | { type: "tile"; generation: number; key: string; x0: number; y0: number; size: number; step: number; trees: boolean; decor: boolean }
   | { type: "survey"; generation: number; radius: number }
   | { type: "patch"; generation: number; request: number; x: number; y: number };
 
 export type WorkerResponse =
-  | { type: "ready"; generation: number; tiles: TileLayer[]; resources: ResourceLayer[]; colors: LayerColors; startingAreaRadius: number }
-  | { type: "tile"; generation: number; key: string; tile: Uint8Array; resource: Uint8Array; enemy: Uint8Array; trees: Uint8Array; cliff: Uint8Array }
+  | { type: "ready"; generation: number; tiles: TileLayer[]; resources: ResourceLayer[]; decor: DecorLayer[]; colors: LayerColors; hasTerritories: boolean; startingAreaRadius: number }
+  | { type: "tile"; generation: number; key: string; tile: Uint8Array; resource: Uint8Array; enemy: Uint8Array; trees: Uint8Array; cliff: Uint8Array; decor: Uint8Array; territory: Uint8Array }
   | { type: "survey"; generation: number; patches: PatchInfo[]; bases: EnemyBase[] }
   | { type: "patch"; generation: number; request: number; patch: PatchMeasure | null }
   | { type: "error"; generation: number; message: string };
@@ -83,7 +83,7 @@ scope.onmessage = (event: MessageEvent<WorkerRequest>) => {
       if (!data) throw new Error("map data was never sent");
       surface = new MapSurface(data, req.options);
       reply({
-        type: "ready", generation: req.generation, tiles: surface.tiles, resources: surface.resources, colors: surface.colors,
+        type: "ready", generation: req.generation, tiles: surface.tiles, resources: surface.resources, decor: surface.decor, colors: surface.colors, hasTerritories: surface.hasTerritories,
         startingAreaRadius: surface.startingAreaRadius,
       });
       return;
@@ -91,10 +91,13 @@ scope.onmessage = (event: MessageEvent<WorkerRequest>) => {
     if (!surface) throw new Error("no surface yet");
     switch (req.type) {
       case "tile": {
-        const grid = surface.sample(req.x0, req.y0, req.size, req.size, req.step, { trees: req.trees, cliffs: true, wells: true });
+        const grid = surface.sample(req.x0, req.y0, req.size, req.size, req.step, { trees: req.trees, cliffs: true, wells: true, decor: req.decor, territories: true });
         reply(
-          { type: "tile", generation: req.generation, key: req.key, tile: grid.tile, resource: grid.resource, enemy: grid.enemy, trees: grid.trees, cliff: grid.cliff },
-          [grid.tile.buffer, grid.resource.buffer, grid.enemy.buffer, grid.trees.buffer, grid.cliff.buffer],
+          {
+            type: "tile", generation: req.generation, key: req.key, tile: grid.tile, resource: grid.resource, enemy: grid.enemy, trees: grid.trees,
+            cliff: grid.cliff, decor: grid.decor, territory: grid.territory,
+          },
+          [grid.tile.buffer, grid.resource.buffer, grid.enemy.buffer, grid.trees.buffer, grid.cliff.buffer, grid.decor.buffer, grid.territory.buffer],
         );
         break;
       }

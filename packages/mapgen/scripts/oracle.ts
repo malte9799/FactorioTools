@@ -31,6 +31,10 @@ script.on_event(defines.events.on_tick, function()
   local body = "{" .. table.concat(parts, ",") .. "}"
   body = body:gsub("%-?nan", "null"):gsub("inf", "1e999")
   helpers.write_file("oracle.json", body)
+  -- What the surface was really created with: a preset reaches the map
+  -- through the game's own settings, not always as written in the prototype.
+  local mgs = surface.map_gen_settings
+  helpers.write_file("settings.txt", serpent.block({cliff_settings = mgs.cliff_settings, property_expression_names = mgs.property_expression_names, starting_area = mgs.starting_area, width = mgs.width, height = mgs.height}))
 
   if req.entities then
     -- Really generate the chunks, with a margin so nothing at the edge of
@@ -49,6 +53,18 @@ script.on_event(defines.events.on_tick, function()
       lines[i] = string.format('{"name":%q,"x":%.4f,"y":%.4f%s}', e.name, e.position.x, e.position.y, extra)
     end
     helpers.write_file("entities.json", "[" .. table.concat(lines, ",") .. "]")
+    -- Territories (Vulcanus's demolishers): each one's chunks and how many
+    -- units guard it.
+    local parts = {}
+    for _, territory in ipairs(surface.get_territories()) do
+      local chunks = {}
+      for i, c in ipairs(territory.get_chunks()) do chunks[i] = string.format("[%d,%d]", c.x, c.y) end
+      local units = territory.get_segmented_units()
+      local names = {}
+      for i, u in ipairs(units) do names[i] = string.format("%q", u.prototype.name) end
+      parts[#parts + 1] = string.format('{"units":[%s],"chunks":[%s]}', table.concat(names, ","), table.concat(chunks, ","))
+    end
+    helpers.write_file("territories.json", "[" .. table.concat(parts, ",") .. "]")
     if req.entities.tiles then
       -- One row of tile names per line, as indexes into a name list.
       local index, names, rows = {}, {}, {}
@@ -86,6 +102,9 @@ export interface OracleRequest {
   /** A map-gen-settings file for the new map, as the game's own
    *  `--map-gen-settings` takes it: sliders, starting area, map size. */
   mapGenSettings?: Record<string, unknown>;
+  /** One of the game's map presets, applied as the New Game screen applies
+   *  it (the game's own `--preset`). */
+  gamePreset?: string;
 }
 
 /** An entity the game placed. `o` is a cliff's orientation, `a` a resource's amount. */
@@ -149,6 +168,7 @@ export function queryOracle(req: OracleRequest): Record<string, number[]> {
     writeFileSync(file, JSON.stringify(req.mapGenSettings));
     settingsArgs.push("--map-gen-settings", file);
   }
+  if (req.gamePreset) settingsArgs.push("--preset", req.gamePreset);
   const created = run([...common, "--create", save, "--map-gen-seed", String(req.seed >>> 0), ...settingsArgs]);
   if (!existsSync(save)) throw new Error(`oracle: map creation failed\n${created.slice(-3000)}`);
   const ran = run([...common, "--benchmark", save, "--benchmark-ticks", "2"]);
@@ -166,10 +186,17 @@ export function queryEntities(
   seed: number,
   area: [number, number, number, number],
   types: string[],
-  extra: Pick<OracleRequest, "dataLua" | "finalFixesLua" | "define" | "mapGenSettings"> = {},
+  extra: Pick<OracleRequest, "dataLua" | "finalFixesLua" | "define" | "mapGenSettings" | "planet" | "gamePreset"> = {},
 ): OracleEntity[] {
   queryOracle({ seed, names: ["elevation"], positions: [[0, 0]], entities: { area, types }, ...extra });
   return JSON.parse(readFileSync(ENTITIES_FILE(), "utf8")) as OracleEntity[];
+}
+
+/** The territories the game made once an area is generated: each one's
+ *  chunks (which may reach beyond the area) and the units guarding it. */
+export function queryTerritories(seed: number, area: [number, number, number, number], planet: string): { units: string[]; chunks: [number, number][] }[] {
+  queryOracle({ seed, names: ["elevation"], positions: [[0, 0]], entities: { area, types: ["segmented-unit"] }, planet });
+  return JSON.parse(readFileSync(path.join(ORACLE_DIR, "write", "script-output", "territories.json"), "utf8"));
 }
 
 /** The tiles the game actually generated in an area, row by row. */
