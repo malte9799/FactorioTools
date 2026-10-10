@@ -26,6 +26,12 @@ export function fmtMachines(v: number): string {
   return trim(v.toFixed(2));
 }
 
+/** A number of full belts: 0.27, 1.5, 12. Under a hundredth reads as such. */
+export function fmtBelts(v: number): string {
+  if (v > 0 && v < 0.01) return "<0.01";
+  return fmtNumber(v);
+}
+
 export function fmtPower(watts: number): string {
   if (watts >= 1e9) return trim((watts / 1e9).toFixed(2)) + " GW";
   if (watts >= 1e6) return trim((watts / 1e6).toFixed(watts >= 1e8 ? 0 : 1)) + " MW";

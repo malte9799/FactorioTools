@@ -144,7 +144,8 @@ export function mountPlanner(root: HTMLElement): () => void {
         main.innerHTML = "";
         main.appendChild(graph.el);
       }
-      graph.render(pd, result, state.unit);
+      const belt = pd.belts.find((b) => b.name === state.belt) ?? pd.belts[pd.belts.length - 1]!;
+      graph.render(pd, result, state.unit, belt);
       graph.select(selected);
     } else {
       main.innerHTML = tableHtml(pd, result, state, selected);

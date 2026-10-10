@@ -6,7 +6,7 @@
 
 import type { PlanFlow, PlanResult, PlanStep, PlannerData } from "@factoriotools/engine";
 import { escapeHtml } from "../blueprint-editor/html.js";
-import { fmtMachines, fmtRate, UNIT_LABEL } from "./format.js";
+import { fmtBelts, fmtMachines, fmtRate, UNIT_LABEL } from "./format.js";
 import { itemColor, recipeIcon, sprite } from "./sprites.js";
 import type { TimeUnit } from "./state.js";
 
@@ -39,12 +39,20 @@ interface GEdge {
 
 const NODE_W = 176;
 const SMALL_W = 140;
-const COL_GAP = 136;
+const COL_GAP = 152;
 const ROW_GAP = 30;
 const MIN_H = 78;
 const MAX_BAND = 40;
 /** Height of an output label, for spacing them apart. */
 const PORT_H = 23;
+
+/** The belt the diagram measures item flows in. */
+export interface BeltMeasure {
+  name: string;
+  label: string;
+  /** Items per second on a full belt. */
+  throughput: number;
+}
 
 export interface GraphHandlers {
   onSelect(id: string | null): void;
@@ -246,10 +254,10 @@ export class FlowGraph {
     }
   }
 
-  render(pd: PlannerData, result: PlanResult, unit: TimeUnit): void {
+  render(pd: PlannerData, result: PlanResult, unit: TimeUnit, belt: BeltMeasure): void {
     this.build(result);
     this.layout();
-    this.draw(pd, unit);
+    this.draw(pd, unit, belt);
     const key = [...this.nodes.keys()].sort().join("|");
     if (key !== this.layoutKey) {
       this.layoutKey = key;
@@ -409,7 +417,10 @@ export class FlowGraph {
     }
   }
 
-  private draw(pd: PlannerData, unit: TimeUnit): void {
+  private draw(pd: PlannerData, unit: TimeUnit, belt: BeltMeasure): void {
+    const fluid = (item: string) => pd.items[item]?.kind === "fluid";
+    const beltSub = (item: string, rate: number) =>
+      fluid(item) ? "" : ` · ${fmtBelts(rate / belt.throughput)} ${belt.label.toLowerCase()}${rate / belt.throughput === 1 ? "" : "s"}`;
     const { w, h } = this.bounds;
     this.svg.setAttribute("width", String(w));
     this.svg.setAttribute("height", String(h));
@@ -421,7 +432,7 @@ export class FlowGraph {
       const d = tx > sx ? curve(sx, e.sy, tx, e.ty) : loop(sx, e.sy, tx, e.ty, Math.max(e.from.y + e.from.h, e.to.y + e.to.h) + 40 + i % 5 * 8);
       const color = itemColor(e.flow.item);
       const label = `${pd.items[e.flow.item]?.label ?? e.flow.item}`;
-      const sub = `${fmtRate(e.flow.rate, unit)}${UNIT_LABEL[unit]}`;
+      const sub = `${fmtRate(e.flow.rate, unit)}${UNIT_LABEL[unit]}${beltSub(e.flow.item, e.flow.rate)}`;
       paths += `<path class="pl-band" data-edge="${i}" d="${d}" stroke="${color}" stroke-width="${e.w.toFixed(1)}" data-tip="${escapeHtml(label)}" data-tip-sub="${escapeHtml(sub)}" data-tip-icon="${escapeHtml(e.flow.item)}"/>`;
       paths += `<path class="pl-flowline" data-edge="${i}" d="${d}" stroke-width="${Math.max(1, Math.min(3, e.w / 5)).toFixed(1)}" style="animation-duration:${(1.6 + 2.4 / Math.sqrt(1 + e.flow.rate)).toFixed(2)}s"/>`;
     });
@@ -448,7 +459,13 @@ export class FlowGraph {
       for (let i = 1; i < ports.length; i++) ports[i]!.y = Math.max(ports[i]!.y, ports[i - 1]!.y + PORT_H);
       const shift = mean - ports.reduce((s, p) => s + p.y, 0) / (ports.length || 1);
       for (const p of ports) {
-        html += `<div class="pl-port" data-node="${escapeHtml(n.id)}" style="left:${n.x + n.w + 6}px;top:${p.y + shift}px;--c:${itemColor(p.item)}" data-tip="${escapeHtml(pd.items[p.item]?.label ?? p.item)}" data-tip-sub="${escapeHtml(fmtRate(p.rate, unit) + UNIT_LABEL[unit])}" data-tip-icon="${escapeHtml(p.item)}">${sprite(p.item, 18)}<span>${fmtRate(p.rate, unit)}</span></div>`;
+        // Solids also read in belts of the chosen tier; more than one full
+        // belt is called out, since that is where a line has to split.
+        const belts = p.rate / belt.throughput;
+        const beltTag = fluid(p.item)
+          ? ""
+          : `<span class="pl-port-belt${belts > 1 + 1e-9 ? " is-over" : ""}">${sprite(belt.name, 16)}${fmtBelts(belts)}</span>`;
+        html += `<div class="pl-port" data-node="${escapeHtml(n.id)}" style="left:${n.x + n.w + 6}px;top:${p.y + shift}px;--c:${itemColor(p.item)}" data-tip="${escapeHtml(pd.items[p.item]?.label ?? p.item)}" data-tip-sub="${escapeHtml(fmtRate(p.rate, unit) + UNIT_LABEL[unit] + beltSub(p.item, p.rate))}" data-tip-icon="${escapeHtml(p.item)}">${sprite(p.item, 18)}<span>${fmtRate(p.rate, unit)}</span>${beltTag}</div>`;
       }
     }
     this.nodesLayer.innerHTML = html;
