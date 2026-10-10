@@ -12,3 +12,4 @@ export * from "./data/load-debug-lab.js";
 export * from "./data/throughput-tests.js";
 export * from "./data/bug-repro.js";
 export * from "./richtext.js";
+export * from "./planner/index.js";

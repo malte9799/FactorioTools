@@ -34,6 +34,14 @@ async function route() {
     case "#/blueprint-editor":
       unmountCurrent = mountBlueprintEditor(toolRoot);
       break;
+    // The production planner: its own panels and solver, none of which the
+    // editor needs, so it loads on demand like the other tools.
+    case "#/planner": {
+      const { mountPlanner } = await import("./tools/planner/index.js");
+      if (token !== routeToken) return;
+      unmountCurrent = mountPlanner(toolRoot);
+      break;
+    }
     // Design playground for the on-map rate calculator; loaded on demand so
     // the main bundle doesn't carry the simulation.
     case "#/overlay-lab": {
