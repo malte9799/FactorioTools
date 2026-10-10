@@ -510,14 +510,14 @@ function nodeHtml(pd: PlannerData, n: GNode, unit: TimeUnit): string {
   if (n.kind === "target") {
     return `<div class="pl-node is-target" data-id="${escapeHtml(n.id)}" style="${style}" data-tip="${label}" data-tip-sub="Target">
       <span class="pl-node-tag">Output</span>
-      <div class="pl-node-main">${sprite(n.item, 44, "pl-node-icon")}<div class="pl-node-info"><div class="pl-node-rate is-big">${rate}</div><div class="pl-node-name">${label}</div></div></div>
+      <div class="pl-node-main"><span class="pl-node-icon">${sprite(n.item, 44)}</span><div class="pl-node-info"><div class="pl-node-rate is-big">${rate}</div><div class="pl-node-name">${label}</div></div></div>
     </div>`;
   }
   if (n.kind === "surplus" || n.kind === "import") {
     const tag = n.kind === "surplus" ? "Leftover" : "Import";
     return `<div class="pl-node is-${n.kind}" data-id="${escapeHtml(n.id)}" style="${style}" data-tip="${label}" data-tip-sub="${tag}">
       <span class="pl-node-tag">${tag}</span>
-      <div class="pl-node-main">${sprite(n.item, 32, "pl-node-icon")}<div class="pl-node-info"><div class="pl-node-rate">${rate}</div></div></div>
+      <div class="pl-node-main"><span class="pl-node-icon">${sprite(n.item, 32)}</span><div class="pl-node-info"><div class="pl-node-rate">${rate}</div></div></div>
     </div>`;
   }
   const s = n.step!;
@@ -531,7 +531,7 @@ function nodeHtml(pd: PlannerData, n: GNode, unit: TimeUnit): string {
     : "";
   const util = s.machine && whole > 0 ? s.machines / whole : 0;
   return `<div class="pl-node is-step kind-${kind}" data-id="${escapeHtml(n.id)}" style="${style}">
-    <div class="pl-node-main">${sprite(recipeIcon(s.recipe), 40, "pl-node-icon")}<div class="pl-node-info">${machine}<div class="pl-node-rate">${rate}</div></div></div>
+    <div class="pl-node-main"><span class="pl-node-icon">${sprite(recipeIcon(s.recipe), 40)}</span><div class="pl-node-info">${machine}<div class="pl-node-rate">${rate}</div></div></div>
     ${mods}
     ${s.machine ? `<div class="pl-node-bar" data-tip="${escapeHtml(`${Math.round(util * 100)}% of ${whole} machine${whole === 1 ? "" : "s"} busy`)}"><i style="width:${(util * 100).toFixed(1)}%"></i></div>` : ""}
   </div>`;

@@ -356,9 +356,13 @@
   padding: 6px 4px 12px;
   position: relative;
 }
-.pl-insp-head > .pl-sprite {
+/* The frame is its own element: padding on the sprite itself would show
+   the neighbouring icons of the sheet around it. */
+.pl-insp-icon {
+  display: inline-grid;
+  place-items: center;
+  flex: none;
   padding: 6px;
-  box-sizing: content-box;
   background: radial-gradient(circle at 50% 60%, color-mix(in srgb, var(--c) 35%, transparent), transparent 70%), var(--panel-2);
   border: 1px solid var(--border);
   border-radius: 4px;
@@ -522,8 +526,10 @@
 
 .pl-node-main { display: flex; align-items: center; gap: 10px; min-width: 0; }
 .pl-node-icon {
+  display: inline-grid;
+  place-items: center;
+  flex: none;
   padding: 4px;
-  box-sizing: content-box;
   background: radial-gradient(circle at 50% 60%, color-mix(in srgb, var(--c) 28%, transparent), transparent 72%), #222;
   border: 1px solid #0d0d0d;
   border-radius: 3px;

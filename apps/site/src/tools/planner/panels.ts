@@ -118,7 +118,7 @@ export function inspectorHtml(pd: PlannerData, result: PlanResult, state: Planne
   const makers = result.steps.filter((s) => s.outputs.some((o) => o.item === item));
   return `
     <header class="pl-insp-head" style="--c:${itemColor(item)}">
-      ${sprite(item, 48)}
+      <span class="pl-insp-icon">${sprite(item, 48)}</span>
       <div><span class="pl-eyebrow">${title}</span><h2>${e(info.label)}</h2><div class="pl-insp-rate">${fmtRate(rate, unit)}<small>${UNIT_LABEL[unit]}</small> <span class="pl-dim">${e(beltText(pd, state, item, rate))}</span></div></div>
     </header>
     ${kind === "import"
@@ -219,7 +219,7 @@ function stepInspector(pd: PlannerData, result: PlanResult, state: PlannerState,
 
   return `
     <header class="pl-insp-head" style="--c:${itemColor(step.item)}">
-      ${sprite(recipeIcon(r), 48)}
+      <span class="pl-insp-icon">${sprite(recipeIcon(r), 48)}</span>
       <div><span class="pl-eyebrow">${e(kindLabel(r.kind))}</span><h2>${e(r.label)}</h2>
       <div class="pl-insp-rate">${fmtRate(step.outputs.find((o) => o.item === step.item)?.rate ?? 0, unit)}<small>${UNIT_LABEL[unit]}</small> <span class="pl-dim">${e(pd.items[step.item]?.label ?? "")}</span></div></div>
     </header>
