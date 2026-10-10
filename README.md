@@ -4,7 +4,7 @@
 
 A browser-based Factorio blueprint editor built for optimising production lines —
 with a rate calculator, a tick-by-tick belt simulation and the game's own art.
-Plus a live map seed viewer.
+Plus a production planner and a live map seed viewer.
 
 [![Open the editor](https://img.shields.io/badge/Open_the_editor-malte9799.github.io-f5a742?style=for-the-badge&logo=githubpages&logoColor=white)](https://malte9799.github.io/FactorioTools)
 
@@ -14,7 +14,7 @@ Plus a live map seed viewer.
 ![Node](https://img.shields.io/badge/Node-22+-5fa04e?logo=nodedotjs&logoColor=white)
 [![Licence: MIT](https://img.shields.io/badge/licence-MIT-blue)](LICENSE)
 
-[Features](#-features) · [Open from a URL](#-open-a-blueprint-from-a-url) · [Seed Viewer](#-seed-viewer) · [Quick start](#-quick-start) · [Build from source](#-build-from-source) · [Architecture](#-architecture) · [Licence](#-licence)
+[Features](#-features) · [Open from a URL](#-open-a-blueprint-from-a-url) · [Planner](#-production-planner) · [Seed Viewer](#-seed-viewer) · [Quick start](#-quick-start) · [Build from source](#-build-from-source) · [Architecture](#-architecture) · [Licence](#-licence)
 
 <br>
 
@@ -131,6 +131,39 @@ by hand (`encodeURIComponent`); a raw `+` is also tolerated.
 The parameter is removed from the address bar once it is read, so reloading
 restores your edits instead of importing again. Opening such a link replaces
 the blueprint that was open.
+
+## 🧮 Production Planner
+
+<div align="center">
+<img src="docs/screenshots/planner.webp" alt="Production Planner showing 60 chemical science packs a minute as a flow diagram from ore and oil on the left to the science pack on the right, with machine counts on every step and a summary of raw resources, power and buildings" width="100%">
+</div>
+
+<br>
+
+Name what you want and how fast, and the planner works out the whole factory
+behind it, down to the ore: every recipe, how many machines, which modules
+and beacons, the power it draws, the belts it fills and the drills and
+pumpjacks at the bottom.
+
+- **A flow diagram, drawn with the game's icons.** Raw resources on the left,
+  your products on the right, one card per step with its machine count, and
+  a band per item whose width follows the rate. Hover a card to light up
+  what feeds it and what it feeds; click it for the details.
+- **Everything about a step in one panel.** The recipe as the game shows it,
+  other recipes for the same item, the machine, module slots and beacons,
+  the speed and productivity they add, and each input and output in belts.
+- **Solved, not just added up.** A linear program balances recipes with
+  several products, so heavy and light oil are cracked instead of piling up,
+  Kovarex and other loops balance, and by-products are reused where that saves
+  resources. What is still left over or has to be brought in is listed.
+- **Nauvis and Space Age.** Foundries, electromagnetic and cryogenic plants,
+  biochambers, scrap recycling, lava, brine and fluorine vents, asteroid
+  chunks and Gleba's plants are all in. Burner machines burn the fuel you
+  choose, and productivity research and mining productivity apply.
+- **A table view, rates per second, minute or hour, and a share link** that
+  carries the whole plan, settings and per-step choices included.
+
+Open it at [`#/planner`](https://malte9799.github.io/FactorioTools/#/planner).
 
 ## 🌍 Seed Viewer
 
@@ -340,7 +373,7 @@ flowchart LR
 
 | Workspace | What it holds |
 |---|---|
-| [`packages/engine`](packages/engine) | Blueprint decode/encode, the rate calculator, prototype types. No DOM. |
+| [`packages/engine`](packages/engine) | Blueprint decode/encode, the rate calculator, the production planner's solver, prototype types. No DOM. |
 | [`packages/sim`](packages/sim) | Tick-by-tick belt simulation: per-lane transport lines, curves, side-loading, undergrounds, splitters; and the circuit network. No DOM. |
 | [`packages/mapgen`](packages/mapgen) | Factorio 2.0 map generation: noise expressions, spot and Voronoi noise, cliffs, entity placement. No DOM. |
 | [`packages/renderer`](packages/renderer) | Canvas renderer: sprite atlas, neighbour classification, camera, draw passes. |

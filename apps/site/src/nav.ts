@@ -5,6 +5,7 @@ export interface ToolRoute {
 
 export const ROUTES: ToolRoute[] = [
   { hash: "#/blueprint-editor", label: "Blueprint Editor" },
+  { hash: "#/planner", label: "Planner" },
   { hash: "#/overlay-lab", label: "Overlay Lab" },
   { hash: "#/seed-viewer", label: "Seed Viewer" },
 ];
