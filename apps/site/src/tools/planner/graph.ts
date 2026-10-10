@@ -81,6 +81,10 @@ export class FlowGraph {
   private selected: string | null = null;
   private layoutKey = "";
   private pointers = new Map<number, { x: number; y: number }>();
+  /** What the current run of wheel events comes from, decided on its first
+   *  event and kept until the wheel rests: a touchpad's momentum tail can
+   *  look like a wheel, and one gesture must not flip between pan and zoom. */
+  private wheelRun: { kind: "mouse" | "touchpad"; last: number } | null = null;
   /** A Safari touchpad pinch in progress: the zoom and point it started at. */
   private gesture: { k: number; x: number; y: number } | null = null;
   private dragStart: { x: number; y: number; tx: number; ty: number; moved: boolean } | null = null;
@@ -146,7 +150,7 @@ export class FlowGraph {
       const x = e.clientX - r.left, y = e.clientY - r.top;
       if (e.ctrlKey) {
         this.zoomAt(x, y, Math.exp(-clamp(e.deltaY, -50, 50) * 0.01));
-      } else if (isMouseWheel(e)) {
+      } else if (this.wheelKind(e) === "mouse") {
         this.zoomAt(x, y, Math.exp(-e.deltaY * (e.deltaMode === 1 ? 0.05 : 0.0015)));
       } else {
         this.tx -= e.deltaX;
@@ -246,6 +250,17 @@ export class FlowGraph {
       this.focus(node?.dataset.id ?? this.selected);
     });
     this.el.addEventListener("pointerleave", () => this.focus(this.selected));
+  }
+
+  private wheelKind(e: WheelEvent): "mouse" | "touchpad" {
+    const now = performance.now();
+    if (!this.wheelRun || now - this.wheelRun.last > 250) this.wheelRun = { kind: looksLikeTouchpad(e) ? "touchpad" : "mouse", last: now };
+    // A wheel never moves sideways: a run that does is a touchpad after all.
+    if (e.deltaX !== 0 && e.deltaMode === 0) this.wheelRun.kind = "touchpad";
+    // Scrolling in lines is only ever a wheel.
+    if (e.deltaMode !== 0) this.wheelRun.kind = "mouse";
+    this.wheelRun.last = now;
+    return this.wheelRun.kind;
   }
 
   private zoomAt(x: number, y: number, factor: number): void {
@@ -609,18 +624,31 @@ function isFluid(item: string): boolean {
   return fluidCheck(item);
 }
 
-/** Tells a mouse wheel from touchpad scrolling, which both arrive as
- *  wheel events. Firefox scrolls a mouse wheel in lines and a touchpad in
- *  pixels. Chromium and Safari keep the legacy wheelDeltaY: a touchpad's
- *  is exactly -3 × deltaY, a wheel's comes in notches of 120. Any sideways
- *  movement is a touchpad. */
-function isMouseWheel(e: WheelEvent): boolean {
-  if (e.deltaMode !== 0) return true;
-  if (e.deltaX !== 0) return false;
+/** Whether a wheel event comes from a touchpad rather than a mouse wheel.
+ *  Anything unclear counts as a mouse, so a wheel always zooms; only clear
+ *  touchpad signs pan:
+ *  - sideways movement (a wheel only scrolls up and down);
+ *  - Chromium and Safari: the legacy wheelDeltaY is exactly -3 × deltaY
+ *    for a Mac touchpad; a wheel moves in notches (120 a notch, or a Mac's
+ *    accelerated 4.000244 pixel steps); fractional steps in neither
+ *    pattern are a precision touchpad;
+ *  - Firefox, which has no wheelDeltaY: a wheel scrolls in lines, or in
+ *    whole pixels of at least 16 a notch; a touchpad in small or
+ *    fractional pixel steps. */
+function looksLikeTouchpad(e: WheelEvent): boolean {
+  if (e.deltaMode !== 0) return false;
+  if (e.deltaX !== 0) return true;
   const legacy = (e as WheelEvent & { wheelDeltaY?: number }).wheelDeltaY;
-  if (legacy === undefined) return false;
-  if (legacy === -3 * e.deltaY) return false;
-  return legacy !== 0 && legacy % 120 === 0;
+  if (legacy !== undefined && legacy !== 0) {
+    if (legacy === -3 * e.deltaY) return true;
+    // Wheel notches: 120 each, or a Mac's accelerated 4.000244 steps.
+    if (legacy % 120 === 0 || Number.isInteger(e.deltaY)) return false;
+    const steps = Math.abs(e.deltaY) / 4.000244140625;
+    if (Math.abs(steps - Math.round(steps)) < 0.01) return false;
+    // Fractional pixels in no wheel's pattern: a precision touchpad.
+    return true;
+  }
+  return !(Number.isInteger(e.deltaY) && Math.abs(e.deltaY) >= 16);
 }
 
 function clamp(v: number, lo: number, hi: number): number {
