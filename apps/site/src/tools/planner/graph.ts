@@ -10,7 +10,7 @@ import { fmtBelts, fmtMachines, fmtRate, UNIT_LABEL } from "./format.js";
 import { itemColor, recipeIcon, sprite } from "./sprites.js";
 import type { TimeUnit } from "./state.js";
 
-type NodeKind = "step" | "target" | "import" | "surplus";
+type NodeKind = "step" | "target" | "import" | "surplus" | "dummy";
 
 interface GNode {
   id: string;
@@ -35,12 +35,19 @@ interface GEdge {
   w: number;
   sy: number;
   ty: number;
+  /** A flow that skips columns is laid out as one segment per column it
+   *  crosses, through a placeholder in each; the segments point back to
+   *  the flow they belong to, and the flow lists its segments. */
+  parent?: GEdge;
+  segments: GEdge[];
 }
 
 const NODE_W = 176;
 const SMALL_W = 140;
 const COL_GAP = 152;
 const ROW_GAP = 30;
+/** Space between a band passing through a column and what is next to it. */
+const BAND_GAP = 12;
 const MIN_H = 78;
 const MAX_BAND = 40;
 /** Height of an output label, for spacing them apart. */
@@ -69,6 +76,8 @@ export class FlowGraph {
   private bounds = { w: 0, h: 0 };
   private nodes = new Map<string, GNode>();
   private edges: GEdge[] = [];
+  /** Placeholders a long band passes through, one per column crossed. */
+  private dummies: GNode[] = [];
   private selected: string | null = null;
   private layoutKey = "";
   private pointers = new Map<number, { x: number; y: number }>();
@@ -239,7 +248,7 @@ export class FlowGraph {
   private focus(id: string | null): void {
     const node = id ? this.nodes.get(id) : undefined;
     this.el.classList.toggle("is-focus", !!node);
-    const hot = new Set<GEdge>(node ? [...node.ins, ...node.outs] : []);
+    const hot = new Set<GEdge>(node ? [...node.ins, ...node.outs].map((e) => e.parent ?? e) : []);
     const near = new Set<string>();
     for (const e of hot) {
       near.add(e.from.id);
@@ -269,6 +278,7 @@ export class FlowGraph {
   private build(result: PlanResult): void {
     this.nodes.clear();
     this.edges = [];
+    this.dummies = [];
     const add = (n: Omit<GNode, "x" | "y" | "w" | "h" | "ins" | "outs" | "order">) => {
       const node: GNode = { ...n, x: 0, y: 0, w: n.kind === "step" || n.kind === "target" ? NODE_W : SMALL_W, h: MIN_H, ins: [], outs: [], order: 0 };
       this.nodes.set(n.id, node);
@@ -289,7 +299,8 @@ export class FlowGraph {
     for (const f of result.flows) {
       const from = this.nodes.get(f.from)!;
       const to = this.nodes.get(f.to)!;
-      const edge: GEdge = { flow: f, from, to, w: 0, sy: 0, ty: 0 };
+      const edge: GEdge = { flow: f, from, to, w: 0, sy: 0, ty: 0, segments: [] };
+      edge.segments.push(edge);
       from.outs.push(edge);
       to.ins.push(edge);
       this.edges.push(edge);
@@ -306,6 +317,33 @@ export class FlowGraph {
     let maxCol = 0;
     for (const n of this.nodes.values()) maxCol = Math.max(maxCol, n.col);
     for (const n of this.nodes.values()) n.col = maxCol - n.col;
+
+    // A band that skips columns gets a placeholder in each one it crosses,
+    // so the layout makes room for it there instead of drawing it straight
+    // through whatever card sits in its way.
+    for (const edge of this.edges) {
+      const { from, to } = edge;
+      if (to.col - from.col < 2) continue;
+      const segments: GEdge[] = [];
+      let prev = from;
+      for (let col = from.col + 1; col <= to.col; col++) {
+        let next = to;
+        if (col < to.col) {
+          next = { id: `dummy:${this.dummies.length}`, kind: "dummy", item: edge.flow.item, rate: edge.flow.rate, col, x: 0, y: 0, w: NODE_W, h: 0, ins: [], outs: [], order: 0 };
+          this.dummies.push(next);
+        }
+        const seg: GEdge = { flow: edge.flow, from: prev, to: next, w: 0, sy: 0, ty: 0, parent: edge, segments: [] };
+        segments.push(seg);
+        prev = next;
+      }
+      from.outs[from.outs.indexOf(edge)] = segments[0]!;
+      to.ins[to.ins.indexOf(edge)] = segments[segments.length - 1]!;
+      for (const seg of segments) {
+        if (seg.from.kind === "dummy") seg.from.outs.push(seg);
+        if (seg.to.kind === "dummy") seg.to.ins.push(seg);
+      }
+      edge.segments = segments;
+    }
   }
 
   private layout(): void {
@@ -314,10 +352,23 @@ export class FlowGraph {
     // Width grows slower than rate, so a trickle of acid is still a visible
     // band next to a river of ore.
     const kw = MAX_BAND / Math.pow(maxVis, 0.6);
-    for (const e of this.edges) e.w = clamp(kw * Math.pow(vis(e), 0.6), 2.5, MAX_BAND);
+    for (const e of this.edges) {
+      e.w = clamp(kw * Math.pow(vis(e), 0.6), 2.5, MAX_BAND);
+      for (const seg of e.segments) seg.w = e.w;
+    }
 
+    const all = [...this.nodes.values(), ...this.dummies];
+    const dummy = (n: GNode) => n.kind === "dummy";
+    // Bands passing through sit close to each other; cards need air.
+    const gap = (a: GNode, b: GNode) => (dummy(a) && dummy(b) ? 3 : dummy(a) || dummy(b) ? BAND_GAP : ROW_GAP);
     const columns: GNode[][] = [];
-    for (const n of this.nodes.values()) {
+    for (const n of all) {
+      if (dummy(n)) {
+        n.h = n.ins[0]!.w;
+        n.x = n.col * (NODE_W + COL_GAP);
+        (columns[n.col] ??= []).push(n);
+        continue;
+      }
       const minH = n.kind === "step" || n.kind === "target" ? MIN_H : 58;
       const ins = n.ins.reduce((s, e) => s + e.w, 0) + Math.max(0, n.ins.length - 1) * 2;
       const outs = n.outs.reduce((s, e) => s + e.w, 0) + Math.max(0, n.outs.length - 1) * 2;
@@ -332,9 +383,10 @@ export class FlowGraph {
     const stack = (col: GNode[]) => {
       let y = 0;
       col.forEach((n, i) => {
+        if (i > 0) y += gap(col[i - 1]!, n);
         n.order = i;
         n.y = y;
-        y += n.h + ROW_GAP;
+        y += n.h;
       });
     };
     columns.forEach((c) => c && stack(c));
@@ -363,10 +415,10 @@ export class FlowGraph {
     // Relax: pull each card towards the bands it is tied to, then push
     // overlapping cards apart without changing their order.
     const resolve = (col: GNode[]) => {
-      let y = -Infinity;
+      let prev: GNode | null = null;
       for (const n of col) {
-        if (n.y < y) n.y = y;
-        y = n.y + n.h + ROW_GAP;
+        if (prev && n.y < prev.y + prev.h + gap(prev, n)) n.y = prev.y + prev.h + gap(prev, n);
+        prev = n;
       }
     };
     for (let iter = 0; iter < 24; iter++) {
@@ -390,16 +442,16 @@ export class FlowGraph {
       }
     }
     let minY = Infinity, maxY = -Infinity, maxX = 0;
-    for (const n of this.nodes.values()) {
+    for (const n of all) {
       minY = Math.min(minY, n.y);
       maxY = Math.max(maxY, n.y + n.h);
       maxX = Math.max(maxX, n.x + n.w);
     }
-    for (const n of this.nodes.values()) n.y -= minY;
+    for (const n of all) n.y -= minY;
     this.bounds = { w: maxX + 90, h: maxY - minY };
 
     // Where each band leaves and enters its cards.
-    for (const n of this.nodes.values()) {
+    for (const n of all) {
       const outs = [...n.outs].sort((a, b) => outGroup(n, a) - outGroup(n, b) || centre(a.to) - centre(b.to));
       let total = outs.reduce((s, e) => s + e.w, 0) + Math.max(0, outs.length - 1) * 2;
       let y = n.y + (n.h - total) / 2;
@@ -427,9 +479,7 @@ export class FlowGraph {
     this.svg.setAttribute("viewBox", `0 0 ${w} ${h}`);
     let paths = "";
     this.edges.forEach((e, i) => {
-      const sx = e.from.x + e.from.w;
-      const tx = e.to.x;
-      const d = tx > sx ? curve(sx, e.sy, tx, e.ty) : loop(sx, e.sy, tx, e.ty, Math.max(e.from.y + e.from.h, e.to.y + e.to.h) + 40 + i % 5 * 8);
+      const d = bandPath(e, i);
       const color = itemColor(e.flow.item);
       const label = `${pd.items[e.flow.item]?.label ?? e.flow.item}`;
       const sub = `${fmtRate(e.flow.rate, unit)}${UNIT_LABEL[unit]}${beltSub(e.flow.item, e.flow.rate)}`;
@@ -474,16 +524,40 @@ export class FlowGraph {
   }
 }
 
+/** A band's path: a curve per column gap, straight through the columns it
+ *  crosses on the way, or a loop under both cards when it runs backwards. */
+function bandPath(e: GEdge, i: number): string {
+  const first = e.segments[0]!;
+  const sx = e.from.x + e.from.w;
+  if (e.segments.length === 1 && e.to.x <= sx) {
+    return loop(sx, e.sy, e.to.x, e.ty, Math.max(e.from.y + e.from.h, e.to.y + e.to.h) + 40 + i % 5 * 8);
+  }
+  let x = sx;
+  let y = first.sy;
+  let d = `M${x.toFixed(1)},${y.toFixed(1)}`;
+  for (const seg of e.segments) {
+    d += curveTo(x, y, seg.to.x, seg.ty);
+    x = seg.to.x;
+    y = seg.ty;
+    if (seg.to.kind === "dummy") {
+      x += seg.to.w;
+      d += ` L${x.toFixed(1)},${y.toFixed(1)}`;
+    }
+  }
+  return d;
+}
+
+function curveTo(sx: number, sy: number, tx: number, ty: number): string {
+  const mx = (tx - sx) * 0.5;
+  return ` C${(sx + mx).toFixed(1)},${sy.toFixed(1)} ${(tx - mx).toFixed(1)},${ty.toFixed(1)} ${tx.toFixed(1)},${ty.toFixed(1)}`;
+}
+
 /** Sorts a card's outgoing bands so each item's bands sit together. */
 function outGroup(n: GNode, e: GEdge): number {
   const items = [...new Set(n.outs.map((o) => o.flow.item))];
   return items.indexOf(e.flow.item) * 1e6;
 }
 
-function curve(sx: number, sy: number, tx: number, ty: number): string {
-  const mx = (tx - sx) * 0.5;
-  return `M${sx.toFixed(1)},${sy.toFixed(1)} C${(sx + mx).toFixed(1)},${sy.toFixed(1)} ${(tx - mx).toFixed(1)},${ty.toFixed(1)} ${tx.toFixed(1)},${ty.toFixed(1)}`;
-}
 
 /** A band that runs backwards (a loop in the chain) dips under both cards. */
 function loop(sx: number, sy: number, tx: number, ty: number, below: number): string {
