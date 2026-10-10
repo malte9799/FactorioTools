@@ -12,7 +12,7 @@ import {
 } from "@factoriotools/engine";
 import { escapeHtml as e } from "../blueprint-editor/html.js";
 import { compressModules } from "./graph.js";
-import { fmtMachines, fmtNumber, fmtPercent, fmtPower, fmtRate, UNIT_LABEL } from "./format.js";
+import { fmtBelts, fmtMachines, fmtNumber, fmtPercent, fmtPower, fmtRate, UNIT_LABEL } from "./format.js";
 import { groupSprite, itemColor, recipeIcon, sprite } from "./sprites.js";
 import type { PlannerState } from "./state.js";
 
@@ -30,6 +30,16 @@ function beltText(pd: PlannerData, state: PlannerState, item: string, rate: numb
   if (pd.items[item]?.kind === "fluid") return "";
   const belt = beltFor(pd, state);
   return `${fmtNumber(rate / belt.throughput)} ${belt.label.toLowerCase()}s`;
+}
+
+/** Belts as the game draws them: the chosen tier's icon and how many full
+ *  belts the flow fills, gold past one (where a line has to split). Empty
+ *  for fluids, which go in pipes. */
+export function beltTag(pd: PlannerData, state: PlannerState, item: string, rate: number): string {
+  if (pd.items[item]?.kind === "fluid") return "";
+  const belt = beltFor(pd, state);
+  const n = rate / belt.throughput;
+  return `<span class="pl-belts${n > 1 + 1e-9 ? " is-over" : ""}" data-tip="${e(belt.label)}" data-tip-sub="${e(beltText(pd, state, item, rate))}" data-tip-icon="${e(belt.name)}">${sprite(belt.name, 18)}<span>${fmtBelts(n)}</span></span>`;
 }
 
 const MACHINE_RANK = ["mining-drill", "pump", "furnace", "assembling", "chemical", "refinery", "centrifuge", "foundry", "electromagnetic", "cryogenic", "biochamber", "crusher", "recycler", "rocket-silo"];
@@ -63,7 +73,7 @@ export function summaryHtml(pd: PlannerData, result: PlanResult, state: PlannerS
     return `<button type="button" class="pl-res" data-action="select" data-id="${e(step?.id ?? "")}" style="--c:${itemColor(r.item)}" data-tip="${e(label)}" data-tip-sub="${e(belts || "Fluid")}" data-tip-icon="${e(r.item)}">
       ${sprite(r.item, 32)}
       <span class="pl-res-body">
-        <span class="pl-res-top"><b>${fmtRate(r.rate, unit)}</b><small>${UNIT_LABEL[unit]}</small>${machine}</span>
+        <span class="pl-res-top"><b>${fmtRate(r.rate, unit)}</b><small>${UNIT_LABEL[unit]}</small>${beltTag(pd, state, r.item, r.rate)}${machine}</span>
         <span class="pl-res-bar"><i style="width:${Math.max(3, (vis / maxVis) * 100).toFixed(1)}%"></i></span>
       </span>
     </button>`;
@@ -119,7 +129,7 @@ export function inspectorHtml(pd: PlannerData, result: PlanResult, state: Planne
   return `
     <header class="pl-insp-head" style="--c:${itemColor(item)}">
       <span class="pl-insp-icon">${sprite(item, 48)}</span>
-      <div><span class="pl-eyebrow">${title}</span><h2>${e(info.label)}</h2><div class="pl-insp-rate">${fmtRate(rate, unit)}<small>${UNIT_LABEL[unit]}</small> <span class="pl-dim">${e(beltText(pd, state, item, rate))}</span></div></div>
+      <div><span class="pl-eyebrow">${title}</span><h2>${e(info.label)}</h2><div class="pl-insp-rate">${fmtRate(rate, unit)}<small>${UNIT_LABEL[unit]}</small> ${beltTag(pd, state, item, rate)}</div></div>
     </header>
     ${kind === "import"
       ? `<section class="pl-sec"><h3>Source</h3>${state.settings.recipeFor[item] === "import"
@@ -205,12 +215,11 @@ function stepInspector(pd: PlannerData, result: PlanResult, state: PlannerState,
   ].map(([k, v, cls, icon]) => `<div class="pl-stat ${cls}"><span>${k}</span><b>${icon ? sprite(icon, 16) : ""}${v}</b></div>`).join("");
 
   const flowRows = (list: { item: string; rate: number }[], dir: "in" | "out") => list.map((f) => {
-    const belts = beltText(pd, state, f.item, f.rate);
     const other = result.flows
       .filter((fl) => fl.item === f.item && (dir === "in" ? fl.to === step.id : fl.from === step.id))
       .map((fl) => (dir === "in" ? fl.from : fl.to));
     return `<button type="button" class="pl-flow-row" data-action="select" data-id="${e(other[0] ?? "")}" style="--c:${itemColor(f.item)}" data-tip="${e(pd.items[f.item]?.label ?? f.item)}" data-tip-icon="${e(f.item)}">
-      ${sprite(f.item, 24)}<span class="pl-flow-name">${e(pd.items[f.item]?.label ?? f.item)}</span><b>${fmtRate(f.rate, unit)}<small>${UNIT_LABEL[unit]}</small></b><span class="pl-dim">${e(belts)}</span>
+      ${sprite(f.item, 24)}<span class="pl-flow-name">${e(pd.items[f.item]?.label ?? f.item)}</span>${beltTag(pd, state, f.item, f.rate)}<b>${fmtRate(f.rate, unit)}<small>${UNIT_LABEL[unit]}</small></b>
     </button>`;
   }).join("");
 

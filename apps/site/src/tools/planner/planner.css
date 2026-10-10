@@ -422,8 +422,7 @@
 
 .pl-flow-row {
   display: grid;
-  grid-template-columns: 24px minmax(0, 1fr) auto;
-  grid-template-rows: auto auto;
+  grid-template-columns: 24px minmax(0, 1fr) auto auto;
   column-gap: 8px;
   align-items: center;
   width: 100%;
@@ -438,11 +437,26 @@
   box-shadow: none;
 }
 .pl-flow-row:hover { background: var(--row-hover); }
-.pl-flow-row .pl-sprite { grid-row: span 2; }
 .pl-flow-name { font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .pl-flow-row b { font: 600 14px var(--mono); text-align: right; }
 .pl-flow-row b small { font-size: 10px; color: var(--text-dim); }
-.pl-flow-row .pl-dim { grid-column: 2 / 4; font-size: 11px; }
+.pl-flow-row b { min-width: 62px; }
+
+/* A belt count: the chosen belt's icon and how many full belts. */
+.pl-belts {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 1px 6px 1px 2px;
+  font: 600 12px var(--mono);
+  color: var(--text-dim);
+  background: rgba(0, 0, 0, 0.28);
+  border-radius: 999px;
+  vertical-align: middle;
+  white-space: nowrap;
+}
+.pl-belts.is-over { color: var(--gold); }
+.pl-res-top .pl-belts { margin-left: 6px; font-size: 11px; }
 
 .pl-insp-foot { display: flex; flex-wrap: wrap; gap: 6px; }
 
