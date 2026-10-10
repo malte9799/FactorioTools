@@ -81,6 +81,8 @@ export class FlowGraph {
   private selected: string | null = null;
   private layoutKey = "";
   private pointers = new Map<number, { x: number; y: number }>();
+  /** A Safari touchpad pinch in progress: the zoom and point it started at. */
+  private gesture: { k: number; x: number; y: number } | null = null;
   private dragStart: { x: number; y: number; tx: number; ty: number; moved: boolean } | null = null;
   private pinchStart: { d: number; k: number; cx: number; cy: number; tx: number; ty: number } | null = null;
 
@@ -95,7 +97,7 @@ export class FlowGraph {
       <div class="pl-graph-controls" role="toolbar" aria-label="Diagram view">
         <button type="button" data-zoom="in" aria-label="Zoom in" data-tip="Zoom in">+</button>
         <button type="button" data-zoom="out" aria-label="Zoom out" data-tip="Zoom out">−</button>
-        <button type="button" data-zoom="fit" aria-label="Fit to screen" data-tip="Fit to screen">⤢</button>
+        <button type="button" data-zoom="fit" aria-label="Fit to screen" data-tip="Fit to screen" data-tip-sub="Or double-click the background. Drag or swipe two fingers to pan; pinch or scroll the wheel to zoom.">⤢</button>
         <button type="button" data-zoom="anim" aria-label="Animate flows" data-tip="Animate flows" class="is-on">≋</button>
       </div>`;
     this.viewport = this.el.querySelector(".pl-graph-viewport")!;
@@ -134,12 +136,46 @@ export class FlowGraph {
       }
     });
 
+    // Touchpads arrive as wheel events too: two fingers moving scroll
+    // (pan), two fingers spreading or pinching come with ctrlKey set
+    // (zoom). A mouse wheel still zooms.
     this.el.addEventListener("wheel", (e) => {
       e.preventDefault();
+      if (this.gesture) return;
       const r = this.el.getBoundingClientRect();
-      const factor = Math.exp(-e.deltaY * (e.deltaMode === 1 ? 0.05 : 0.0015));
-      this.zoomAt(e.clientX - r.left, e.clientY - r.top, factor);
+      const x = e.clientX - r.left, y = e.clientY - r.top;
+      if (e.ctrlKey) {
+        this.zoomAt(x, y, Math.exp(-clamp(e.deltaY, -50, 50) * 0.01));
+      } else if (isMouseWheel(e)) {
+        this.zoomAt(x, y, Math.exp(-e.deltaY * (e.deltaMode === 1 ? 0.05 : 0.0015)));
+      } else {
+        this.tx -= e.deltaX;
+        this.ty -= e.deltaY;
+        this.apply();
+      }
     }, { passive: false });
+
+    // Safari reports a touchpad pinch as its own gesture events, not as
+    // ctrl + wheel.
+    const gestureStart = (e: Event) => {
+      e.preventDefault();
+      const g = e as Event & { clientX: number; clientY: number };
+      const r = this.el.getBoundingClientRect();
+      this.gesture = { k: this.k, x: g.clientX - r.left, y: g.clientY - r.top };
+    };
+    const gestureChange = (e: Event) => {
+      e.preventDefault();
+      if (!this.gesture) return;
+      const scale = (e as Event & { scale: number }).scale;
+      this.zoomAt(this.gesture.x, this.gesture.y, (this.gesture.k * scale) / this.k);
+    };
+    const gestureEnd = (e: Event) => {
+      e.preventDefault();
+      this.gesture = null;
+    };
+    this.el.addEventListener("gesturestart", gestureStart);
+    this.el.addEventListener("gesturechange", gestureChange);
+    this.el.addEventListener("gestureend", gestureEnd);
 
     this.el.addEventListener("pointerdown", (e) => {
       if ((e.target as HTMLElement).closest(".pl-graph-controls")) return;
@@ -571,6 +607,20 @@ export function setFluidCheck(fn: (item: string) => boolean): void {
 }
 function isFluid(item: string): boolean {
   return fluidCheck(item);
+}
+
+/** Tells a mouse wheel from touchpad scrolling, which both arrive as
+ *  wheel events. Firefox scrolls a mouse wheel in lines and a touchpad in
+ *  pixels. Chromium and Safari keep the legacy wheelDeltaY: a touchpad's
+ *  is exactly -3 × deltaY, a wheel's comes in notches of 120. Any sideways
+ *  movement is a touchpad. */
+function isMouseWheel(e: WheelEvent): boolean {
+  if (e.deltaMode !== 0) return true;
+  if (e.deltaX !== 0) return false;
+  const legacy = (e as WheelEvent & { wheelDeltaY?: number }).wheelDeltaY;
+  if (legacy === undefined) return false;
+  if (legacy === -3 * e.deltaY) return false;
+  return legacy !== 0 && legacy % 120 === 0;
 }
 
 function clamp(v: number, lo: number, hi: number): number {
