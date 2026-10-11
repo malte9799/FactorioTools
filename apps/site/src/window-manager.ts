@@ -101,8 +101,13 @@ export function makeFloatingWindow(el: HTMLElement, options: FloatingWindowOptio
     const margin = 8;
     const toolbar = document.getElementById("window-toolbar")?.getBoundingClientRect();
     const minY = toolbar && toolbar.height > 0 ? toolbar.bottom + 6 : 0;
+    // On a touch screen the editor docks its controls along the bottom
+    // (style.css's touch dock); with a mouse that element lays out as
+    // display: contents and has no box of its own.
+    const dock = document.getElementById("touch-dock");
+    const maxBottom = dock && getComputedStyle(dock).display !== "contents" ? dock.getBoundingClientRect().top : window.innerHeight;
     x = rect.width + 2 * margin <= window.innerWidth ? Math.min(Math.max(x, margin), window.innerWidth - rect.width - margin) : margin;
-    y = Math.max(minY, Math.min(y, window.innerHeight - rect.height - margin));
+    y = Math.max(minY, Math.min(y, maxBottom - rect.height - margin));
     apply();
   }
 
