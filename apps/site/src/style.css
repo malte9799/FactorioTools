@@ -3489,7 +3489,22 @@ canvas.select-mode {
 .touch-dock { display: contents; }
 .touch-tools,
 .touch-more,
+.touch-hand,
 .touch-history { display: none; }
+
+/* Line icons for the dock and the entity window's Rotate. */
+.touch-icon {
+  width: 22px;
+  height: 22px;
+  flex: none;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.gui-rotate .touch-icon { width: 16px; height: 16px; stroke-width: 2.2; }
+.gui-rotate[hidden] { display: none; }
 
 @media (pointer: coarse) {
   .touch-dock {
@@ -3582,17 +3597,6 @@ canvas.select-mode {
   .touch-tool.is-on { color: var(--gold-strong); box-shadow: inset 0 3px 0 var(--gold); }
   .touch-tool:disabled { opacity: 0.38; cursor: default; }
 
-  .touch-icon {
-    width: 22px;
-    height: 22px;
-    flex: none;
-    fill: none;
-    stroke: currentColor;
-    stroke-width: 1.8;
-    stroke-linecap: round;
-    stroke-linejoin: round;
-  }
-
   /* More: the shortcuts the tab bar has no room for, in a sheet that opens
      above the dock's right end. */
   .touch-more:not([hidden]) {
@@ -3629,6 +3633,54 @@ canvas.select-mode {
   .touch-more-art { width: 36px; height: 36px; flex: none; display: grid; place-items: center; }
   .touch-more-art img { width: 100%; height: 100%; display: block; pointer-events: none; }
 
+  /* What is in hand, as a row along the top of the dock while something
+     is: its name, Rotate when it turns, and Put away. In the dock rather
+     than floating over the map, so an open sheet never covers it. */
+  .touch-hand:not([hidden]) {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 8px 6px 12px;
+    border-bottom: 1px solid var(--border);
+    background: rgba(0, 0, 0, 0.18);
+  }
+  .touch-hand-what {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    overflow: hidden;
+    font-family: var(--display);
+    font-size: 14px;
+    font-weight: 600;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+    color: var(--gold-strong);
+  }
+  .touch-hand-what .icon { background-color: transparent; border: none; box-shadow: none; }
+  .touch-hand-button {
+    width: 44px;
+    height: 44px;
+    flex: none;
+    padding: 0;
+    display: grid;
+    place-items: center;
+    color: var(--text);
+    background: var(--button);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+  }
+  .touch-hand-button[hidden] { display: none; }
+  .touch-hand-button:active { background: var(--row-hover); }
+
+  /* Blueprints: the library sidebar opens over the map from its tab and
+     folds away completely, no collapsed strip left behind. It stops at the
+     dock. */
+  #library-window.is-collapsed { display: none; }
+  body:has(#library-window.is-collapsed:not([hidden])) #window-toolbar { left: 8px; max-width: calc(100vw - 16px); }
+  #library-window { max-height: calc(100dvh - var(--nav-h) - var(--touch-dock-h, 0px)); }
+
   /* Undo and redo: round-cornered buttons down the right edge, under the
      window toolbar. */
   .touch-history {
@@ -3658,7 +3710,8 @@ canvas.select-mode {
 
   /* The dock has Build; the toolbar's own tab would be a second one. */
   #window-toolbar #build-menu-button,
-  #window-toolbar #build-menu-button + .toolbar-divider { display: none; }
+  #window-toolbar #build-menu-button + .toolbar-divider,
+  #window-toolbar [data-toggle="rate-window"] { display: none; }
 
   .load-spinner { bottom: calc(var(--touch-dock-h, 120px) + 12px); }
 
@@ -3666,6 +3719,7 @@ canvas.select-mode {
   .gui-header-button,
   .gui-close { width: 32px; height: 32px; font-size: 14px; }
   .gui-remove:has(img) { width: 32px; }
+  .gui-rotate .touch-icon { width: 20px; height: 20px; }
 }
 
 /* Touch screens in general: no double-tap zoom on the controls, text
