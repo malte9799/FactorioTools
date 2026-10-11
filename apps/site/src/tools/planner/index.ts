@@ -20,7 +20,7 @@ import {
 import { escapeHtml } from "../blueprint-editor/html.js";
 import { FlowGraph, setFluidCheck } from "./graph.js";
 import { UNIT_LABEL } from "./format.js";
-import { inspectorHtml, moduleChooserHtml, pickerHtml, settingsHtml, summaryHtml, tableHtml, welcomeHtml } from "./panels.js";
+import { buildTree, inspectorHtml, moduleChooserHtml, pickerHtml, settingsHtml, summaryHtml, tableHtml, treeParentKeys, welcomeHtml } from "./panels.js";
 import { iconsReady, itemColor, loadItemColors, sprite } from "./sprites.js";
 import { defaultState, loadState, saveState, shareLink, UNIT_SECONDS, type PlannerState, type TimeUnit } from "./state.js";
 
@@ -81,6 +81,8 @@ export function mountPlanner(root: HTMLElement): () => void {
   let state: PlannerState = defaultState();
   let result: PlanResult | null = null;
   let selected: string | null = null;
+  /** Tree rows folded shut, by row key; kept while the plan changes. */
+  const collapsedRows = new Set<string>();
   let modalKind: "picker" | "settings" | null = null;
   let pickerGroup = "intermediate-products";
   let pickerQuery = "";
@@ -148,7 +150,7 @@ export function mountPlanner(root: HTMLElement): () => void {
       graph.render(pd, result, state.unit, belt);
       graph.select(selected);
     } else {
-      main.innerHTML = tableHtml(pd, result, state, selected);
+      main.innerHTML = tableHtml(pd, result, state, selected, collapsedRows);
     }
     renderInspector();
   }
@@ -182,7 +184,7 @@ export function mountPlanner(root: HTMLElement): () => void {
     if (id === selected && id !== null) return;
     selected = id || null;
     graph.select(selected);
-    if (state.view === "table" && pd && result) main.innerHTML = tableHtml(pd, result, state, selected);
+    if (state.view === "table" && pd && result) main.innerHTML = tableHtml(pd, result, state, selected, collapsedRows);
     if (selected) inspBody.scrollTop = 0;
     renderInspector();
   }
@@ -456,6 +458,26 @@ export function mountPlanner(root: HTMLElement): () => void {
         });
         break;
       }
+      case "toggle-row": {
+        const key = a.dataset.key!;
+        if (collapsedRows.has(key)) collapsedRows.delete(key);
+        else collapsedRows.add(key);
+        render();
+        break;
+      }
+      case "tree-expand":
+        collapsedRows.clear();
+        render();
+        break;
+      case "tree-collapse":
+        if (result) for (const key of treeParentKeys(buildTree(result))) collapsedRows.add(key);
+        render();
+        break;
+      case "table-mode":
+        state.tableMode = a.dataset.mode === "totals" ? "totals" : "tree";
+        saveState(state);
+        render();
+        break;
       case "reset-step":
         delete s.machineFor[recipe];
         delete s.modulesFor[recipe];
