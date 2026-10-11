@@ -223,6 +223,9 @@ a { color: var(--link); text-decoration-thickness: 1px; text-underline-offset: 2
 .site-nav nav a:hover { color: var(--text); background: var(--panel-3); }
 .site-nav nav a.is-active { color: var(--gold-strong); background: var(--panel-3); }
 
+/* The phone switcher (see nav.ts): hidden until the links stop fitting. */
+.nav-switch { display: none; }
+
 /* ---------- masthead (compact, lives inside the intake floating window) ---------- */
 
 .eyebrow {
@@ -2669,9 +2672,46 @@ canvas.select-mode {
 @media (max-width: 640px) {
   .site-nav { padding: 8px 10px; gap: 10px; }
   .site-nav .brand { flex: none; font-size: 15px; }
-  .site-nav nav { min-width: 0; overflow-x: auto; scrollbar-width: none; }
-  .site-nav nav::-webkit-scrollbar { display: none; }
-  .site-nav nav a { flex: none; white-space: nowrap; padding: 5px 8px; font-size: 11px; letter-spacing: 0.04em; }
+  /* Just the current tool, as a switcher dropping the full list down. */
+  .site-nav .nav-links { display: none; }
+  .nav-switch { display: block; position: relative; min-width: 0; }
+  .nav-switch summary {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    min-height: 34px;
+    padding: 0 10px;
+    font-family: var(--mono);
+    font-size: 12px;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    white-space: nowrap;
+    color: var(--gold-strong);
+    background: var(--panel-3);
+    border-radius: 3px;
+    cursor: pointer;
+    list-style: none;
+  }
+  .nav-switch summary::-webkit-details-marker { display: none; }
+  .nav-switch-caret { font-size: 10px; opacity: 0.8; transition: transform 0.15s; }
+  .nav-switch[open] .nav-switch-caret { transform: rotate(180deg); }
+  .site-nav .nav-switch-menu {
+    position: absolute;
+    right: 0;
+    top: calc(100% + 6px);
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 200px;
+    padding: 4px;
+    background: var(--frame) var(--grain);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    box-shadow: 0 10px 26px rgba(0, 0, 0, 0.55);
+  }
+  .site-nav .nav-switch-menu a { padding: 12px; font-size: 13px; }
+  /* Over the editor's window toolbar while the list is down. */
+  .site-nav:has(.nav-switch[open]) { z-index: 2600; }
 
   :root { --nav-h: 46px; --sidebar-w: min(212px, calc(100vw - 48px)); }
 
@@ -3626,4 +3666,58 @@ canvas.select-mode {
   .gui-header-button,
   .gui-close { width: 32px; height: 32px; font-size: 14px; }
   .gui-remove:has(img) { width: 32px; }
+}
+
+/* Touch screens in general: no double-tap zoom on the controls, text
+   fields at 16px (smaller ones make iOS zoom the page in on focus), and
+   segmented controls tall enough for a finger. The hover tooltip has no
+   hover to follow. */
+@media (pointer: coarse) {
+  body { touch-action: manipulation; -webkit-tap-highlight-color: transparent; }
+  input[type="text"],
+  input[type="number"],
+  input[type="search"],
+  input:not([type]),
+  select,
+  textarea { font-size: 16px; }
+  .segmented button { min-height: 36px; }
+  .machine-tooltip { display: none !important; }
+}
+
+/* Phones: every floating window is a bottom sheet instead — full width,
+   resting on the editor's dock (or the screen's bottom edge elsewhere),
+   scrolling inside when it is taller than the room above. Its titlebar no
+   longer drags it: the inline left/top makeFloatingWindow writes are
+   overridden here. */
+@media (pointer: coarse) and (max-width: 760px) {
+  .floating-window:not(.modal-window) {
+    left: 0 !important;
+    right: 0 !important;
+    top: auto !important;
+    bottom: var(--touch-dock-h, 0px) !important;
+    width: auto !important;
+    max-width: none;
+    max-height: calc(100dvh - var(--nav-h) - 50px - var(--touch-dock-h, 0px));
+    border-radius: 8px 8px 0 0;
+    border-bottom: none;
+    box-shadow: inset 0 0 0 1px var(--bevel-light), 0 -8px 26px rgba(0, 0, 0, 0.5);
+  }
+  .floating-window:not(.modal-window):not([hidden]) { display: flex; flex-direction: column; }
+  .floating-window:not(.modal-window) > .gui-titlebar { flex: none; cursor: default !important; }
+  .floating-window:not(.modal-window) > .gui-body {
+    flex: 1 1 auto;
+    min-height: 0;
+    max-height: none;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    margin-bottom: max(4px, env(safe-area-inset-bottom, 0px));
+  }
+  /* The pickers keep the game's ten columns, shrinking the cells to fit
+     the screen instead of running off its right edge. */
+  .palette-grid { grid-template-columns: repeat(var(--palette-columns, 10), minmax(0, 1fr)); padding: 4px; }
+  .palette-cell { width: auto; height: auto; aspect-ratio: 1; padding: 0; overflow: hidden; }
+  /* The sprite offsets are worked out in px for the icon's own size (see
+     icons.ts), so it shrinks by transform rather than a smaller size. */
+  .palette-cell .icon { transform: scale(0.8); }
+  .palette-tab { width: 46px; height: 44px; }
 }

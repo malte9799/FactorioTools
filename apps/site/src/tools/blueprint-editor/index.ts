@@ -635,8 +635,18 @@ export function mountBlueprintEditor(root: HTMLElement): () => void {
     resultsWindow.bringToFront();
   }, { signal });
 
+  // On a phone every floating window is a bottom sheet in the same spot
+  // (style.css), so a second toolbar window would just bury the first:
+  // opening one puts the others away. The Build menu is left to its menu
+  // state, and the library is docked, not a sheet.
+  const sheetLayout = window.matchMedia("(pointer: coarse) and (max-width: 760px)");
   function toggleWindow(target: { el: HTMLElement; show(): void; hide(): void; bringToFront(): void }): void {
     if (target.el.hidden) {
+      if (sheetLayout.matches) {
+        for (const w of Object.values(allWindows)) {
+          if (w !== target && w !== libraryWindow && w !== paletteWindow && !w.el.hidden) w.hide();
+        }
+      }
       target.show();
       target.bringToFront();
     } else {
