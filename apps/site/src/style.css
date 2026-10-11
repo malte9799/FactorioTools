@@ -1066,6 +1066,50 @@ body:has(#library-window.is-collapsed:not([hidden])) #window-toolbar { left: cal
 .qb-tool:disabled img { filter: grayscale(1) brightness(0.55); }
 .qb-tool.is-grey:disabled img { filter: invert(1) brightness(0.6); }
 
+/* ---------- hand bar ----------
+   Rotate and Put away for whatever is in hand — the touch stand-in for R
+   and Q/Esc, so only touch screens show it. Down the right edge, where a
+   thumb reaches it and clear of the quickbar. */
+.hand-bar {
+  position: fixed;
+  right: 8px;
+  top: 50%;
+  z-index: 1950;
+  display: none;
+  flex-direction: column;
+  gap: 6px;
+  padding: 4px;
+  transform: translateY(-50%);
+  background: var(--qb-frame, #4a4949);
+  border: 1px solid #1d1a14;
+  border-radius: 3px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.5);
+}
+
+.hand-button {
+  width: 56px;
+  height: 52px;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  font-family: var(--display);
+  color: var(--text);
+}
+.hand-button[hidden] { display: none; }
+.hand-glyph { font-size: 20px; line-height: 1; }
+.hand-label { font-size: 10px; font-weight: 600; letter-spacing: 0.02em; }
+
+@media (pointer: coarse) {
+  .hand-bar:not([hidden]) { display: flex; }
+  /* Titlebar buttons big enough to hit with a finger. */
+  .gui-header-button,
+  .gui-close { width: 32px; height: 32px; font-size: 14px; }
+  .gui-remove:has(img) { width: 32px; }
+}
+
 /* ---------- floating windows ---------- */
 
 .floating-window {
@@ -1443,6 +1487,12 @@ body:has(#library-window.is-collapsed:not([hidden])) #window-toolbar { left: cal
 }
 
 .gui-header-button:hover { background: var(--button-hover); }
+/* Remove, in the entity window: the deconstruction planner's red button. */
+.gui-remove { padding: 2px; color: #fff; font-family: var(--display); font-size: 11px; background: #ac2c25; }
+.gui-remove:hover { background: #c4402b; }
+.gui-remove:has(img) { width: 24px; }
+.gui-remove:not(:has(img)) { width: auto; padding: 0 6px; }
+.gui-remove img { width: 100%; height: 100%; display: block; pointer-events: none; }
 /* Grey at rest, red only on hover — the game highlights the close button
    rather than colouring it permanently. */
 .gui-close:hover {

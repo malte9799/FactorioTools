@@ -34,7 +34,7 @@ import { CircuitSim } from "@factoriotools/sim";
 import { SimClock } from "../../sim-clock.js";
 import type { GridMenuHandle } from "./grid-menu.js";
 import { buildLibrarySidebar } from "./library-sidebar.js";
-import { buildQuickbar, readAltLayers, writeAltLayers, type AltLayers, type QuickbarHandle, type QuickbarItem } from "./quickbar.js";
+import { buildQuickbar, readAltLayers, shortcutArt, writeAltLayers, type AltLayers, type QuickbarHandle, type QuickbarItem } from "./quickbar.js";
 import { buildGridMenu } from "./grid-menu.js";
 import { BlueprintLinkError, looksLikeBlueprintString, parseBlueprintLink, resolveBlueprintLink, SHARE_TARGETS } from "./blueprint-links.js";
 import { BLUEPRINT_FILE_ACCEPT, BlueprintFileError, readBlueprintFile } from "./blueprint-file.js";
@@ -228,6 +228,7 @@ const TEMPLATE = `
     <div class="gui-titlebar">
       <span>Entity</span>
       <span class="grip" aria-hidden="true"></span>
+      <button type="button" id="properties-remove" class="gui-header-button gui-remove" title="Remove this building" aria-label="Remove this building"></button>
     </div>
     <div class="gui-body" id="properties-body"></div>
   </div>
@@ -285,6 +286,8 @@ const TEMPLATE = `
   </div>
 
   <div id="window-toolbar" role="toolbar" aria-label="Windows">
+    <button type="button" id="build-menu-button" data-shows="palette-window" data-icon="assembling-machine-1" title="Build menu (E)"><span class="tab-label">Build</span></button>
+    <span class="toolbar-divider" aria-hidden="true"></span>
     <button type="button" id="import-menu-button" data-icon="blueprint" title="Import and export" aria-haspopup="menu" aria-expanded="false"><span class="tab-label">Import / Export</span><span class="tab-caret" aria-hidden="true">▾</span></button>
     <select id="bp-picker" hidden aria-label="Blueprint in book"></select>
     <button type="button" data-toggle="rate-window" data-icon="arithmetic-combinator" title="Simulate"><span class="tab-label">Simulate</span></button>
@@ -308,6 +311,11 @@ const TEMPLATE = `
     <div class="toolbar-menu-sep" role="separator"></div>
     <button type="button" role="menuitem" id="export-clipboard" class="toolbar-menu-item">Export to clipboard</button>
     <div id="export-share"></div>
+  </div>
+
+  <div id="hand-bar" class="hand-bar" role="toolbar" aria-label="In hand" hidden>
+    <button type="button" id="hand-rotate" class="hand-button" title="Rotate (R)" aria-label="Rotate"><span class="hand-glyph" aria-hidden="true">↻</span><span class="hand-label">Rotate</span></button>
+    <button type="button" id="hand-put-away" class="hand-button" title="Put away (Q)" aria-label="Put away"><span class="hand-glyph" aria-hidden="true">✕</span><span class="hand-label">Put away</span></button>
   </div>
 
   <p id="status" class="status-toast" data-kind="info" role="status" hidden></p>
@@ -631,17 +639,20 @@ export function mountBlueprintEditor(root: HTMLElement): () => void {
   for (const button of root.querySelectorAll<HTMLButtonElement>("#window-toolbar [data-icon]")) {
     button.prepend(icon(button.dataset.icon!, "", 20));
   }
+  // `data-shows` marks a tab that opens its window some other way than a
+  // plain toggle (Build goes through the menu state machine) but lights up
+  // with it all the same.
   const toolbarObserver = new MutationObserver(syncToolbarTabs);
   function syncToolbarTabs(): void {
-    for (const button of root.querySelectorAll<HTMLButtonElement>("#window-toolbar [data-toggle]")) {
-      const target = root.querySelector<HTMLElement>(`#${button.dataset.toggle}`);
+    for (const button of root.querySelectorAll<HTMLButtonElement>("#window-toolbar :is([data-toggle], [data-shows])")) {
+      const target = root.querySelector<HTMLElement>(`#${button.dataset.toggle ?? button.dataset.shows}`);
       const open = !!target && !target.hidden;
       button.classList.toggle("is-active", open);
       button.setAttribute("aria-pressed", String(open));
     }
   }
-  for (const button of root.querySelectorAll<HTMLButtonElement>("#window-toolbar [data-toggle]")) {
-    const target = root.querySelector<HTMLElement>(`#${button.dataset.toggle}`);
+  for (const button of root.querySelectorAll<HTMLButtonElement>("#window-toolbar :is([data-toggle], [data-shows])")) {
+    const target = root.querySelector<HTMLElement>(`#${button.dataset.toggle ?? button.dataset.shows}`);
     if (target) toolbarObserver.observe(target, { attributes: true, attributeFilter: ["hidden"] });
   }
   syncToolbarTabs();
@@ -1124,6 +1135,19 @@ export function mountBlueprintEditor(root: HTMLElement): () => void {
       wire: wireColorInHand,
       held: paletteSelection ? { name: paletteSelection, quality: paletteQuality } : null,
     });
+    syncHandBar();
+  }
+
+  /** The touch stand-in for R and Q/Esc: shown while anything is in hand
+   *  (CSS keeps it to touch screens), with Rotate only for the ghosts that
+   *  turn. */
+  function syncHandBar(): void {
+    // Not before the quickbar exists: until then the editor is still
+    // mounting, nothing can be in hand, and heldModule isn't declared yet.
+    if (!quickbar) return;
+    const handBar = $<HTMLElement>("#hand-bar");
+    handBar.hidden = !(paletteSelection || pasteArmed || boxModeOn || wireColorInHand || heldModule);
+    root.querySelector<HTMLButtonElement>("#hand-rotate")!.hidden = !(paletteSelection || pasteArmed);
   }
 
   /** True while one of the three box-drag action modes (copyBox/cutBox/
@@ -1746,6 +1770,7 @@ export function mountBlueprintEditor(root: HTMLElement): () => void {
     const centre = { x: (minX + maxX) / 2, y: (minY + maxY) / 2 };
     const anchor = onRailGrid(boxedEntities) ? { x: snapToRailGrid(centre.x), y: snapToRailGrid(centre.y) } : centre;
     pasteArmed = true;
+    syncHandBar();
     renderer.setInteractionMode({
       kind: "paste",
       entities: placeholders,
@@ -2404,6 +2429,7 @@ export function mountBlueprintEditor(root: HTMLElement): () => void {
     // still be carrying a module.
     if (module) setMode("idle");
     updateCursorIcon(lastPointerPos.x, lastPointerPos.y);
+    syncHandBar();
   }
 
   /** Fills every module slot of `entity` with the held module — the
@@ -3150,6 +3176,7 @@ export function mountBlueprintEditor(root: HTMLElement): () => void {
     const size = bp["snap-to-grid"];
     setMode("idle");
     pasteArmed = true;
+    syncHandBar();
     renderer.setInteractionMode({
       kind: "paste",
       entities: placeholders,
@@ -3717,6 +3744,53 @@ export function mountBlueprintEditor(root: HTMLElement): () => void {
       return;
     }
     exitCurrentMenuState();
+  }, { signal });
+
+  // The pointer and touch ways in to what E, R, Q/Esc and right-click do
+  // from the keyboard and mouse — a phone has neither.
+  //
+  // The toolbar's Build tab opens the Build menu from anywhere and closes
+  // it again, like E.
+  $<HTMLButtonElement>("#build-menu-button").addEventListener("click", () => {
+    enterMenuState(menuState === "build" ? "default" : "build");
+  }, { signal });
+
+  // Remove, in the entity window's titlebar: mines the building that window
+  // is showing, one undo step like a right-click.
+  const removeButton = $<HTMLButtonElement>("#properties-remove");
+  void shortcutArt("deconstruct").then((art) => {
+    if (!art) {
+      removeButton.textContent = "Remove";
+      return;
+    }
+    const img = document.createElement("img");
+    img.src = art.src;
+    img.alt = "";
+    img.draggable = false;
+    removeButton.replaceChildren(img);
+  });
+  // The titlebar's drag captures the pointer on press, which would swallow
+  // the click (see makeFloatingWindow's close button).
+  removeButton.addEventListener("pointerdown", (e) => e.stopPropagation(), { signal });
+  removeButton.addEventListener("click", () => {
+    const entity = selectedEntity;
+    if (!entity) return;
+    enterMenuState("default");
+    removeEntity(entity.entityNumber);
+    setStatus(`Removed the ${localisedNameOf(getData(), getRenderCatalog(), entity.name)}.`);
+  }, { signal });
+
+  // The hand bar (touch screens only): turn the ghost in hand, or put
+  // whatever is in hand away.
+  $<HTMLButtonElement>("#hand-rotate").addEventListener("click", () => {
+    if (paletteSelection) renderer.rotateGhost();
+    else if (pasteArmed) renderer.rotatePasteGhost();
+  }, { signal });
+  $<HTMLButtonElement>("#hand-put-away").addEventListener("click", () => {
+    renderer.cancelRailPlan();
+    if (heldModule) setHeldModule(null);
+    setMode("idle");
+    updateCursorIcon(lastPointerPos.x, lastPointerPos.y);
   }, { signal });
 
   // 'q' is the smart pipette AND the "clear cursor" gesture, matching the

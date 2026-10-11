@@ -2344,8 +2344,20 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
       if (activeTouches.size === 2) {
         // A second finger landing starts a pinch — cancel whatever the first
         // finger's own single-touch pan was doing so the two gestures don't
-        // fight (a pan delta computed from the wrong finger).
+        // fight (a pan delta computed from the wrong finger). The same goes
+        // for a one-finger edit gesture: a placing drag or a delete box
+        // started by the first finger stops here, so neither keeps going
+        // under whichever finger is left once the pinch ends.
         isPanning = false;
+        pendingSelect = undefined;
+        isPlacingDrag = false;
+        isErasing = false;
+        boxDownPointerId = undefined;
+        boxDownWorldPos = undefined;
+        boxDownScreenPos = undefined;
+        boxDragCurrentWorldPos = undefined;
+        boxDragMoved = false;
+        invalidate();
         const geo = pinchGeometry()!;
         lastPinchDistance = geo.distance;
         lastPointer = geo.mid;
@@ -2385,6 +2397,10 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
       return;
     }
     if (e.button !== 0) return;
+
+    // A touch has no hover before it lands, so the ghost is still wherever
+    // the last touch left it: move it under this one before acting on it.
+    if (mode.kind === "place" || mode.kind === "paste") ghostWorldPos = worldAtPointer(e);
 
     if (mode.kind === "place") {
       isPlacingDrag = true;
