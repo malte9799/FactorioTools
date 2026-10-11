@@ -6,12 +6,15 @@ import { DEFAULT_SETTINGS, type PlanSettings, type PlannerData } from "@factorio
 
 export type TimeUnit = "s" | "min" | "h";
 export type View = "flow" | "table";
+/** The table as a FactorioLab-style tree, or one row per step. */
+export type TableMode = "tree" | "totals";
 
 export interface PlannerState {
   /** Rates are stored per second; the unit only changes how they show. */
   targets: { item: string; rate: number }[];
   unit: TimeUnit;
   view: View;
+  tableMode: TableMode;
   belt: string;
   settings: PlanSettings;
 }
@@ -25,6 +28,7 @@ export function defaultState(): PlannerState {
     targets: [],
     unit: "min",
     view: "flow",
+    tableMode: "tree",
     belt: "express-transport-belt",
     settings: structuredClone(DEFAULT_SETTINGS),
   };
@@ -44,6 +48,7 @@ function sanitise(raw: unknown, pd: PlannerData): PlannerState {
   }
   if (r.unit === "s" || r.unit === "min" || r.unit === "h") state.unit = r.unit;
   if (r.view === "flow" || r.view === "table") state.view = r.view;
+  if (r.tableMode === "tree" || r.tableMode === "totals") state.tableMode = r.tableMode;
   if (typeof r.belt === "string" && pd.belts.some((b) => b.name === r.belt)) state.belt = r.belt;
   const s = r.settings as Partial<PlanSettings> | undefined;
   if (s && typeof s === "object") {
@@ -110,6 +115,7 @@ function compact(state: PlannerState): unknown {
     targets: state.targets,
     ...(state.unit !== d.unit ? { unit: state.unit } : {}),
     ...(state.view !== d.view ? { view: state.view } : {}),
+    ...(state.tableMode !== d.tableMode ? { tableMode: state.tableMode } : {}),
     ...(state.belt !== d.belt ? { belt: state.belt } : {}),
     ...(Object.keys(settings).length ? { settings } : {}),
   };

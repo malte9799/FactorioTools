@@ -260,7 +260,136 @@ export function moduleChooserHtml(pd: PlannerData, names: string[], current: str
 
 /* -------------------------------------------------------------------- table */
 
-export function tableHtml(pd: PlannerData, result: PlanResult, state: PlannerState, selected: string | null): string {
+/** One row of the tree: a step (or an import) at the share of it that its
+ *  parent row uses. The same step shows up once under every row it feeds. */
+export interface TreeRow {
+  key: string;
+  /** Step id, or import:<item>. */
+  node: string;
+  item: string;
+  /** Per second, for the parent. */
+  rate: number;
+  /** Share of the step this row stands for, 0..1. */
+  share: number;
+  children: TreeRow[];
+  /** Stops here because the step feeds itself further up (a loop). */
+  loop?: boolean;
+}
+
+/** Most rows the tree builds before it stops descending. */
+const TREE_LIMIT = 2000;
+
+/** The plan as FactorioLab draws it: each target's producers, then what
+ *  feeds them, nested, each row scaled to the share its parent uses. */
+export function buildTree(result: PlanResult): TreeRow[] {
+  const steps = new Map(result.steps.map((s) => [s.id, s]));
+  const inflows = new Map<string, PlanResult["flows"]>();
+  for (const f of result.flows) {
+    if (!inflows.has(f.to)) inflows.set(f.to, []);
+    inflows.get(f.to)!.push(f);
+  }
+  let count = 0;
+  const expand = (node: string, share: number, key: string, path: Set<string>): TreeRow[] => {
+    const step = steps.get(node);
+    const order = step ? [...step.inputs.map((i) => i.item)] : [];
+    const flows = [...(inflows.get(node) ?? [])].sort((a, b) => order.indexOf(a.item) - order.indexOf(b.item) || b.rate - a.rate);
+    const rows: TreeRow[] = [];
+    for (const f of flows) {
+      const rate = f.rate * share;
+      if (rate < 1e-9) continue;
+      const src = steps.get(f.from);
+      const childKey = `${key}/${f.from}~${f.item}`;
+      const out = src?.outputs.find((o) => o.item === f.item)?.rate ?? 0;
+      const childShare = src && out > 0 ? rate / out : 0;
+      const loop = path.has(f.from);
+      count++;
+      const row: TreeRow = { key: childKey, node: f.from, item: f.item, rate, share: childShare, children: [], ...(loop ? { loop } : {}) };
+      if (src && !loop && count < TREE_LIMIT) row.children = expand(f.from, childShare, childKey, new Set(path).add(f.from));
+      rows.push(row);
+    }
+    return rows;
+  };
+  return result.targets.flatMap((t) => expand(`target:${t.item}`, 1, t.item, new Set()));
+}
+
+/** Every row key that has children, for collapsing the whole tree. */
+export function treeParentKeys(rows: TreeRow[], out: string[] = []): string[] {
+  for (const r of rows) {
+    if (r.children.length) {
+      out.push(r.key);
+      treeParentKeys(r.children, out);
+    }
+  }
+  return out;
+}
+
+/** Horizontal step per tree level, and where a level's line runs. */
+const TREE_INDENT = 30;
+const TREE_LINE = 19;
+
+function treeHtml(pd: PlannerData, result: PlanResult, state: PlannerState, selected: string | null, collapsed: Set<string>): string {
+  const unit = state.unit;
+  const steps = new Map(result.steps.map((s) => [s.id, s]));
+  let html = "";
+  const walk = (rows: TreeRow[], depth: number, guides: boolean[]) => {
+    rows.forEach((r, i) => {
+      const last = i === rows.length - 1;
+      const open = r.children.length > 0 && !collapsed.has(r.key);
+      const step = steps.get(r.node);
+      const x = (level: number) => 8 + level * TREE_INDENT + TREE_LINE;
+      // Dotted lines: ancestors still running, this row's elbow, and the
+      // stem down to its own children when they are shown.
+      let lines = guides.map((on, level) => (on ? `<i class="pl-tl is-v" style="left:${x(level)}px"></i>` : "")).join("");
+      if (depth > 0) {
+        lines += `<i class="pl-tl is-v${last ? " is-half" : ""}" style="left:${x(depth - 1)}px"></i>`;
+        lines += `<i class="pl-tl is-h" style="left:${x(depth - 1)}px;width:${TREE_INDENT - TREE_LINE + 6}px"></i>`;
+      }
+      if (open) lines += `<i class="pl-tl is-stem" style="left:${x(depth)}px"></i>`;
+      const icon = step ? recipeIcon(step.recipe) : r.item;
+      const chevron = r.children.length
+        ? `<button type="button" class="pl-tree-toggle${open ? " is-open" : ""}" data-action="toggle-row" data-key="${e(r.key)}" aria-expanded="${open}" aria-label="${open ? "Collapse" : "Expand"}">›</button>`
+        : "";
+      const label = step ? step.recipe.label : pd.items[r.item]?.label ?? r.item;
+      const machines = step?.machine ? step.machines * r.share : 0;
+      const whole = Math.ceil(machines - 1e-6);
+      const machineCell = step?.machine
+        ? `${sprite(step.machine.icon, 28)}<div><b>${fmtMachines(machines)}</b><div class="pl-meter"><i style="width:${whole ? ((machines / whole) * 100).toFixed(0) : 0}%"></i></div></div>`
+        : r.node.startsWith("import:")
+          ? `<span class="pl-tag is-import">Import</span>`
+          : `<span class="pl-dim">—</span>`;
+      const extra = step ? step.outputs.filter((o) => o.item !== r.item).map((o) => ({ item: o.item, rate: o.rate * r.share })) : [];
+      const power = step ? (step.power + step.beaconPower) * r.share : 0;
+      html += `<tr class="${r.node === selected ? "is-selected" : ""}" data-action="select" data-id="${e(r.node)}" style="--c:${itemColor(r.item)}">
+        <td class="pl-t-chev">${chevron}</td>
+        <td class="pl-t-tree" style="padding-left:${8 + depth * TREE_INDENT}px">${lines}<span class="pl-tree-icon">${sprite(icon, 32)}</span></td>
+        <td class="pl-t-out"><div><b>${fmtRate(r.rate, unit)}</b><small>${UNIT_LABEL[unit]}</small> ${beltTag(pd, state, r.item, r.rate)}<span class="pl-t-label">${e(label)}${r.loop ? " · loops back" : ""}</span></div></td>
+        <td class="pl-t-machine">${machineCell}</td>
+        <td class="pl-t-mods">${step ? compressModules(step.modules).map(([m, c]) => `<span class="pl-modchip">${sprite(m, 18)}${c > 1 ? `<i>${c}</i>` : ""}</span>`).join("") + (step.beacons && step.beaconModule ? `<span class="pl-modchip">${sprite("beacon", 18)}<i>${step.beacons}</i></span>` : "") : ""}</td>
+        <td class="pl-t-flows">${extra.map((f) => `<span class="pl-chip" style="--c:${itemColor(f.item)}" data-tip="${e(pd.items[f.item]?.label ?? f.item)}" data-tip-icon="${e(f.item)}">${sprite(f.item, 20)}${fmtRate(f.rate, unit)}</span>`).join("")}</td>
+        <td class="pl-t-power">${power ? fmtPower(power) : step?.fuel ? `${sprite(step.fuel.item, 16)}${fmtRate(step.fuel.rate * r.share, unit)}` : ""}</td>
+      </tr>`;
+      if (open) walk(r.children, depth + 1, depth > 0 ? [...guides, !last] : guides);
+    });
+  };
+  walk(buildTree(result), 0, []);
+  return `<table class="pl-table is-tree">
+    <thead><tr><th></th><th>Tree</th><th>Makes</th><th>Machines</th><th>Modules</th><th>Also makes</th><th>Power</th></tr></thead>
+    <tbody>${html}</tbody>
+  </table>`;
+}
+
+export function tableHtml(pd: PlannerData, result: PlanResult, state: PlannerState, selected: string | null, collapsed: Set<string>): string {
+  const mode = state.tableMode;
+  const bar = `<div class="pl-table-bar">
+    <div class="pl-seg" role="group" aria-label="Table layout">
+      <button type="button" data-action="table-mode" data-mode="tree" class="${mode === "tree" ? "is-on" : ""}">Tree</button><button type="button" data-action="table-mode" data-mode="totals" class="${mode === "totals" ? "is-on" : ""}">Totals</button>
+    </div>
+    ${mode === "tree" ? `<button type="button" class="pl-btn" data-action="tree-expand">Expand all</button><button type="button" class="pl-btn" data-action="tree-collapse">Collapse all</button>` : `<span class="pl-dim">Each step once, with its full machine count.</span>`}
+  </div>`;
+  return `<div class="pl-table-wrap">${bar}${mode === "tree" ? treeHtml(pd, result, state, selected, collapsed) : totalsHtml(pd, result, state, selected)}</div>`;
+}
+
+function totalsHtml(pd: PlannerData, result: PlanResult, state: PlannerState, selected: string | null): string {
   const unit = state.unit;
   const steps = [...result.steps].sort((a, b) => a.depth - b.depth || b.machines - a.machines);
   const rows = steps.map((s) => {
@@ -271,7 +400,7 @@ export function tableHtml(pd: PlannerData, result: PlanResult, state: PlannerSta
       `<span class="pl-chip" style="--c:${itemColor(f.item)}" data-tip="${e(pd.items[f.item]?.label ?? f.item)}" data-tip-sub="${e(beltText(pd, state, f.item, f.rate))}" data-tip-icon="${e(f.item)}">${sprite(f.item, 20)}${fmtRate(f.rate, unit)}</span>`).join("");
     const extra = s.outputs.filter((o) => o !== main);
     return `<tr class="${s.id === selected ? "is-selected" : ""}" data-action="select" data-id="${e(s.id)}" style="--c:${itemColor(s.item)}">
-      <td class="pl-t-out">${sprite(recipeIcon(s.recipe), 32)}<div><b>${fmtRate(main?.rate ?? 0, unit)}</b><small>${UNIT_LABEL[unit]}</small><span>${e(s.recipe.label)}</span></div></td>
+      <td class="pl-t-out"><div class="pl-t-cell">${sprite(recipeIcon(s.recipe), 32)}<div><b>${fmtRate(main?.rate ?? 0, unit)}</b><small>${UNIT_LABEL[unit]}</small><span class="pl-t-label">${e(s.recipe.label)}</span></div></div></td>
       <td class="pl-t-machine">${s.machine ? `${sprite(s.machine.icon, 28)}<div><b>${fmtMachines(s.machines)}</b><div class="pl-meter"><i style="width:${(util * 100).toFixed(0)}%"></i></div></div>` : `<span class="pl-dim">—</span>`}</td>
       <td class="pl-t-mods">${compressModules(s.modules).map(([m, c]) => `<span class="pl-modchip">${sprite(m, 18)}${c > 1 ? `<i>${c}</i>` : ""}</span>`).join("")}${s.beacons && s.beaconModule ? `<span class="pl-modchip">${sprite("beacon", 18)}<i>${s.beacons}</i></span>` : ""}</td>
       <td class="pl-t-flows">${chips(s.inputs)}</td>
@@ -279,10 +408,10 @@ export function tableHtml(pd: PlannerData, result: PlanResult, state: PlannerSta
       <td class="pl-t-power">${s.power ? fmtPower(s.power + s.beaconPower) : s.fuel ? `${sprite(s.fuel.item, 16)}${fmtRate(s.fuel.rate, unit)}` : ""}</td>
     </tr>`;
   }).join("");
-  return `<div class="pl-table-wrap"><table class="pl-table">
+  return `<table class="pl-table">
     <thead><tr><th>Makes</th><th>Machines</th><th>Modules</th><th>Takes</th><th>Also makes</th><th>Power</th></tr></thead>
     <tbody>${rows}</tbody>
-  </table></div>`;
+  </table>`;
 }
 
 /* ------------------------------------------------------------------- picker */
