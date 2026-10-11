@@ -207,6 +207,14 @@ function resolveShortcut(manifest: ShortcutManifest, tool: QuickbarTool): Shortc
   return name ? manifest[name] : undefined;
 }
 
+/** A shortcut tool's game art, for buttons outside the quickbar that do
+ *  the same job (the entity window's Remove uses the deconstruction
+ *  planner's). Undefined when the dataset has no sprite for it. */
+export async function shortcutArt(tool: QuickbarTool): Promise<{ src: string; style: string } | undefined> {
+  const shortcut = resolveShortcut(await loadShortcutManifest(), tool);
+  return shortcut ? { src: SHORTCUT_DIR + shortcut.file, style: shortcut.style } : undefined;
+}
+
 interface ToolSpec {
   tool: QuickbarTool;
   label: string;

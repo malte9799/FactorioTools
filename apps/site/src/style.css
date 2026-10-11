@@ -223,6 +223,9 @@ a { color: var(--link); text-decoration-thickness: 1px; text-underline-offset: 2
 .site-nav nav a:hover { color: var(--text); background: var(--panel-3); }
 .site-nav nav a.is-active { color: var(--gold-strong); background: var(--panel-3); }
 
+/* The phone switcher (see nav.ts): hidden until the links stop fitting. */
+.nav-switch { display: none; }
+
 /* ---------- masthead (compact, lives inside the intake floating window) ---------- */
 
 .eyebrow {
@@ -1443,6 +1446,12 @@ body:has(#library-window.is-collapsed:not([hidden])) #window-toolbar { left: cal
 }
 
 .gui-header-button:hover { background: var(--button-hover); }
+/* Remove, in the entity window: the deconstruction planner's red button. */
+.gui-remove { padding: 2px; color: #fff; font-family: var(--display); font-size: 11px; background: #ac2c25; }
+.gui-remove:hover { background: #c4402b; }
+.gui-remove:has(img) { width: 24px; }
+.gui-remove:not(:has(img)) { width: auto; padding: 0 6px; }
+.gui-remove img { width: 100%; height: 100%; display: block; pointer-events: none; }
 /* Grey at rest, red only on hover — the game highlights the close button
    rather than colouring it permanently. */
 .gui-close:hover {
@@ -2663,9 +2672,46 @@ canvas.select-mode {
 @media (max-width: 640px) {
   .site-nav { padding: 8px 10px; gap: 10px; }
   .site-nav .brand { flex: none; font-size: 15px; }
-  .site-nav nav { min-width: 0; overflow-x: auto; scrollbar-width: none; }
-  .site-nav nav::-webkit-scrollbar { display: none; }
-  .site-nav nav a { flex: none; white-space: nowrap; padding: 5px 8px; font-size: 11px; letter-spacing: 0.04em; }
+  /* Just the current tool, as a switcher dropping the full list down. */
+  .site-nav .nav-links { display: none; }
+  .nav-switch { display: block; position: relative; min-width: 0; }
+  .nav-switch summary {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    min-height: 34px;
+    padding: 0 10px;
+    font-family: var(--mono);
+    font-size: 12px;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    white-space: nowrap;
+    color: var(--gold-strong);
+    background: var(--panel-3);
+    border-radius: 3px;
+    cursor: pointer;
+    list-style: none;
+  }
+  .nav-switch summary::-webkit-details-marker { display: none; }
+  .nav-switch-caret { font-size: 10px; opacity: 0.8; transition: transform 0.15s; }
+  .nav-switch[open] .nav-switch-caret { transform: rotate(180deg); }
+  .site-nav .nav-switch-menu {
+    position: absolute;
+    right: 0;
+    top: calc(100% + 6px);
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 200px;
+    padding: 4px;
+    background: var(--frame) var(--grain);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    box-shadow: 0 10px 26px rgba(0, 0, 0, 0.55);
+  }
+  .site-nav .nav-switch-menu a { padding: 12px; font-size: 13px; }
+  /* Over the editor's window toolbar while the list is down. */
+  .site-nav:has(.nav-switch[open]) { z-index: 2600; }
 
   :root { --nav-h: 46px; --sidebar-w: min(212px, calc(100vw - 48px)); }
 
@@ -3432,3 +3478,300 @@ canvas.select-mode {
   .seed-panel { width: calc(100vw - 20px); max-height: 45vh; }
 }
 
+/* ---------- touch screens ----------
+   A phone has no keyboard, hover or right-click, so the editor docks a
+   phone app's controls along the bottom instead of the game's quickbar
+   tool grid: the active quickbar as a strip of big item tiles, over a tab
+   bar of tools with a label under each (index.ts's touch dock). With a
+   mouse the dock is display: contents, so the quickbar sits as before and
+   the touch-only parts never show. Last in the file so it wins over the
+   phone-width rules above. */
+.touch-dock { display: contents; }
+.touch-tools,
+.touch-more,
+.touch-hand,
+.touch-history { display: none; }
+
+/* Line icons for the dock and the entity window's Rotate. */
+.touch-icon {
+  width: 22px;
+  height: 22px;
+  flex: none;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.gui-rotate .touch-icon { width: 16px; height: 16px; stroke-width: 2.2; }
+.gui-rotate[hidden] { display: none; }
+
+@media (pointer: coarse) {
+  .touch-dock {
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 1900;
+    display: flex;
+    flex-direction: column;
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+    background: var(--frame) var(--grain);
+    border-top: 1px solid var(--border);
+    box-shadow: inset 0 1px 0 var(--bevel-light), 0 -4px 14px rgba(0, 0, 0, 0.35);
+    touch-action: manipulation;
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  /* The quickbar: just the active bar, its slots as big tiles scrolling
+     sideways. Its number still opens the all-bars panel, which hangs above
+     the dock at a size that fits the screen. */
+  .touch-dock .quickbar {
+    --qb-slot: 50px;
+    position: static;
+    display: block;
+    width: auto;
+    max-width: none;
+    transform: none;
+  }
+  .touch-dock .qb-tools { display: none; }
+  .touch-dock .qb-hotbar {
+    position: relative;
+    padding: 6px 8px;
+    background: none;
+    border: none;
+    border-radius: 0;
+    box-shadow: none;
+  }
+  .touch-dock .qb-bar-row.is-main { display: flex; align-items: center; gap: 6px; }
+  .touch-dock .qb-bar-row.is-main > .qb-well:last-child {
+    flex: 1;
+    min-width: 0;
+    overflow-x: auto;
+    scrollbar-width: none;
+    touch-action: pan-x;
+  }
+  .touch-dock .qb-bar-row.is-main > .qb-well:last-child::-webkit-scrollbar { display: none; }
+  .touch-dock .qb-slot.is-group-start { margin-left: 4px; }
+  .touch-dock .qb-slot .icon { transform: scale(1.35); }
+  .touch-dock .qb-bar-num { font-size: 16px; }
+  .touch-dock .qb-panel {
+    --qb-slot: min(32px, calc((100vw - 84px) / 10));
+    left: 4px;
+    max-width: calc(100vw - 8px);
+  }
+  .touch-dock .qb-panel .qb-slot .icon { transform: scale(0.8); }
+  /* No hover on a touch screen: the lit-on-hover rules would stick to the
+     last slot tapped. */
+  .touch-dock .qb-slot:hover:not(.is-held) {
+    background: #4a4a4a;
+    box-shadow: inset 0 1px 0 #656464, inset 0 -1px 0 #222, inset 0 -2px 1px rgba(0, 0, 0, 0.35);
+  }
+
+  /* The tab bar. */
+  .touch-tools {
+    display: grid;
+    grid-template-columns: repeat(6, minmax(0, 1fr));
+    border-top: 1px solid var(--border);
+  }
+  .touch-tool {
+    min-height: 56px;
+    padding: 7px 0 8px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 3px;
+    font-family: var(--display);
+    font-size: 11.5px;
+    font-weight: 600;
+    letter-spacing: 0.01em;
+    color: var(--text);
+    background: none;
+    border: 0;
+    border-radius: 0;
+    box-shadow: none;
+  }
+  .touch-tool + .touch-tool { border-left: 1px solid var(--border); }
+  .touch-tool:hover { background: none; }
+  .touch-tool:active:not(:disabled) { background: var(--row-hover); }
+  .touch-tool.is-on { color: var(--gold-strong); box-shadow: inset 0 3px 0 var(--gold); }
+  .touch-tool:disabled { opacity: 0.38; cursor: default; }
+
+  /* More: the shortcuts the tab bar has no room for, in a sheet that opens
+     above the dock's right end. */
+  .touch-more:not([hidden]) {
+    position: absolute;
+    right: 6px;
+    bottom: calc(100% + 6px);
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 190px;
+    padding: 4px;
+    background: var(--frame) var(--grain);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    box-shadow: 0 6px 20px rgba(0, 0, 0, 0.5);
+  }
+  .touch-more-item {
+    min-height: 48px;
+    padding: 0 12px 0 6px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-family: var(--display);
+    font-size: 15px;
+    font-weight: 600;
+    text-align: left;
+    color: var(--text);
+    background: none;
+    border: 0;
+    box-shadow: none;
+  }
+  .touch-more-item:active { background: var(--row-hover); }
+  .touch-more-item.is-on { color: var(--selected-text); background: var(--selected); }
+  .touch-more-art { width: 36px; height: 36px; flex: none; display: grid; place-items: center; }
+  .touch-more-art img { width: 100%; height: 100%; display: block; pointer-events: none; }
+
+  /* What is in hand, as a row along the top of the dock while something
+     is: its name, Rotate when it turns, and Put away. In the dock rather
+     than floating over the map, so an open sheet never covers it. */
+  .touch-hand:not([hidden]) {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 8px 6px 12px;
+    border-bottom: 1px solid var(--border);
+    background: rgba(0, 0, 0, 0.18);
+  }
+  .touch-hand-what {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    overflow: hidden;
+    font-family: var(--display);
+    font-size: 14px;
+    font-weight: 600;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+    color: var(--gold-strong);
+  }
+  .touch-hand-what .icon { background-color: transparent; border: none; box-shadow: none; }
+  .touch-hand-button {
+    width: 44px;
+    height: 44px;
+    flex: none;
+    padding: 0;
+    display: grid;
+    place-items: center;
+    color: var(--text);
+    background: var(--button);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+  }
+  .touch-hand-button[hidden] { display: none; }
+  .touch-hand-button:active { background: var(--row-hover); }
+
+  /* Blueprints: the library sidebar opens over the map from its tab and
+     folds away completely, no collapsed strip left behind. It stops at the
+     dock. */
+  #library-window.is-collapsed { display: none; }
+  body:has(#library-window.is-collapsed:not([hidden])) #window-toolbar { left: 8px; max-width: calc(100vw - 16px); }
+  #library-window { max-height: calc(100dvh - var(--nav-h) - var(--touch-dock-h, 0px)); }
+
+  /* Undo and redo: round-cornered buttons down the right edge, under the
+     window toolbar. */
+  .touch-history {
+    position: fixed;
+    right: 8px;
+    top: calc(var(--nav-h) + 56px);
+    /* Under the floating windows (from 1000 up), which open over them. */
+    z-index: 900;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+  .touch-round {
+    width: 44px;
+    height: 44px;
+    padding: 0;
+    display: grid;
+    place-items: center;
+    color: var(--text);
+    background: var(--frame) var(--grain);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    box-shadow: inset 0 1px 0 var(--bevel-light), 0 2px 8px rgba(0, 0, 0, 0.4);
+  }
+  .touch-round:active:not(:disabled) { background: var(--row-hover); }
+  .touch-round:disabled { opacity: 0.38; }
+
+  /* The dock has Build; the toolbar's own tab would be a second one. */
+  #window-toolbar #build-menu-button,
+  #window-toolbar #build-menu-button + .toolbar-divider,
+  #window-toolbar [data-toggle="rate-window"] { display: none; }
+
+  .load-spinner { bottom: calc(var(--touch-dock-h, 120px) + 12px); }
+
+  /* Titlebar buttons big enough to hit with a finger. */
+  .gui-header-button,
+  .gui-close { width: 32px; height: 32px; font-size: 14px; }
+  .gui-remove:has(img) { width: 32px; }
+  .gui-rotate .touch-icon { width: 20px; height: 20px; }
+}
+
+/* Touch screens in general: no double-tap zoom on the controls, text
+   fields at 16px (smaller ones make iOS zoom the page in on focus), and
+   segmented controls tall enough for a finger. The hover tooltip has no
+   hover to follow. */
+@media (pointer: coarse) {
+  body { touch-action: manipulation; -webkit-tap-highlight-color: transparent; }
+  input[type="text"],
+  input[type="number"],
+  input[type="search"],
+  input:not([type]),
+  select,
+  textarea { font-size: 16px; }
+  .segmented button { min-height: 36px; }
+  .machine-tooltip { display: none !important; }
+}
+
+/* Phones: every floating window is a bottom sheet instead — full width,
+   resting on the editor's dock (or the screen's bottom edge elsewhere),
+   scrolling inside when it is taller than the room above. Its titlebar no
+   longer drags it: the inline left/top makeFloatingWindow writes are
+   overridden here. */
+@media (pointer: coarse) and (max-width: 760px) {
+  .floating-window:not(.modal-window) {
+    left: 0 !important;
+    right: 0 !important;
+    top: auto !important;
+    bottom: var(--touch-dock-h, 0px) !important;
+    width: auto !important;
+    max-width: none;
+    max-height: calc(100dvh - var(--nav-h) - 50px - var(--touch-dock-h, 0px));
+    border-radius: 8px 8px 0 0;
+    border-bottom: none;
+    box-shadow: inset 0 0 0 1px var(--bevel-light), 0 -8px 26px rgba(0, 0, 0, 0.5);
+  }
+  .floating-window:not(.modal-window):not([hidden]) { display: flex; flex-direction: column; }
+  .floating-window:not(.modal-window) > .gui-titlebar { flex: none; cursor: default !important; }
+  .floating-window:not(.modal-window) > .gui-body {
+    flex: 1 1 auto;
+    min-height: 0;
+    max-height: none;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    margin-bottom: max(4px, env(safe-area-inset-bottom, 0px));
+  }
+  /* The pickers keep the game's ten columns, shrinking the cells to fit
+     the screen instead of running off its right edge. */
+  .palette-grid { grid-template-columns: repeat(var(--palette-columns, 10), minmax(0, 1fr)); padding: 4px; }
+  .palette-cell { width: auto; height: auto; aspect-ratio: 1; padding: 0; overflow: hidden; }
+  /* The sprite offsets are worked out in px for the icon's own size (see
+     icons.ts), so it shrinks by transform rather than a smaller size. */
+  .palette-cell .icon { transform: scale(0.8); }
+  .palette-tab { width: 46px; height: 44px; }
+}

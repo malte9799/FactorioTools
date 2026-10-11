@@ -34,7 +34,7 @@ import { CircuitSim } from "@factoriotools/sim";
 import { SimClock } from "../../sim-clock.js";
 import type { GridMenuHandle } from "./grid-menu.js";
 import { buildLibrarySidebar } from "./library-sidebar.js";
-import { buildQuickbar, readAltLayers, writeAltLayers, type AltLayers, type QuickbarHandle, type QuickbarItem } from "./quickbar.js";
+import { buildQuickbar, readAltLayers, shortcutArt, writeAltLayers, type AltLayers, type QuickbarHandle, type QuickbarItem, type QuickbarTool } from "./quickbar.js";
 import { buildGridMenu } from "./grid-menu.js";
 import { BlueprintLinkError, looksLikeBlueprintString, parseBlueprintLink, resolveBlueprintLink, SHARE_TARGETS } from "./blueprint-links.js";
 import { BLUEPRINT_FILE_ACCEPT, BlueprintFileError, readBlueprintFile } from "./blueprint-file.js";
@@ -228,6 +228,8 @@ const TEMPLATE = `
     <div class="gui-titlebar">
       <span>Entity</span>
       <span class="grip" aria-hidden="true"></span>
+      <button type="button" id="properties-rotate" class="gui-header-button gui-rotate" title="Rotate (R)" aria-label="Rotate this building"><svg class="touch-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 12a8 8 0 1 1-2.4-5.7"/><path d="M20 4v4.5h-4.5"/></svg></button>
+      <button type="button" id="properties-remove" class="gui-header-button gui-remove" title="Remove this building" aria-label="Remove this building"></button>
     </div>
     <div class="gui-body" id="properties-body"></div>
   </div>
@@ -272,7 +274,36 @@ const TEMPLATE = `
     </div>
   </div>
 
-  <div id="quickbar" role="toolbar" aria-label="Quickbar"></div>
+  <!-- On a touch screen the quickbar becomes a strip of item tiles over a
+       bar of tools, like a phone app's tab bar; with a mouse the dock is
+       display: contents and only the game's own quickbar shows. -->
+  <div id="touch-dock" class="touch-dock">
+    <div id="touch-hand" class="touch-hand" role="toolbar" aria-label="In hand" hidden>
+      <span id="touch-hand-what" class="touch-hand-what"></span>
+      <button type="button" id="touch-hand-rotate" class="touch-hand-button" aria-label="Rotate"><svg class="touch-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 12a8 8 0 1 1-2.4-5.7"/><path d="M20 4v4.5h-4.5"/></svg></button>
+      <button type="button" id="touch-hand-away" class="touch-hand-button" aria-label="Put away"><svg class="touch-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
+    </div>
+    <div id="touch-more" class="touch-more" role="menu" aria-label="More tools" hidden>
+      <button type="button" role="menuitemcheckbox" class="touch-more-item" data-touch-more="alt"><span class="touch-more-art"></span><span>Alt mode</span></button>
+      <button type="button" role="menuitemcheckbox" class="touch-more-item" data-touch-more="copper"><span class="touch-more-art"></span><span>Copper wire</span></button>
+      <button type="button" role="menuitemcheckbox" class="touch-more-item" data-touch-more="red"><span class="touch-more-art"></span><span>Red wire</span></button>
+      <button type="button" role="menuitemcheckbox" class="touch-more-item" data-touch-more="green"><span class="touch-more-art"></span><span>Green wire</span></button>
+    </div>
+    <div id="quickbar" role="toolbar" aria-label="Quickbar"></div>
+    <nav id="touch-tools" class="touch-tools" aria-label="Tools">
+      <button type="button" class="touch-tool" data-touch-tool="library"><svg class="touch-icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="3" width="16" height="18" rx="1.5"/><path d="M8 3v18M11 8h6M11 12h6"/></svg><span>Blueprints</span></button>
+      <button type="button" class="touch-tool" data-touch-tool="build"><svg class="touch-icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="4" width="16" height="16" rx="2"/><path d="M12 8v8M8 12h8"/></svg><span>Build</span></button>
+      <button type="button" class="touch-tool" data-touch-tool="delete"><svg class="touch-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13M10 11v6M14 11v6"/></svg><span>Delete</span></button>
+      <button type="button" class="touch-tool" data-touch-tool="copy"><svg class="touch-icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="9" width="11" height="11" rx="1.5"/><path d="M5 15V6a2 2 0 0 1 2-2h9"/></svg><span>Copy</span></button>
+      <button type="button" class="touch-tool" data-touch-tool="simulate" data-toggle="rate-window"><svg class="touch-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/></svg><span>Simulate</span></button>
+      <button type="button" class="touch-tool" data-touch-tool="more" aria-haspopup="menu" aria-expanded="false"><svg class="touch-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="5" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="19" cy="12" r="1.6"/></svg><span>More</span></button>
+    </nav>
+  </div>
+
+  <div class="touch-history" role="toolbar" aria-label="History">
+    <button type="button" id="touch-undo" class="touch-round" aria-label="Undo"><svg class="touch-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 14 4 9l5-5"/><path d="M4 9h10a6 6 0 0 1 0 12h-3"/></svg></button>
+    <button type="button" id="touch-redo" class="touch-round" aria-label="Redo"><svg class="touch-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="m15 14 5-5-5-5"/><path d="M20 9H10a6 6 0 0 0 0 12h3"/></svg></button>
+  </div>
 
   <div id="hotbar-pick-window" class="gui-window floating-window menu-window" hidden>
     <div class="gui-titlebar">
@@ -285,6 +316,8 @@ const TEMPLATE = `
   </div>
 
   <div id="window-toolbar" role="toolbar" aria-label="Windows">
+    <button type="button" id="build-menu-button" data-shows="palette-window" data-icon="assembling-machine-1" title="Build menu (E)"><span class="tab-label">Build</span></button>
+    <span class="toolbar-divider" aria-hidden="true"></span>
     <button type="button" id="import-menu-button" data-icon="blueprint" title="Import and export" aria-haspopup="menu" aria-expanded="false"><span class="tab-label">Import / Export</span><span class="tab-caret" aria-hidden="true">▾</span></button>
     <select id="bp-picker" hidden aria-label="Blueprint in book"></select>
     <button type="button" data-toggle="rate-window" data-icon="arithmetic-combinator" title="Simulate"><span class="tab-label">Simulate</span></button>
@@ -608,8 +641,18 @@ export function mountBlueprintEditor(root: HTMLElement): () => void {
     resultsWindow.bringToFront();
   }, { signal });
 
+  // On a phone every floating window is a bottom sheet in the same spot
+  // (style.css), so a second toolbar window would just bury the first:
+  // opening one puts the others away. The Build menu is left to its menu
+  // state, and the library is docked, not a sheet.
+  const sheetLayout = window.matchMedia("(pointer: coarse) and (max-width: 760px)");
   function toggleWindow(target: { el: HTMLElement; show(): void; hide(): void; bringToFront(): void }): void {
     if (target.el.hidden) {
+      if (sheetLayout.matches) {
+        for (const w of Object.values(allWindows)) {
+          if (w !== target && w !== libraryWindow && w !== paletteWindow && !w.el.hidden) w.hide();
+        }
+      }
       target.show();
       target.bringToFront();
     } else {
@@ -631,17 +674,20 @@ export function mountBlueprintEditor(root: HTMLElement): () => void {
   for (const button of root.querySelectorAll<HTMLButtonElement>("#window-toolbar [data-icon]")) {
     button.prepend(icon(button.dataset.icon!, "", 20));
   }
+  // `data-shows` marks a tab that opens its window some other way than a
+  // plain toggle (Build goes through the menu state machine) but lights up
+  // with it all the same.
   const toolbarObserver = new MutationObserver(syncToolbarTabs);
   function syncToolbarTabs(): void {
-    for (const button of root.querySelectorAll<HTMLButtonElement>("#window-toolbar [data-toggle]")) {
-      const target = root.querySelector<HTMLElement>(`#${button.dataset.toggle}`);
+    for (const button of root.querySelectorAll<HTMLButtonElement>("#window-toolbar :is([data-toggle], [data-shows])")) {
+      const target = root.querySelector<HTMLElement>(`#${button.dataset.toggle ?? button.dataset.shows}`);
       const open = !!target && !target.hidden;
       button.classList.toggle("is-active", open);
       button.setAttribute("aria-pressed", String(open));
     }
   }
-  for (const button of root.querySelectorAll<HTMLButtonElement>("#window-toolbar [data-toggle]")) {
-    const target = root.querySelector<HTMLElement>(`#${button.dataset.toggle}`);
+  for (const button of root.querySelectorAll<HTMLButtonElement>("#window-toolbar :is([data-toggle], [data-shows])")) {
+    const target = root.querySelector<HTMLElement>(`#${button.dataset.toggle ?? button.dataset.shows}`);
     if (target) toolbarObserver.observe(target, { attributes: true, attributeFilter: ["hidden"] });
   }
   syncToolbarTabs();
@@ -1124,6 +1170,59 @@ export function mountBlueprintEditor(root: HTMLElement): () => void {
       wire: wireColorInHand,
       held: paletteSelection ? { name: paletteSelection, quality: paletteQuality } : null,
     });
+    syncTouchDock();
+  }
+
+  /** Lights the touch dock's tools (see the template) to match the editor:
+   *  which tool is in hand, whether there is anything to rotate, undo/redo.
+   *  Called with syncQuickbar, and wherever the menu state or selection
+   *  changes. */
+  function syncTouchDock(): void {
+    // Not before the quickbar exists: until then the editor is still
+    // mounting, nothing can be in hand, and heldModule isn't declared yet.
+    if (!quickbar) return;
+    const moreOpen = !$<HTMLElement>("#touch-more").hidden;
+    const library = $<HTMLElement>("#library-window");
+    const on: Record<string, boolean> = {
+      library: !library.hidden && !library.classList.contains("is-collapsed"),
+      build: menuState === "build" || !!paletteSelection,
+      delete: boxModeKind === "deleteBox",
+      copy: boxModeKind === "copyBox" || pasteArmed,
+      simulate: !$<HTMLElement>("#rate-window").hidden,
+      more: moreOpen || !!wireColorInHand,
+    };
+    for (const button of root.querySelectorAll<HTMLButtonElement>("[data-touch-tool]")) {
+      const tool = button.dataset.touchTool!;
+      button.classList.toggle("is-on", !!on[tool]);
+      if (tool === "more") button.setAttribute("aria-expanded", String(moreOpen));
+    }
+    // What is in hand, named, with the two things to do with it: turn it
+    // (an entity or a blueprint ghost) or put it away.
+    const what = paletteSelection
+      ? localisedNameOf(getData(), getRenderCatalog(), paletteSelection)
+      : pasteArmed ? "Blueprint"
+      : boxModeKind === "deleteBox" ? "Delete tool"
+      : boxModeKind === "copyBox" ? "Copy tool"
+      : boxModeKind === "cutBox" ? "Cut tool"
+      : wireColorInHand ? `${wireColorInHand[0]!.toUpperCase()}${wireColorInHand.slice(1)} wire`
+      : heldModule ? localisedNameOf(getData(), getRenderCatalog(), heldModule.name)
+      : null;
+    const hand = $<HTMLElement>("#touch-hand");
+    hand.hidden = what === null;
+    if (what !== null) {
+      const label = $<HTMLElement>("#touch-hand-what");
+      const iconName = paletteSelection ?? heldModule?.name;
+      label.replaceChildren(...(iconName ? [icon(iconName, "", 24)] : []), document.createTextNode(what));
+      $<HTMLButtonElement>("#touch-hand-rotate").hidden = !(paletteSelection || pasteArmed);
+    }
+    const moreOn: Record<string, boolean> = { alt: altModeOn, copper: wireColorInHand === "copper", red: wireColorInHand === "red", green: wireColorInHand === "green" };
+    for (const item of root.querySelectorAll<HTMLButtonElement>("[data-touch-more]")) {
+      const checked = !!moreOn[item.dataset.touchMore!];
+      item.classList.toggle("is-on", checked);
+      item.setAttribute("aria-checked", String(checked));
+    }
+    $<HTMLButtonElement>("#touch-undo").disabled = undoStack.length === 0;
+    $<HTMLButtonElement>("#touch-redo").disabled = redoStack.length === 0;
   }
 
   /** True while one of the three box-drag action modes (copyBox/cutBox/
@@ -1519,6 +1618,7 @@ export function mountBlueprintEditor(root: HTMLElement): () => void {
     selectedEntity = undefined;
     propertiesWindow.hide();
     recipeWindow.hide();
+    syncTouchDock();
   }
 
   /** How far an underground-belt tier can tunnel (0 for loaders, which
@@ -1746,6 +1846,7 @@ export function mountBlueprintEditor(root: HTMLElement): () => void {
     const centre = { x: (minX + maxX) / 2, y: (minY + maxY) / 2 };
     const anchor = onRailGrid(boxedEntities) ? { x: snapToRailGrid(centre.x), y: snapToRailGrid(centre.y) } : centre;
     pasteArmed = true;
+    syncTouchDock();
     renderer.setInteractionMode({
       kind: "paste",
       entities: placeholders,
@@ -2226,6 +2327,7 @@ export function mountBlueprintEditor(root: HTMLElement): () => void {
     // for every other state — including while a picker it launched is open,
     // keeping one menu on screen at a time.
     if (next !== "machine-info") propertiesWindow.hide();
+    syncTouchDock();
 
     switch (next) {
       case "default":
@@ -2404,6 +2506,7 @@ export function mountBlueprintEditor(root: HTMLElement): () => void {
     // still be carrying a module.
     if (module) setMode("idle");
     updateCursorIcon(lastPointerPos.x, lastPointerPos.y);
+    syncTouchDock();
   }
 
   /** Fills every module slot of `entity` with the held module — the
@@ -2577,6 +2680,8 @@ export function mountBlueprintEditor(root: HTMLElement): () => void {
     const catalog = getRenderCatalog();
     // The game titles an entity's window with its name.
     propertiesWindow.el.querySelector(".gui-titlebar span")!.textContent = localisedNameOf(data, catalog, selectedEntity.name);
+    // Poles never turn (see rotateEntity).
+    $<HTMLButtonElement>("#properties-rotate").hidden = isPoleLike(selectedEntity.name);
     const wide = circuitWindowKind(selectedEntity);
     if (wide) propertiesWindow.el.dataset.gui = wide;
     else delete propertiesWindow.el.dataset.gui;
@@ -3099,10 +3204,17 @@ export function mountBlueprintEditor(root: HTMLElement): () => void {
     }
   }
 
+  /** On a phone the open library covers the map, so picking a blueprint
+   *  from it folds it away to show what was picked. */
+  function foldLibraryOnPhone(): void {
+    if (sheetLayout.matches) setLibraryCollapsed(true);
+  }
+
   const librarySidebar = buildLibrarySidebar($<HTMLDivElement>("#library-body"), {
     onLoad(bpString, entryId) {
       input.value = bpString;
       void guardedLoad(bpString, entryId);
+      foldLibraryOnPhone();
     },
     getCurrentBpString: () => currentBpString(),
     onNew: guardedStartNew,
@@ -3111,7 +3223,10 @@ export function mountBlueprintEditor(root: HTMLElement): () => void {
     // sub-blueprint pick within the book already loaded stays a plain
     // selectBlueprint call, no unsaved-changes guard, since that dropdown
     // never had one either and this is the same gesture from the sidebar.
-    onSelectCurrent: (flatIndex) => selectBookBlueprint(flatIndex),
+    onSelectCurrent: (flatIndex) => {
+      selectBookBlueprint(flatIndex);
+      foldLibraryOnPhone();
+    },
     onReselect(apply) {
       setMode("copyBox");
       pendingReselect = apply;
@@ -3150,6 +3265,7 @@ export function mountBlueprintEditor(root: HTMLElement): () => void {
     const size = bp["snap-to-grid"];
     setMode("idle");
     pasteArmed = true;
+    syncTouchDock();
     renderer.setInteractionMode({
       kind: "paste",
       entities: placeholders,
@@ -3216,60 +3332,63 @@ export function mountBlueprintEditor(root: HTMLElement): () => void {
       hotbarTarget = { bar, slot };
       enterMenuState("hotbar");
     },
-    onTool(tool) {
-      switch (tool) {
-        case "undo":
-          undo();
-          return;
-        case "redo":
-          redo();
-          return;
-        case "deconstruct":
-          if (boxModeKind === "deleteBox") {
-            setMode("idle");
-            return;
-          }
-          setMode("deleteBox");
-          setStatus("Delete tool — drag a box to delete what's inside.");
-          return;
-        case "blueprint":
-          if (boxModeKind === "copyBox") {
-            setMode("idle");
-            return;
-          }
-          setMode("copyBox");
-          setStatus("Copy tool — drag a box to copy it onto the cursor.");
-          return;
-        case "upgrade":
-          return;
-        case "book": {
-          const bpString = currentBpString();
-          if (!bpString) {
-            setStatus("Nothing on the canvas to put in a book yet.", "error");
-            return;
-          }
-          try {
-            saveToLibrary(bpString, "New blueprint book", undefined, { asBook: true });
-            librarySidebar.refresh();
-            libraryWindow.show();
-            setStatus("Created a blueprint book with the current blueprint in the library.");
-          } catch (err) {
-            setStatus(saveFailureMessage(err, "Couldn't create the book — the current blueprint doesn't decode."), "error");
-          }
-          return;
-        }
-        case "alt":
-          setAltMode(!altModeOn);
-          return;
-        case "copper":
-        case "green":
-        case "red":
-          toggleWireInHand(tool);
-          return;
-      }
-    },
+    onTool: runTool,
   });
   syncQuickbar();
+
+  /** The shortcut tools, from the quickbar's grid or the touch dock. */
+  function runTool(tool: QuickbarTool): void {
+    switch (tool) {
+      case "undo":
+        undo();
+        return;
+      case "redo":
+        redo();
+        return;
+      case "deconstruct":
+        if (boxModeKind === "deleteBox") {
+          setMode("idle");
+          return;
+        }
+        setMode("deleteBox");
+        setStatus("Delete tool — drag a box to delete what's inside.");
+        return;
+      case "blueprint":
+        if (boxModeKind === "copyBox") {
+          setMode("idle");
+          return;
+        }
+        setMode("copyBox");
+        setStatus("Copy tool — drag a box to copy it onto the cursor.");
+        return;
+      case "upgrade":
+        return;
+      case "book": {
+        const bpString = currentBpString();
+        if (!bpString) {
+          setStatus("Nothing on the canvas to put in a book yet.", "error");
+          return;
+        }
+        try {
+          saveToLibrary(bpString, "New blueprint book", undefined, { asBook: true });
+          librarySidebar.refresh();
+          libraryWindow.show();
+          setStatus("Created a blueprint book with the current blueprint in the library.");
+        } catch (err) {
+          setStatus(saveFailureMessage(err, "Couldn't create the book — the current blueprint doesn't decode."), "error");
+        }
+        return;
+      }
+      case "alt":
+        setAltMode(!altModeOn);
+        return;
+      case "copper":
+      case "green":
+      case "red":
+        toggleWireInHand(tool);
+        return;
+    }
+  }
 
   // 1–9 and 0 take the active quickbar's slots into the cursor, as in the
   // game. e.code so the number row works whatever the layout's shift state.
@@ -3718,6 +3837,139 @@ export function mountBlueprintEditor(root: HTMLElement): () => void {
     }
     exitCurrentMenuState();
   }, { signal });
+
+  // The pointer and touch ways in to what E, R, Q/Esc and right-click do
+  // from the keyboard and mouse — a phone has neither.
+  //
+  // The toolbar's Build tab opens the Build menu from anywhere and closes
+  // it again, like E.
+  $<HTMLButtonElement>("#build-menu-button").addEventListener("click", () => {
+    enterMenuState(menuState === "build" ? "default" : "build");
+  }, { signal });
+
+  // Remove, in the entity window's titlebar: mines the building that window
+  // is showing, one undo step like a right-click.
+  const removeButton = $<HTMLButtonElement>("#properties-remove");
+  void shortcutArt("deconstruct").then((art) => {
+    if (!art) {
+      removeButton.textContent = "Remove";
+      return;
+    }
+    const img = document.createElement("img");
+    img.src = art.src;
+    img.alt = "";
+    img.draggable = false;
+    removeButton.replaceChildren(img);
+  });
+  // The titlebar's drag captures the pointer on press, which would swallow
+  // the click (see makeFloatingWindow's close button).
+  removeButton.addEventListener("pointerdown", (e) => e.stopPropagation(), { signal });
+  // Rotate, beside it: R for the building the window shows, for screens
+  // without a keyboard. Stays open, so it can be tapped round.
+  const rotateButton = $<HTMLButtonElement>("#properties-rotate");
+  rotateButton.addEventListener("pointerdown", (e) => e.stopPropagation(), { signal });
+  rotateButton.addEventListener("click", () => rotateSelected(), { signal });
+  removeButton.addEventListener("click", () => {
+    const entity = selectedEntity;
+    if (!entity) return;
+    enterMenuState("default");
+    removeEntity(entity.entityNumber);
+    setStatus(`Removed the ${localisedNameOf(getData(), getRenderCatalog(), entity.name)}.`);
+  }, { signal });
+
+  // The touch dock (see the template): what the quickbar's tool grid and
+  // the R, Q/Esc and E keys do, for a phone.
+  function putAway(): void {
+    renderer.cancelRailPlan();
+    if (heldModule) setHeldModule(null);
+    setMode("idle");
+    updateCursorIcon(lastPointerPos.x, lastPointerPos.y);
+  }
+  const touchMore = $<HTMLElement>("#touch-more");
+  function setTouchMoreOpen(open: boolean): void {
+    touchMore.hidden = !open;
+    syncTouchDock();
+  }
+  $("#touch-tools").addEventListener("click", (e) => {
+    const tool = (e.target as HTMLElement).closest<HTMLButtonElement>("[data-touch-tool]")?.dataset.touchTool;
+    if (!tool) return;
+    if (tool !== "more") setTouchMoreOpen(false);
+    switch (tool) {
+      case "library":
+        // The docked sidebar, opened out over the map — or folded away.
+        if (libraryWindow.el.hidden) {
+          libraryWindow.show();
+          setLibraryCollapsed(false);
+        } else {
+          setLibraryCollapsed(!libraryCollapsed);
+        }
+        return;
+      case "build":
+        enterMenuState(menuState === "build" ? "default" : "build");
+        return;
+      case "delete":
+        runTool("deconstruct");
+        return;
+      case "copy":
+        if (pasteArmed) putAway();
+        else runTool("blueprint");
+        return;
+      // simulate: opened by its data-toggle, like the toolbar's own tab.
+      case "more":
+        setTouchMoreOpen(touchMore.hidden);
+        return;
+    }
+  }, { signal });
+  for (const item of root.querySelectorAll<HTMLButtonElement>("[data-touch-more]")) {
+    const tool = item.dataset.touchMore as QuickbarTool;
+    void shortcutArt(tool).then((art) => {
+      if (!art) return;
+      const img = document.createElement("img");
+      img.src = art.src;
+      img.alt = "";
+      img.draggable = false;
+      item.querySelector(".touch-more-art")!.replaceChildren(img);
+    });
+    item.addEventListener("click", () => {
+      runTool(tool);
+      // A wire goes straight to the map; alt mode is a switch, so the
+      // menu stays open to flip it back.
+      if (tool !== "alt") setTouchMoreOpen(false);
+      else syncTouchDock();
+    }, { signal });
+  }
+  // Any press outside the More menu and its tab closes it.
+  document.addEventListener("pointerdown", (e) => {
+    if (touchMore.hidden) return;
+    const target = e.target as Node;
+    if (touchMore.contains(target) || root.querySelector('[data-touch-tool="more"]')!.contains(target)) return;
+    setTouchMoreOpen(false);
+  }, { capture: true, signal });
+  $("#touch-hand-rotate").addEventListener("click", () => {
+    if (paletteSelection) renderer.rotateGhost();
+    else if (pasteArmed) renderer.rotatePasteGhost();
+  }, { signal });
+  $("#touch-hand-away").addEventListener("click", putAway, { signal });
+  // The Blueprints and Simulate tabs light with their panels, however
+  // those open or close (their own buttons, the toolbar, Escape).
+  const dockPanelObserver = new MutationObserver(() => syncTouchDock());
+  dockPanelObserver.observe($("#rate-window"), { attributes: true, attributeFilter: ["hidden"] });
+  dockPanelObserver.observe($("#library-window"), { attributes: true, attributeFilter: ["hidden", "class"] });
+  signal.addEventListener("abort", () => dockPanelObserver.disconnect());
+  $("#touch-undo").addEventListener("click", () => undo(), { signal });
+  $("#touch-redo").addEventListener("click", () => redo(), { signal });
+  // Windows and the loading badge keep clear of the dock, whose height
+  // depends on the font and the safe area.
+  const touchDock = $<HTMLElement>("#touch-dock");
+  const dockObserver = new ResizeObserver(() => {
+    document.documentElement.style.setProperty("--touch-dock-h", `${touchDock.getBoundingClientRect().height}px`);
+  });
+  dockObserver.observe(touchDock);
+  signal.addEventListener("abort", () => {
+    dockObserver.disconnect();
+    document.documentElement.style.removeProperty("--touch-dock-h");
+  });
+  syncTouchDock();
 
   // 'q' is the smart pipette AND the "clear cursor" gesture, matching the
   // real game's own dual behavior: over an entity, it picks up that
