@@ -280,6 +280,7 @@ const TEMPLATE = `
   <div id="touch-dock" class="touch-dock">
     <div id="touch-hand" class="touch-hand" role="toolbar" aria-label="In hand" hidden>
       <span id="touch-hand-what" class="touch-hand-what"></span>
+      <button type="button" id="touch-hand-place" class="touch-hand-button touch-hand-place" aria-label="Place" title="Place at the ghost (or double-tap the map)"><svg class="touch-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg></button>
       <button type="button" id="touch-hand-rotate" class="touch-hand-button" aria-label="Rotate"><svg class="touch-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 12a8 8 0 1 1-2.4-5.7"/><path d="M20 4v4.5h-4.5"/></svg></button>
       <button type="button" id="touch-hand-away" class="touch-hand-button" aria-label="Put away"><svg class="touch-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
     </div>
@@ -1214,6 +1215,7 @@ export function mountBlueprintEditor(root: HTMLElement): () => void {
       const iconName = paletteSelection ?? heldModule?.name;
       label.replaceChildren(...(iconName ? [icon(iconName, "", 24)] : []), document.createTextNode(what));
       $<HTMLButtonElement>("#touch-hand-rotate").hidden = !(paletteSelection || pasteArmed);
+      $<HTMLButtonElement>("#touch-hand-place").hidden = !(paletteSelection || pasteArmed);
     }
     const moreOn: Record<string, boolean> = { alt: altModeOn, copper: wireColorInHand === "copper", red: wireColorInHand === "red", green: wireColorInHand === "green" };
     for (const item of root.querySelectorAll<HTMLButtonElement>("[data-touch-more]")) {
@@ -3945,6 +3947,7 @@ export function mountBlueprintEditor(root: HTMLElement): () => void {
     if (touchMore.contains(target) || root.querySelector('[data-touch-tool="more"]')!.contains(target)) return;
     setTouchMoreOpen(false);
   }, { capture: true, signal });
+  $("#touch-hand-place").addEventListener("click", () => renderer.placeHeld(), { signal });
   $("#touch-hand-rotate").addEventListener("click", () => {
     if (paletteSelection) renderer.rotateGhost();
     else if (pasteArmed) renderer.rotatePasteGhost();

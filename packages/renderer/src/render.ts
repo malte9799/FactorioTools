@@ -302,6 +302,11 @@ export interface BlueprintRenderer {
    *  effect, which is harmless. Free rotation has no per-entity
    *  restrictions (flip, separately, is meant to). */
   rotatePasteGhost(reverse?: boolean): void;
+  /** Puts the held item (or stamps the held paste) down at the ghost, for
+   *  touch screens where the finger only moves the ghost: a "Place" button
+   *  calls this. Falls back to the middle of the view when no touch has
+   *  positioned the ghost yet. A no-op when nothing is held. */
+  placeHeld(): void;
   hitTest(clientX: number, clientY: number): number | undefined;
   /** Fires on pointermove while not panning, with the entity under the
    *  cursor (or undefined). */
@@ -2310,7 +2315,7 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
    *  stamps again, matching the real game's own "keep the item in hand
    *  until you put it away" convention. Modifier keys read at commit time
    *  (not copy time) decide how the app should resolve any collision. */
-  function placePasteGhost(e: PointerEvent): void {
+  function placePasteGhost(e: { shiftKey: boolean; altKey: boolean }): void {
     if (mode.kind !== "paste" || !ghostWorldPos) return;
     const snappedAnchor = snapPasteAnchor(ghostWorldPos);
     // Relative snapping: the first stamp fixes the grid later ones line up with.
@@ -2330,6 +2335,25 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
       mid: { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 },
       distance: Math.hypot(a.x - b.x, a.y - b.y),
     };
+  }
+
+  const DOUBLE_TAP_MS = 350;
+  const DOUBLE_TAP_DISTANCE = 30; // screen px
+  let lastTouchTap: { time: number; x: number; y: number } | undefined;
+
+  function placeHeld(): void {
+    if (mode.kind !== "place" && mode.kind !== "paste") return;
+    if (!ghostWorldPos) {
+      const rect = canvas.getBoundingClientRect();
+      ghostWorldPos = camera.screenToWorld(rect.width / 2, rect.height / 2, rect.width, rect.height);
+    }
+    if (mode.kind === "paste") {
+      placePasteGhost({ shiftKey: false, altKey: false });
+    } else {
+      placedThisGesture = new Set();
+      placeAtGhost();
+    }
+    invalidate();
   }
 
   function onPointerDown(e: PointerEvent): void {
@@ -2401,6 +2425,26 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
     // A touch has no hover before it lands, so the ghost is still wherever
     // the last touch left it: move it under this one before acting on it.
     if (mode.kind === "place" || mode.kind === "paste") ghostWorldPos = worldAtPointer(e);
+
+    // On a touch screen a finger only positions the held item — it is
+    // dropped by a double tap or the app's Place button (placeHeld), so a
+    // building can be lined up under the finger without going down early.
+    // Track is the exception: it is laid by dragging, which has no ghost
+    // to position first.
+    if (
+      e.pointerType === "touch" &&
+      (mode.kind === "paste" || (mode.kind === "place" && !isRailPlannerItem(mode.entityName)))
+    ) {
+      const now = performance.now();
+      const doubleTap =
+        lastTouchTap !== undefined &&
+        now - lastTouchTap.time < DOUBLE_TAP_MS &&
+        Math.hypot(e.clientX - lastTouchTap.x, e.clientY - lastTouchTap.y) < DOUBLE_TAP_DISTANCE;
+      lastTouchTap = doubleTap ? undefined : { time: now, x: e.clientX, y: e.clientY };
+      if (doubleTap) placeHeld();
+      invalidate();
+      return;
+    }
 
     if (mode.kind === "place") {
       isPlacingDrag = true;
@@ -2982,6 +3026,7 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
       mode = { ...mode, groupRotation: (((mode.groupRotation + delta) % 16) + 16) % 16 as 0 | 4 | 8 | 12 };
       invalidate();
     },
+    placeHeld,
     hitTest(clientX, clientY) {
       const rect = canvas.getBoundingClientRect();
       const world = camera.screenToWorld(clientX - rect.left, clientY - rect.top, rect.width, rect.height);
