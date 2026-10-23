@@ -22,6 +22,7 @@ import { drawInserter } from "./sprites/inserter.js";
 import { SpatialIndex, type IndexedBox } from "./spatialIndex.js";
 import { boxHitsEntity, entitiesCollide } from "./collision.js";
 import { RAIL_BLOCK_COLORS } from "./railBlocks.js";
+import { snapAnchorToTiles } from "./pasteSnap.js";
 import { isElevatedRail, isRail, isRollingStock, onRailGrid, openEnds, RAIL_DECK_HEIGHT, RAIL_END_CAP, railCentreline, railHighlightBox, railJoints, snapToRailGrid, type RailEnd, type RailPiece, type RailSlot } from "./railGeometry.js";
 import {
   buildRailIndex,
@@ -853,7 +854,8 @@ export function mountRenderer(container: HTMLElement, data: GameData, catalog: R
 
   function snapPasteAnchorToTiles(cursor: { x: number; y: number }): { x: number; y: number } {
     const cell = pasteCell();
-    if (!cell || mode.kind !== "paste" || !mode.snap) return { x: Math.round(cursor.x), y: Math.round(cursor.y) };
+    if (mode.kind !== "paste") return { x: Math.round(cursor.x), y: Math.round(cursor.y) };
+    if (!cell || !mode.snap) return snapAnchorToTiles(cursor, mode.anchor);
     const { offset, size } = cell;
     const origin = mode.snap.absolute ? mode.snap.offset : relativeSnapOrigin;
     // The cell's top-left if the ghost were centred on the cursor.
